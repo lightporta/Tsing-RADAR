@@ -74,8 +74,8 @@ export interface ScatterPoint {
 }
 
 /** 排序指标 */
+// [PATCH] 移除 synergy —— 后端 SORT_METRICS 不含 synergy，传该值会返回 400
 export type SortMetric =
-  | 'synergy' // 契合度优先
   | 'popularity' // 热门度
   | 'acumen' // 学术敏锐度
   | 'network' // 人脉资源

@@ -30,5 +30,5 @@ export function matchAdvisors(req: MatchRequest) {
 export function legacyChat(interest: string) {
   return post<{
     choices: { message: { role: string; content: string } }[]
-  }>('/v1/chat/completions', { interest })
+  }>('/api/v1/chat/completions', { interest })
 }

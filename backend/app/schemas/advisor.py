@@ -11,8 +11,11 @@ class LLMMessage(BaseModel):
 
 
 class LLMChatRequest(BaseModel):
+    # [PATCH] 增加 model 字段，兼容清小搭传入的 OpenAI 格式
+    model: Optional[str] = None
     messages: list[LLMMessage]
     session_id: Optional[str] = None
+    stream: Optional[bool] = True
 
 
 class LLMEmbeddingRequest(BaseModel):

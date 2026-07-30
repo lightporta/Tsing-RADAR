@@ -12,7 +12,15 @@ from app.schemas.advisor import (
 from app.schemas.recruitment import RecruitmentCreateRequest, RecruitmentItem
 from app.schemas.resume import ResumeGenerateRequest, ResumeSubmitRequest
 from app.schemas.feedback import FeedbackRequest
-from app.schemas.train import TrainTriggerRequest
+# [PATCH] 移除 TrainTriggerRequest —— admin_token 改为 Header 传递，不再需要请求体模型
+# from app.schemas.train import TrainTriggerRequest
+from app.schemas.qxd import (
+    OpenAIChatRequest,
+    OpenAIChatResponse,
+    OpenAIChoice,
+    OpenAIChoiceMessage,
+    Attachment,
+)
 
 __all__ = [
     "AdvisorOut",
@@ -27,5 +35,9 @@ __all__ = [
     "ResumeGenerateRequest",
     "ResumeSubmitRequest",
     "FeedbackRequest",
-    "TrainTriggerRequest",
+    "OpenAIChatRequest",
+    "OpenAIChatResponse",
+    "OpenAIChoice",
+    "OpenAIChoiceMessage",
+    "Attachment",
 ]

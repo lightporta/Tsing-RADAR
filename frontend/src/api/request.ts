@@ -26,8 +26,24 @@ service.interceptors.request.use(
 )
 
 // 响应拦截：统一解包 { data } 与错误提示
+// [PATCH] 支持统一响应格式 { code, message, data }，同时兼容旧的裸对象返回
 service.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    const res = response.data
+    // 统一响应格式 { code, message, data }
+    if (res && typeof res === 'object' && 'code' in res) {
+      if (res.code !== 0) {
+        const msg = res.message || '请求失败'
+        if (response.status !== 401 && response.status !== 403) {
+          ElMessage.error(msg)
+        }
+        return Promise.reject(new Error(msg))
+      }
+      return res.data !== undefined ? res.data : res
+    }
+    // 兼容旧格式：直接返回 response.data
+    return res
+  },
   (error) => {
     const msg =
       error.response?.data?.detail ||

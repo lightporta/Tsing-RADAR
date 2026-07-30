@@ -65,12 +65,18 @@ export function streamChat(
           if (!line.startsWith('data:')) continue
           const jsonStr = line.slice(5).trim()
           if (!jsonStr) continue
+          // [PATCH] 兼容 OpenAI SSE 格式: data: [DONE] 表示流结束
+          if (jsonStr === '[DONE]') break
           try {
             const data = JSON.parse(jsonStr)
-            if (data.delta) onChunk(data.delta)
-            if (data.finish) {
-              recommendReady = !!data.recommend_ready
-              sessionId = data.session_id
+            // [PATCH] 改为 OpenAI 格式解析: choices[0].delta.content
+            if (data.choices?.[0]?.delta?.content) {
+              onChunk(data.choices[0].delta.content)
+            }
+            // 终止帧: finish_reason === "stop"
+            if (data.choices?.[0]?.finish_reason === 'stop') {
+              recommendReady = !!data.x_soda?.recommend_ready
+              sessionId = data.x_soda?.session_id
             }
           } catch {
             // 忽略半截 JSON
