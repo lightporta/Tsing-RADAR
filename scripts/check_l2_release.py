@@ -930,7 +930,7 @@ def _container_backup_restore_contract(
             "--set=ON_ERROR_STOP=1",
             "--username=l2_backup",
             "--dbname=l2_backup",
-            "--command=CREATE TABLE synthetic_backup_probe(id integer); INSERT INTO synthetic_backup_probe VALUES (1)",
+            "--command=CREATE ROLE source_only_acl NOLOGIN; CREATE TABLE synthetic_backup_probe(id integer); GRANT SELECT ON synthetic_backup_probe TO source_only_acl; INSERT INTO synthetic_backup_probe VALUES (1)",
             expected=set(range(256)),
         )
         backup = backup_run(
@@ -1023,6 +1023,17 @@ def _container_backup_restore_contract(
             "--command=SELECT count(*) FROM synthetic_backup_probe",
             expected=set(range(256)),
         )
+        restored_source_role_count = _docker(
+            "exec",
+            restore_name,
+            "psql",
+            "--username=restore_check",
+            "--dbname=restore_check",
+            "--tuples-only",
+            "--no-align",
+            "--command=SELECT count(*) FROM pg_roles WHERE rolname = 'source_only_acl'",
+            expected=set(range(256)),
+        )
         missing_capability_started = time.monotonic()
         missing_capability = backup_run(
             failed_dir,
@@ -1109,6 +1120,7 @@ def _container_backup_restore_contract(
                 checksum,
                 restore,
                 restored_count,
+                restored_source_role_count,
                 missing_capability,
                 bad_password_result,
                 *invalid_secret_results.values(),
@@ -1137,6 +1149,8 @@ def _container_backup_restore_contract(
             and restore.returncode == 0
             and restored_count.returncode == 0
             and restored_count.stdout.strip() == "1"
+            and restored_source_role_count.returncode == 0
+            and restored_source_role_count.stdout.strip() == "0"
             and missing_capability.returncode == 78
             and missing_capability_elapsed < 30
             and bad_password_result.returncode != 0
@@ -1161,6 +1175,7 @@ def _container_backup_restore_contract(
                 "backup": backup.returncode,
                 "checksum": checksum.returncode,
                 "restore": restore.returncode,
+                "source_only_role_absent": restored_source_role_count.returncode,
                 "missing_capability": missing_capability.returncode,
                 "bad_password": bad_password_result.returncode,
                 **{

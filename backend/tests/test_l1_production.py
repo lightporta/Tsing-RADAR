@@ -742,6 +742,20 @@ def test_root_database_job_secret_capability_and_noninteractive_contract():
         client_commands=("pg_dump",),
     )
 
+    restore_script = (DEPLOY / "scripts" / "postgres-restore-check.sh").read_text(
+        encoding="utf-8"
+    )
+    assert module._root_database_secret_job_contract(
+        service,
+        restore_script,
+        client_commands=("pg_restore", "psql"),
+    )
+    assert not module._root_database_secret_job_contract(
+        service,
+        restore_script.replace(" --no-acl", ""),
+        client_commands=("pg_restore", "psql"),
+    )
+
 
 @pytest.mark.parametrize(
     "mutation",

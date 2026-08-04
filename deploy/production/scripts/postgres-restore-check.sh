@@ -41,7 +41,7 @@ export PGPASSWORD="$SECRET_VALUE"
 unset SECRET_VALUE
 export PGCONNECT_TIMEOUT=10
 export PGOPTIONS="-c statement_timeout=600000 -c lock_timeout=10000"
-timeout -s TERM -k 10 840 pg_restore --no-password --host "$RESTORE_CHECK_HOST" --username restore_check --dbname restore_check --exit-on-error --no-owner "$source"
+timeout -s TERM -k 10 840 pg_restore --no-password --host "$RESTORE_CHECK_HOST" --username restore_check --dbname restore_check --exit-on-error --no-owner --no-acl "$source"
 timeout -s TERM -k 5 60 psql --no-password --host "$RESTORE_CHECK_HOST" --username restore_check --dbname restore_check --command "SELECT 1" >/dev/null
 unset PGPASSWORD PGCONNECT_TIMEOUT PGOPTIONS
 echo "isolated_restore_check_passed"

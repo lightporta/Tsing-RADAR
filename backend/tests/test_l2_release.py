@@ -722,6 +722,7 @@ def test_backup_script_creates_unique_no_clobber_receipt_and_compose_has_no_stat
     assert 'od -An -v -t x1 "$secret_path"' in restore_script
     assert "pg_restore --no-password" in restore_script
     assert "psql --no-password" in restore_script
+    assert "--no-owner --no-acl" in restore_script
     assert "PGCONNECT_TIMEOUT=10" in restore_script
     assert "timeout -s TERM -k 10 840 pg_restore" in restore_script
     assert jobs.count('cap_add: ["DAC_OVERRIDE"]') == 2

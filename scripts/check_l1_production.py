@@ -313,6 +313,14 @@ def _root_database_secret_job_contract(
         and "statement_timeout=600000" in script_text
         and "lock_timeout=10000" in script_text
         and all(f"{command} --no-password" in script_text for command in client_commands)
+        and (
+            "pg_restore" not in client_commands
+            or (
+                "--exit-on-error" in script_text
+                and "--no-owner" in script_text
+                and "--no-acl" in script_text
+            )
+        )
         and "timeout -s TERM -k " in script_text
     )
 
