@@ -21,21 +21,22 @@ services:
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["python", "/opt/tsing-radar/database_provision.py"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
-    secrets:
-      - source: database_bootstrap_password
-        target: database_bootstrap_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: stage_database_password
-        target: stage_database_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
     volumes:
       - ./scripts/database_provision.py:/opt/tsing-radar/database_provision.py:ro
       - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
       - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${BOOTSTRAP_SECRET_ROOT:?Set BOOTSTRAP_SECRET_ROOT}/database_bootstrap_password
+        target: /run/secrets/database_bootstrap_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/database_password
+        target: /run/secrets/stage_database_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - stage-data
     depends_on:
@@ -55,13 +56,16 @@ services:
     profiles: ["stage"]
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/opt/tsing-radar/redis-entrypoint.sh"]
-    secrets:
-      - source: stage_redis_password
-        target: redis_password
     volumes:
       - stage_redis_data:/data
       - ./scripts/redis-entrypoint.sh:/opt/tsing-radar/redis-entrypoint.sh:ro
       - ./scripts/redis-healthcheck.sh:/opt/tsing-radar/redis-healthcheck.sh:ro
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/redis_password
+        target: /run/secrets/redis_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - stage-data
     healthcheck:
@@ -119,48 +123,54 @@ services:
       CORS_ORIGINS: ${STAGE_CORS_ORIGINS:?Set exact stage CORS origins}
       # No MILVUS_HOST: deterministic lexical fallback is mandatory until an
       # isolated stage Milvus or verified server-side RBAC is provided.
-    secrets:
-      - source: stage_database_password
-        target: database_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: stage_redis_password
-        target: redis_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: stage_admin_token
-        target: admin_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: stage_session_hmac_secret
-        target: session_hmac_secret
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: stage_artifact_signing_secret
-        target: artifact_signing_secret
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: stage_cos_access_key_id
-        target: cos_access_key_id
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: stage_cos_secret_access_key
-        target: cos_secret_access_key
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
     volumes:
       - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
       - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/redis_password
+        target: /run/secrets/redis_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/admin_token
+        target: /run/secrets/admin_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/session_hmac_secret
+        target: /run/secrets/session_hmac_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/artifact_signing_secret
+        target: /run/secrets/artifact_signing_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/cos_access_key_id
+        target: /run/secrets/cos_access_key_id
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/cos_secret_access_key
+        target: /run/secrets/cos_secret_access_key
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - stage-app
       - stage-data
@@ -216,19 +226,3 @@ networks:
 
 volumes:
   stage_redis_data: {}
-
-secrets:
-  stage_database_password:
-    file: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/database_password
-  stage_redis_password:
-    file: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/redis_password
-  stage_admin_token:
-    file: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/admin_token
-  stage_session_hmac_secret:
-    file: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/session_hmac_secret
-  stage_artifact_signing_secret:
-    file: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/artifact_signing_secret
-  stage_cos_access_key_id:
-    file: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/cos_access_key_id
-  stage_cos_secret_access_key:
-    file: ${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/cos_secret_access_key

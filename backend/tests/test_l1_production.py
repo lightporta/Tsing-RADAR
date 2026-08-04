@@ -315,7 +315,8 @@ def test_stage_has_no_prod_milvus_or_prod_application_network_contract():
     assert "No MILVUS_HOST" in stage
     assert "vector-data" not in stage
     assert "prod-app" not in stage
-    assert "stage_redis_password" in stage
+    assert "${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/redis_password" in stage
+    assert "create_host_path: false" in stage
     assert "STAGE_COS_BUCKET" in stage
     assert "scanner-shared" in stage
 
@@ -465,6 +466,46 @@ def test_l1_artifact_checker_passes_with_dummy_secrets_only():
     assert report["real_credentials_used"] is False
     assert report["cloud_changes_performed"] is False
     assert report["failed"] == []
+
+
+def test_explicit_secret_bind_contract_rejects_unsafe_mount_variants(tmp_path):
+    path = ROOT / "scripts" / "check_l1_production.py"
+    spec = importlib.util.spec_from_file_location("check_l1_production", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    source = tmp_path / "database_password"
+    target = "/run/secrets/database_password"
+    expected = {target: source}
+
+    def service_with_mount(**changes):
+        mount = {
+            "type": "bind",
+            "source": str(source),
+            "target": target,
+            "read_only": True,
+            "bind": {"create_host_path": False},
+        }
+        mount.update(changes)
+        return {"volumes": [mount]}
+
+    assert module._secret_bind_contract(service_with_mount(), expected)
+    assert not module._secret_bind_contract(
+        service_with_mount(read_only=False), expected
+    )
+    assert not module._secret_bind_contract(
+        service_with_mount(bind={"create_host_path": True}), expected
+    )
+    assert not module._secret_bind_contract(
+        service_with_mount(source=str(tmp_path / "other")), expected
+    )
+    duplicated = service_with_mount()
+    duplicated["volumes"].append(dict(duplicated["volumes"][0]))
+    assert not module._secret_bind_contract(duplicated, expected)
+    with_service_secret = service_with_mount()
+    with_service_secret["secrets"] = ["database_password"]
+    assert not module._secret_bind_contract(with_service_secret, expected)
 
 
 @pytest.mark.parametrize(

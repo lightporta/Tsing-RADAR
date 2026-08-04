@@ -20,12 +20,14 @@ services:
       POSTGRES_USER: ${DATABASE_BOOTSTRAP_USER:?Set DATABASE_BOOTSTRAP_USER}
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/database_bootstrap_password
-    secrets:
-      - source: database_bootstrap_password
-        target: database_bootstrap_password
-        mode: 0400
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: ${BOOTSTRAP_SECRET_ROOT:?Set BOOTSTRAP_SECRET_ROOT}/database_bootstrap_password
+        target: /run/secrets/database_bootstrap_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - prod-data
     healthcheck:
@@ -44,12 +46,16 @@ services:
     <<: *runtime
     image: ${REDIS_IMAGE:?Set an immutable Redis image digest}
     entrypoint: ["/bin/sh", "/opt/tsing-radar/redis-entrypoint.sh"]
-    secrets:
-      - redis_password
     volumes:
       - redis_data:/data
       - ./scripts/redis-entrypoint.sh:/opt/tsing-radar/redis-entrypoint.sh:ro
       - ./scripts/redis-healthcheck.sh:/opt/tsing-radar/redis-healthcheck.sh:ro
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/redis_password
+        target: /run/secrets/redis_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - prod-data
     healthcheck:
@@ -98,11 +104,20 @@ services:
       MINIO_ROOT_USER_FILE: /run/secrets/milvus_minio_access_key
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/milvus_minio_secret_key
     command: ["server", "/data"]
-    secrets:
-      - milvus_minio_access_key
-      - milvus_minio_secret_key
     volumes:
       - milvus_minio_data:/data
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_access_key
+        target: /run/secrets/milvus_minio_access_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_secret_key
+        target: /run/secrets/milvus_minio_secret_key
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - vector-data
     healthcheck:
@@ -127,12 +142,21 @@ services:
       MINIO_BUCKET_NAME: ${MILVUS_BUCKET:?Set MILVUS_BUCKET}
       MINIO_USE_SSL: "false"
       COMMON_STORAGETYPE: minio
-    secrets:
-      - milvus_minio_access_key
-      - milvus_minio_secret_key
     volumes:
       - milvus_data:/var/lib/milvus
       - ./scripts/milvus-entrypoint.sh:/opt/tsing-radar/milvus-entrypoint.sh:ro
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_access_key
+        target: /run/secrets/milvus_minio_access_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_secret_key
+        target: /run/secrets/milvus_minio_secret_key
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - vector-data
     depends_on:
@@ -193,15 +217,3 @@ volumes:
   milvus_minio_data: {}
   milvus_data: {}
   clamav_signatures: {}
-
-secrets:
-  database_bootstrap_password:
-    file: ${BOOTSTRAP_SECRET_ROOT:?Set BOOTSTRAP_SECRET_ROOT}/database_bootstrap_password
-  database_password:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
-  redis_password:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/redis_password
-  milvus_minio_access_key:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_access_key
-  milvus_minio_secret_key:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_secret_key

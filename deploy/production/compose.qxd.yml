@@ -7,17 +7,19 @@ services:
       QXD_REMOTE_MEDIA_FETCH_ENABLED: "false"
       QXD_ATTACHMENTS_ENABLED: "false"
       PUBLIC_BASE_URL: ""
-    secrets:
-      - source: qxd_api_key
-        target: qxd_api_key
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: qxd_end_user_signing_secret
-        target: qxd_end_user_signing_secret
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
+    volumes:
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/qxd_api_key
+        target: /run/secrets/qxd_api_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/qxd_end_user_signing_secret
+        target: /run/secrets/qxd_end_user_signing_secret
+        read_only: true
+        bind:
+          create_host_path: false
 
   qxd-gateway:
     image: ${NGINX_UNPRIVILEGED_IMAGE:?Set an immutable unprivileged Nginx image digest}
@@ -52,9 +54,3 @@ services:
       QXD_HOST: ${QXD_HOST:?Set the separately approved QXD host}
     volumes:
       - ./edge/routes/qxd.caddy:/etc/caddy/routes/20-qxd.caddy:ro
-
-secrets:
-  qxd_api_key:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/qxd_api_key
-  qxd_end_user_signing_secret:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/qxd_end_user_signing_secret

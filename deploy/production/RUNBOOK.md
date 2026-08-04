@@ -125,15 +125,19 @@ Contract/cleanup migrations are separate batches after the rollback window.
 
 The backend image runs as numeric uid/gid `10001:10001`. Its host secret files
 must be individually owned by uid 10001, mode 0400, inside a root-managed
-directory that is not group/world traversable. Compose requests uid/gid 10001
-and mode 0400 for every backend secret, but standalone Compose file-backed
-secrets may preserve host ownership/mode rather than implementing the requested
-metadata. Therefore `docker compose config` is not proof. Before any app starts,
-the cloud batch must inspect every `/run/secrets/*` from the exact pinned image
-and prove uid 10001 can read it while group/other cannot. The application startup
+directory that is not group/world traversable. Every production Compose secret
+consumer uses an explicit long-syntax bind mount with `read_only: true` and
+`bind.create_host_path: false`; no top-level Compose `secrets.file` object or
+plaintext environment fallback is permitted. This makes the host file the
+authoritative uid/gid/mode source and prevents Compose from silently creating a
+missing source path. `docker compose config` proves only the mount declaration,
+not the runtime permission result. Before any app starts, the cloud batch must
+inspect every `/run/secrets/*` from the exact pinned image and prove the intended
+container identity can read it while group/other cannot. The application startup
 gate independently rejects relative, symlinked, missing or group/world-readable
 secret files. If the target engine does not preserve this contract, deployment
-stops; it must not fall back to direct environment values or mode 0444.
+stops; it must not fall back to direct environment values, top-level file secrets
+or mode 0444.
 
 The database bootstrap secret is an explicit exception mounted only into the
 PostgreSQL initialization service and prod/stage database-provision jobs. It is

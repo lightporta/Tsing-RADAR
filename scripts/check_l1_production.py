@@ -155,6 +155,48 @@ def _environment(service: dict[str, Any]) -> dict[str, str]:
     raise ValueError("unexpected Compose environment shape")
 
 
+def _secret_bind_contract(
+    service: dict[str, Any],
+    expected: dict[str, Path],
+) -> bool:
+    """Validate exact read-only bind mounts for all /run/secrets targets."""
+
+    if service.get("secrets"):
+        return False
+    entries = service.get("volumes", [])
+    if not isinstance(entries, list):
+        return False
+    found: dict[str, dict[str, Any]] = {}
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        target = str(item.get("target", ""))
+        if not target.startswith("/run/secrets/"):
+            continue
+        if target in found:
+            return False
+        found[target] = item
+    if set(found) != set(expected):
+        return False
+    for target, source_path in expected.items():
+        item = found[target]
+        bind = item.get("bind", {})
+        if (
+            item.get("type") != "bind"
+            or item.get("read_only") is not True
+            or not isinstance(bind, dict)
+            or bind.get("create_host_path") is not False
+        ):
+            return False
+        try:
+            actual_source = Path(str(item.get("source", ""))).resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return False
+        if actual_source != source_path.resolve(strict=False):
+            return False
+    return True
+
+
 def _secret_is_strong(value: str) -> bool:
     placeholders = {"admin", "secret", "changeme", "change-me"}
     return (
@@ -460,32 +502,40 @@ def run_checks(
                 "a password/key is weak, placeholder, missing or reused",
             )
         )
-        backend_secrets = json.dumps(
-            default_services["backend"].get("secrets", []),
+        backend_secret_mounts = json.dumps(
+            default_services["backend"].get("volumes", []),
             sort_keys=True,
         )
-        backend_secret_entries = default_services["backend"].get("secrets", [])
         checks.append(
             _check(
                 "secrets.bootstrap_not_mounted_to_runtime",
-                "bootstrap" not in backend_secrets
+                "bootstrap" not in backend_secret_mounts
                 and "DATABASE_BOOTSTRAP" not in json.dumps(backend_environment),
                 "bootstrap credential reached the production backend",
             )
         )
         checks.append(
             _check(
-                "secrets.backend_uid_mode_contract",
+                "secrets.backend_explicit_bind_contract",
                 default_services["backend"].get("user") == "10001:10001"
-                and bool(backend_secret_entries)
-                and all(
-                    str(item.get("uid")) == "10001"
-                    and str(item.get("gid")) == "10001"
-                    and str(item.get("mode")) in {"0400", "256"}
-                    for item in backend_secret_entries
-                    if isinstance(item, dict)
+                and _secret_bind_contract(
+                    default_services["backend"],
+                    {
+                        "/run/secrets/database_password": prod_secrets
+                        / "database_password",
+                        "/run/secrets/redis_password": prod_secrets / "redis_password",
+                        "/run/secrets/admin_token": prod_secrets / "admin_token",
+                        "/run/secrets/session_hmac_secret": prod_secrets
+                        / "session_hmac_secret",
+                        "/run/secrets/artifact_signing_secret": prod_secrets
+                        / "artifact_signing_secret",
+                        "/run/secrets/cos_access_key_id": prod_secrets
+                        / "cos_access_key_id",
+                        "/run/secrets/cos_secret_access_key": prod_secrets
+                        / "cos_secret_access_key",
+                    },
                 ),
-                "backend secret uid/gid/mode contract differs",
+                "backend secret bind contract differs",
             )
         )
 
@@ -521,7 +571,6 @@ def run_checks(
             )
         )
         qxd_backend_environment = _environment(qxd["services"]["backend"])
-        qxd_backend_secret_entries = qxd["services"]["backend"].get("secrets", [])
         checks.append(
             _check(
                 "qxd.inbound_media_and_outbound_attachments_disabled",
@@ -529,12 +578,25 @@ def run_checks(
                 == "false"
                 and qxd_backend_environment.get("QXD_ATTACHMENTS_ENABLED")
                 == "false"
-                and all(
-                    str(item.get("uid")) == "10001"
-                    and str(item.get("gid")) == "10001"
-                    and str(item.get("mode")) in {"0400", "256"}
-                    for item in qxd_backend_secret_entries
-                    if isinstance(item, dict)
+                and _secret_bind_contract(
+                    qxd["services"]["backend"],
+                    {
+                        "/run/secrets/database_password": prod_secrets
+                        / "database_password",
+                        "/run/secrets/redis_password": prod_secrets / "redis_password",
+                        "/run/secrets/admin_token": prod_secrets / "admin_token",
+                        "/run/secrets/session_hmac_secret": prod_secrets
+                        / "session_hmac_secret",
+                        "/run/secrets/artifact_signing_secret": prod_secrets
+                        / "artifact_signing_secret",
+                        "/run/secrets/cos_access_key_id": prod_secrets
+                        / "cos_access_key_id",
+                        "/run/secrets/cos_secret_access_key": prod_secrets
+                        / "cos_secret_access_key",
+                        "/run/secrets/qxd_api_key": prod_secrets / "qxd_api_key",
+                        "/run/secrets/qxd_end_user_signing_secret": prod_secrets
+                        / "qxd_end_user_signing_secret",
+                    },
                 ),
                 "QXD overlay enables media or has a weak secret mount contract",
             )
@@ -583,6 +645,9 @@ def run_checks(
             [INFRA, PROD, JOBS], environment, profiles=("restore-check",)
         )
         stage_only = _compose([INFRA, STAGE], environment, profiles=("stage",))
+        stage_setup = _compose(
+            [INFRA, STAGE], environment, profiles=("stage-setup",)
+        )
         prod_stage = stage
         stage_backup = _compose(
             [INFRA, PROD, STAGE, JOBS],
@@ -593,6 +658,133 @@ def run_checks(
             [INFRA, PROD, JOBS],
             environment,
             profiles=("backup", "restore-check"),
+        )
+
+        secret_bind_expectations = (
+            (
+                default["services"]["postgres"],
+                {
+                    "/run/secrets/database_bootstrap_password": bootstrap_secrets
+                    / "database_bootstrap_password",
+                },
+            ),
+            (
+                default["services"]["redis"],
+                {"/run/secrets/redis_password": prod_secrets / "redis_password"},
+            ),
+            (
+                default["services"]["milvus-minio"],
+                {
+                    "/run/secrets/milvus_minio_access_key": prod_secrets
+                    / "milvus_minio_access_key",
+                    "/run/secrets/milvus_minio_secret_key": prod_secrets
+                    / "milvus_minio_secret_key",
+                },
+            ),
+            (
+                default["services"]["milvus"],
+                {
+                    "/run/secrets/milvus_minio_access_key": prod_secrets
+                    / "milvus_minio_access_key",
+                    "/run/secrets/milvus_minio_secret_key": prod_secrets
+                    / "milvus_minio_secret_key",
+                },
+            ),
+            (
+                database_setup["services"]["prod-db-provision"],
+                {
+                    "/run/secrets/database_bootstrap_password": bootstrap_secrets
+                    / "database_bootstrap_password",
+                    "/run/secrets/database_password": prod_secrets
+                    / "database_password",
+                },
+            ),
+            (
+                jobs["services"]["migration"],
+                {
+                    "/run/secrets/database_password": prod_secrets
+                    / "database_password"
+                },
+            ),
+            (
+                backup["services"]["backup"],
+                {
+                    "/run/secrets/database_password": prod_secrets
+                    / "database_password"
+                },
+            ),
+            (
+                restore["services"]["restore-check-db"],
+                {
+                    "/run/secrets/restore_check_password": prod_secrets
+                    / "restore_check_password"
+                },
+            ),
+            (
+                restore["services"]["restore-check"],
+                {
+                    "/run/secrets/restore_check_password": prod_secrets
+                    / "restore_check_password"
+                },
+            ),
+            (
+                stage_setup["services"]["stage-db-provision"],
+                {
+                    "/run/secrets/database_bootstrap_password": bootstrap_secrets
+                    / "database_bootstrap_password",
+                    "/run/secrets/stage_database_password": stage_secrets
+                    / "database_password",
+                },
+            ),
+            (
+                stage_only["services"]["stage-redis"],
+                {"/run/secrets/redis_password": stage_secrets / "redis_password"},
+            ),
+            (
+                stage_only["services"]["stage-backend"],
+                {
+                    "/run/secrets/database_password": stage_secrets
+                    / "database_password",
+                    "/run/secrets/redis_password": stage_secrets / "redis_password",
+                    "/run/secrets/admin_token": stage_secrets / "admin_token",
+                    "/run/secrets/session_hmac_secret": stage_secrets
+                    / "session_hmac_secret",
+                    "/run/secrets/artifact_signing_secret": stage_secrets
+                    / "artifact_signing_secret",
+                    "/run/secrets/cos_access_key_id": stage_secrets
+                    / "cos_access_key_id",
+                    "/run/secrets/cos_secret_access_key": stage_secrets
+                    / "cos_secret_access_key",
+                },
+            ),
+        )
+        rendered_configurations = (
+            default,
+            qxd,
+            database_setup,
+            jobs,
+            backup,
+            restore,
+            stage_only,
+            stage_setup,
+        )
+        checks.append(
+            _check(
+                "secrets.explicit_bind_mounts_all_consumers",
+                all(
+                    _secret_bind_contract(service, expected)
+                    for service, expected in secret_bind_expectations
+                )
+                and all(
+                    "secrets" not in configuration
+                    and all(
+                        not service.get("secrets")
+                        for service in configuration.get("services", {}).values()
+                    )
+                    for configuration in rendered_configurations
+                ),
+                "a secret consumer is not an exact read-only no-create bind mount",
+            )
         )
 
         matrix_inputs = (
@@ -727,6 +919,7 @@ def run_checks(
                 "backup": backup,
                 "restore": restore,
                 "stage_only": stage_only,
+                "stage_setup": stage_setup,
             },
             sort_keys=True,
         )

@@ -44,42 +44,49 @@ services:
       PUBLIC_BASE_URL: ""
       ALLOW_TEST_PUBLIC_BASE_URL: "false"
       CORS_ORIGINS: ${PROD_CORS_ORIGINS:?Set exact production CORS origins}
-    secrets:
-      - source: database_password
-        target: database_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: redis_password
-        target: redis_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: admin_token
-        target: admin_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: session_hmac_secret
-        target: session_hmac_secret
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: artifact_signing_secret
-        target: artifact_signing_secret
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: cos_access_key_id
-        target: cos_access_key_id
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: cos_secret_access_key
-        target: cos_secret_access_key
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
+    volumes:
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/redis_password
+        target: /run/secrets/redis_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/admin_token
+        target: /run/secrets/admin_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/session_hmac_secret
+        target: /run/secrets/session_hmac_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/artifact_signing_secret
+        target: /run/secrets/artifact_signing_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_access_key_id
+        target: /run/secrets/cos_access_key_id
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_secret_access_key
+        target: /run/secrets/cos_secret_access_key
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - prod-app
       - prod-data
@@ -165,15 +172,3 @@ networks:
   scanner-shared:
     internal: true
   backend-egress: {}
-
-secrets:
-  admin_token:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/admin_token
-  session_hmac_secret:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/session_hmac_secret
-  artifact_signing_secret:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/artifact_signing_secret
-  cos_access_key_id:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_access_key_id
-  cos_secret_access_key:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_secret_access_key

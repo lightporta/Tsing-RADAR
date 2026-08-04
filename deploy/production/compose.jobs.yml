@@ -15,21 +15,22 @@ services:
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["python", "/opt/tsing-radar/database_provision.py"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
-    secrets:
-      - source: database_bootstrap_password
-        target: database_bootstrap_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: database_password
-        target: database_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
     volumes:
       - ./scripts/database_provision.py:/opt/tsing-radar/database_provision.py:ro
       - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
       - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${BOOTSTRAP_SECRET_ROOT:?Set BOOTSTRAP_SECRET_ROOT}/database_bootstrap_password
+        target: /run/secrets/database_bootstrap_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - prod-data
     depends_on:
@@ -61,16 +62,16 @@ services:
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["python", "/opt/tsing-radar/migration_with_lock.py"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
-    secrets:
-      - source: database_password
-        target: database_password
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
     volumes:
       - ./scripts/migration_with_lock.py:/opt/tsing-radar/migration_with_lock.py:ro
       - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
       - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - prod-data
     depends_on:
@@ -98,13 +99,17 @@ services:
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["/bin/sh", "/opt/tsing-radar/postgres-backup.sh"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
-    secrets:
-      - database_password
     volumes:
       - backup_data:/backups
       - ./scripts/postgres-backup.sh:/opt/tsing-radar/postgres-backup.sh:ro
       - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
       - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - prod-data
     depends_on:
@@ -131,11 +136,15 @@ services:
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["docker-entrypoint.sh", "postgres"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
-    secrets:
-      - restore_check_password
     volumes:
       - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
       - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/restore_check_password
+        target: /run/secrets/restore_check_password
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /var/lib/postgresql/data:size=512m,mode=0700
     networks:
@@ -156,11 +165,15 @@ services:
       RESTORE_CHECK_HOST: restore-check-db
       RESTORE_CHECK_PASSWORD_FILE: /run/secrets/restore_check_password
     entrypoint: ["/bin/sh", "/opt/tsing-radar/postgres-restore-check.sh"]
-    secrets:
-      - restore_check_password
     volumes:
       - backup_data:/backups:ro
       - ./scripts/postgres-restore-check.sh:/opt/tsing-radar/postgres-restore-check.sh:ro
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/restore_check_password
+        target: /run/secrets/restore_check_password
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - restore-check-data
     depends_on:
@@ -181,7 +194,3 @@ networks:
 
 volumes:
   backup_data: {}
-
-secrets:
-  restore_check_password:
-    file: ${SECRET_ROOT:?Set SECRET_ROOT}/restore_check_password
