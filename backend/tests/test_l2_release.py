@@ -382,6 +382,108 @@ def test_workflow_failure_records_stable_step_without_child_output():
     assert "backup" not in visited
 
 
+def test_subprocess_timeout_is_redacted_and_stable(monkeypatch):
+    canary = "synthetic-timeout-output-must-not-escape"
+
+    def timeout_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            ["synthetic-command", canary],
+            1,
+            output=canary,
+            stderr=canary,
+        )
+
+    monkeypatch.setattr(RUNNER.subprocess, "run", timeout_run)
+    with pytest.raises(RUNNER.RunnerError, match="subprocess_timeout") as failure:
+        RUNNER._run_command(["synthetic-command", canary], 1)
+    assert failure.value.exit_code == 124
+    assert canary not in str(failure.value)
+
+
+def test_backup_timeout_cleans_exact_one_shot_and_records_step(monkeypatch):
+    cleanup_calls: list[tuple[str, object]] = []
+    lock_probes: list[bool] = []
+
+    monkeypatch.setattr(RUNNER, "_resource_gate", lambda *_args: None)
+    monkeypatch.setattr(
+        RUNNER,
+        "_deployment_identifiers",
+        lambda: {
+            "PROD_DATABASE_NAME": "tsing_radar",
+            "PROD_DATABASE_USER": "tsing_radar",
+            "STAGE_DATABASE_NAME": "tsing_radar_stage",
+            "STAGE_DATABASE_USER": "tsing_radar_stage",
+        },
+    )
+    monkeypatch.setattr(
+        RUNNER,
+        "probe_job_lock",
+        lambda *_args: lock_probes.append(True),
+    )
+    monkeypatch.setattr(
+        RUNNER,
+        "cleanup_one_shot_action",
+        lambda action, runner: cleanup_calls.append((action, runner)),
+    )
+
+    def timeout_runner(arguments, timeout):
+        raise subprocess.TimeoutExpired(arguments, timeout, output="canary")
+
+    def execute_backup(_step, runner, *, backup_file=None):
+        del backup_file
+        return RUNNER._execute_step("backup", runner)
+
+    with pytest.raises(
+        RUNNER.RunnerError,
+        match="action_timeout_cleanup_attempted",
+    ) as failure:
+        RUNNER.execute_workflow(
+            "resume-after-migration-plan",
+            runner=timeout_runner,
+            step_executor=lambda step, runner: (
+                execute_backup(step, runner)
+                if step == "backup"
+                else None
+            ),
+        )
+    assert failure.value.exit_code == 124
+    assert failure.value.failed_step_id == "backup"
+    assert cleanup_calls == [("backup", timeout_runner)]
+    assert len(lock_probes) == 2
+    assert "canary" not in str(failure.value)
+
+
+def test_one_shot_timeout_cleanup_uses_exact_labels_and_no_volumes():
+    calls: list[list[str]] = []
+
+    def fake_runner(arguments, _timeout):
+        command = list(arguments)
+        calls.append(command)
+        if command[:2] == ["docker", "ps"]:
+            return _completed(stdout="backup-container-id\n")
+        if command[:2] == ["docker", "inspect"]:
+            return _completed(
+                stdout=json.dumps(
+                    {
+                        "com.docker.compose.project": RUNNER.PROJECT,
+                        "com.docker.compose.service": "backup",
+                    }
+                )
+            )
+        return _completed()
+
+    RUNNER.cleanup_one_shot_action("backup", fake_runner)
+    flattened = " ".join(part for command in calls for part in command)
+    assert f"label=com.docker.compose.project={RUNNER.PROJECT}" in flattened
+    assert "label=com.docker.compose.service=backup" in flattened
+    assert [command[-1] for command in calls if command[:2] == ["docker", "stop"]] == [
+        "backup-container-id"
+    ]
+    assert "down" not in flattened
+    assert "--volumes" not in flattened
+    assert "volume rm" not in flattened
+
+
 def test_runner_failure_report_emits_step_id_without_raw_output(
     monkeypatch,
     capsys,
@@ -526,6 +628,30 @@ def test_restore_primary_failure_still_runs_cleanup(monkeypatch):
     assert cleaned == [True]
 
 
+def test_restore_timeout_is_redacted_and_cleanup_is_attempted(monkeypatch):
+    cleaned: list[bool] = []
+
+    def timeout_runner(arguments, timeout):
+        raise subprocess.TimeoutExpired(arguments, timeout, output="restore-canary")
+
+    monkeypatch.setattr(
+        RUNNER,
+        "cleanup_restore_services",
+        lambda _runner: cleaned.append(True),
+    )
+    with pytest.raises(
+        RUNNER.RunnerError,
+        match="restore_check_timeout_cleanup_attempted",
+    ) as failure:
+        RUNNER._run_restore_check(
+            timeout_runner,
+            "tsing_radar-20260805T001122Z-Ab12z9.dump",
+        )
+    assert failure.value.exit_code == 124
+    assert cleaned == [True]
+    assert "restore-canary" not in str(failure.value)
+
+
 def test_restore_uses_only_the_workflow_backup_receipt(monkeypatch):
     calls: list[list[str]] = []
     cleaned: list[bool] = []
@@ -579,6 +705,26 @@ def test_backup_script_creates_unique_no_clobber_receipt_and_compose_has_no_stat
     assert 'sha256sum -c "$(basename "${target}.sha256")"' in backup_script
     assert backup_script.index("sha256sum -c") < backup_script.index("backup_created=")
     assert "BACKUP_FILE: ${BACKUP_FILE" not in jobs
+    assert "database secret unavailable or invalid" in backup_script
+    assert 'od -An -v -t x1 "$secret_path"' in backup_script
+    assert "--no-password" in backup_script
+    assert "PGCONNECT_TIMEOUT=10" in backup_script
+    assert "timeout -s TERM -k 10 840 pg_dump" in backup_script
+
+    restore_script = (
+        REPOSITORY_ROOT
+        / "deploy"
+        / "production"
+        / "scripts"
+        / "postgres-restore-check.sh"
+    ).read_text(encoding="utf-8")
+    assert "restore secret unavailable or invalid" in restore_script
+    assert 'od -An -v -t x1 "$secret_path"' in restore_script
+    assert "pg_restore --no-password" in restore_script
+    assert "psql --no-password" in restore_script
+    assert "PGCONNECT_TIMEOUT=10" in restore_script
+    assert "timeout -s TERM -k 10 840 pg_restore" in restore_script
+    assert jobs.count('cap_add: ["DAC_OVERRIDE"]') == 2
 
 
 def test_migration_container_probe_requires_exact_app_pythonpath(monkeypatch):

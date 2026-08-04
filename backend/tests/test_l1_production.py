@@ -697,6 +697,52 @@ def test_post_migration_verification_job_is_fixed_and_isolated():
     assert not module._post_migration_verification_contract(service)
 
 
+def test_root_database_job_secret_capability_and_noninteractive_contract():
+    path = ROOT / "scripts" / "check_l1_production.py"
+    spec = importlib.util.spec_from_file_location("check_l1_root_db_jobs", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    backup_script = (DEPLOY / "scripts" / "postgres-backup.sh").read_text(
+        encoding="utf-8"
+    )
+    service = {
+        "cap_drop": ["ALL"],
+        "cap_add": ["DAC_OVERRIDE"],
+        "security_opt": ["no-new-privileges:true"],
+    }
+    assert module._root_database_secret_job_contract(
+        service,
+        backup_script,
+        client_commands=("pg_dump",),
+    )
+
+    unsafe = dict(service, cap_add=[])
+    assert not module._root_database_secret_job_contract(
+        unsafe,
+        backup_script,
+        client_commands=("pg_dump",),
+    )
+    unsafe = dict(service, cap_add=["DAC_OVERRIDE", "NET_ADMIN"])
+    assert not module._root_database_secret_job_contract(
+        unsafe,
+        backup_script,
+        client_commands=("pg_dump",),
+    )
+    unsafe = dict(service, ports=["127.0.0.1:9999:9999"])
+    assert not module._root_database_secret_job_contract(
+        unsafe,
+        backup_script,
+        client_commands=("pg_dump",),
+    )
+    assert not module._root_database_secret_job_contract(
+        service,
+        backup_script.replace(" --no-password", ""),
+        client_commands=("pg_dump",),
+    )
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

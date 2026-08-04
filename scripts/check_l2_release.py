@@ -692,15 +692,32 @@ def _container_backup_restore_contract(
     network = f"{CONTAINER_PREFIX}{generation}-backup-network"
     source_name = f"{CONTAINER_PREFIX}{generation}-backup-source"
     restore_name = f"{CONTAINER_PREFIX}{generation}-backup-restore"
+    secret_volume = f"{CONTAINER_PREFIX}{generation}-backup-secrets"
+    bad_secret_volume = f"{CONTAINER_PREFIX}{generation}-backup-bad-secrets"
+    invalid_secret_volumes = {
+        "empty_secret": f"{CONTAINER_PREFIX}{generation}-backup-empty-secret",
+        "nul_secret": f"{CONTAINER_PREFIX}{generation}-backup-nul-secret",
+        "oversize_secret": f"{CONTAINER_PREFIX}{generation}-backup-oversize-secret",
+    }
+    run_names = {
+        "capability_probe": f"{CONTAINER_PREFIX}{generation}-backup-cap-probe",
+        "backup": f"{CONTAINER_PREFIX}{generation}-backup-job",
+        "missing_capability": f"{CONTAINER_PREFIX}{generation}-backup-no-cap",
+        "bad_password": f"{CONTAINER_PREFIX}{generation}-backup-bad-password",
+        "empty_secret": f"{CONTAINER_PREFIX}{generation}-backup-empty",
+        "nul_secret": f"{CONTAINER_PREFIX}{generation}-backup-nul",
+        "oversize_secret": f"{CONTAINER_PREFIX}{generation}-backup-oversize",
+        "restore": f"{CONTAINER_PREFIX}{generation}-restore-job",
+        "collision": f"{CONTAINER_PREFIX}{generation}-backup-collision",
+    }
     password = "dummyL2Backup_0123456789abcdef"
-    secret = temporary_path / "backup-password"
+    bad_password = "dummyL2Wrong_0123456789abcdef"
     backup_dir = temporary_path / "backups"
     failed_dir = temporary_path / "failed-backups"
     collision_dir = temporary_path / "collision-backups"
     fixtures_dir = temporary_path / "backup-fixtures"
     for directory in (backup_dir, failed_dir, collision_dir, fixtures_dir):
         directory.mkdir()
-    secret.write_text(password, encoding="utf-8")
     backup_script = DEPLOY / "scripts" / "postgres-backup.sh"
     restore_script = DEPLOY / "scripts" / "postgres-restore-check.sh"
 
@@ -724,11 +741,16 @@ def _container_backup_restore_contract(
     def backup_run(
         directory: Path,
         host: str,
-        *extra: str,
+        mounted_secret_volume: str,
+        container_name: str,
+        *,
+        add_secret_capability: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        return _docker(
+        arguments = [
             "run",
             "--rm",
+            "--name",
+            container_name,
             "--pull",
             "never",
             "--platform",
@@ -738,6 +760,11 @@ def _container_backup_restore_contract(
             "--read-only",
             "--cap-drop",
             "ALL",
+        ]
+        if add_secret_capability:
+            arguments.extend(("--cap-add", "DAC_OVERRIDE"))
+        arguments.extend(
+            (
             "--security-opt",
             "no-new-privileges:true",
             "--tmpfs",
@@ -751,8 +778,8 @@ def _container_backup_restore_contract(
             ),
             "--mount",
             (
-                f"type=bind,source={_bind_source(secret)},"
-                "target=/run/secrets/database_password,readonly"
+                f"type=volume,source={mounted_secret_volume},"
+                "target=/run/secrets,readonly"
             ),
             "--env",
             f"DATABASE_HOST={host}",
@@ -762,17 +789,110 @@ def _container_backup_restore_contract(
             "DATABASE_USER=l2_backup",
             "--env",
             "DATABASE_PASSWORD_FILE=/run/secrets/database_password",
-            *extra,
             "--entrypoint",
             "/bin/sh",
             POSTGRES_IMAGE,
             "/opt/postgres-backup.sh",
+            )
+        )
+        return _docker(
+            *arguments,
             expected=set(range(256)),
-            timeout=180,
+            timeout=60,
         )
 
+    _docker("volume", "create", secret_volume)
+    _docker("volume", "create", bad_secret_volume)
+    for volume in invalid_secret_volumes.values():
+        _docker("volume", "create", volume)
+    for volume, value in ((secret_volume, password), (bad_secret_volume, bad_password)):
+        _docker(
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--mount",
+            f"type=volume,source={volume},target=/secrets",
+            "--entrypoint",
+            "/bin/sh",
+            POSTGRES_IMAGE,
+            "-c",
+            (
+                "umask 077; printf %s \"$1\" > /secrets/database_password; "
+                "printf %s \"$1\" > /secrets/restore_check_password; "
+                "chown 10001:10001 /secrets/database_password /secrets/restore_check_password; "
+                "chmod 0400 /secrets/database_password /secrets/restore_check_password"
+            ),
+            "secret-setup",
+            value,
+        )
+    invalid_secret_writers = {
+        "empty_secret": ": > /secrets/database_password",
+        "nul_secret": "printf 'bad\\000value' > /secrets/database_password",
+        "oversize_secret": (
+            "dd if=/dev/zero of=/secrets/database_password bs=4097 count=1 2>/dev/null"
+        ),
+    }
+    for kind, volume in invalid_secret_volumes.items():
+        _docker(
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--mount",
+            f"type=volume,source={volume},target=/secrets",
+            "--entrypoint",
+            "/bin/sh",
+            POSTGRES_IMAGE,
+            "-c",
+            (
+                "umask 077; "
+                + invalid_secret_writers[kind]
+                + "; chown 10001:10001 /secrets/database_password; "
+                "chmod 0400 /secrets/database_password"
+            ),
+        )
     _docker("network", "create", network)
     try:
+        capability_probe = _docker(
+            "run",
+            "--rm",
+            "--name",
+            run_names["capability_probe"],
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "DAC_OVERRIDE",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--mount",
+            f"type=volume,source={secret_volume},target=/run/secrets,readonly",
+            "--entrypoint",
+            "/bin/sh",
+            POSTGRES_IMAGE,
+            "-c",
+            (
+                "test \"$(stat -c '%u:%g:%a' /run/secrets/database_password)\" = '10001:10001:400' && "
+                "test \"$(awk '/^CapEff:/{print $2}' /proc/self/status)\" = '0000000000000002' && "
+                "cat /run/secrets/database_password >/dev/null"
+            ),
+            expected=set(range(256)),
+        )
         for name, alias, user, database in (
             (source_name, "source-postgres", "l2_backup", "l2_backup"),
             (restore_name, "restore-postgres", "restore_check", "restore_check"),
@@ -813,7 +933,12 @@ def _container_backup_restore_contract(
             "--command=CREATE TABLE synthetic_backup_probe(id integer); INSERT INTO synthetic_backup_probe VALUES (1)",
             expected=set(range(256)),
         )
-        backup = backup_run(backup_dir, "source-postgres")
+        backup = backup_run(
+            backup_dir,
+            "source-postgres",
+            secret_volume,
+            run_names["backup"],
+        )
         receipt = (
             RUNNER._parse_backup_created(backup.stdout, "l2_backup")
             if backup.returncode == 0
@@ -824,6 +949,8 @@ def _container_backup_restore_contract(
         checksum = _docker(
             "run",
             "--rm",
+            "--name",
+            run_names["restore"],
             "--pull",
             "never",
             "--platform",
@@ -854,6 +981,8 @@ def _container_backup_restore_contract(
             "--read-only",
             "--cap-drop",
             "ALL",
+            "--cap-add",
+            "DAC_OVERRIDE",
             "--security-opt",
             "no-new-privileges:true",
             "--tmpfs",
@@ -867,8 +996,8 @@ def _container_backup_restore_contract(
             ),
             "--mount",
             (
-                f"type=bind,source={_bind_source(secret)},"
-                "target=/run/secrets/restore_check_password,readonly"
+                f"type=volume,source={secret_volume},"
+                "target=/run/secrets,readonly"
             ),
             "--env",
             "RESTORE_CHECK_HOST=restore-postgres",
@@ -894,11 +1023,38 @@ def _container_backup_restore_contract(
             "--command=SELECT count(*) FROM synthetic_backup_probe",
             expected=set(range(256)),
         )
-        failed = backup_run(failed_dir, "missing-postgres")
+        missing_capability_started = time.monotonic()
+        missing_capability = backup_run(
+            failed_dir,
+            "source-postgres",
+            secret_volume,
+            run_names["missing_capability"],
+            add_secret_capability=False,
+        )
+        missing_capability_elapsed = time.monotonic() - missing_capability_started
+        bad_password_started = time.monotonic()
+        bad_password_result = backup_run(
+            failed_dir,
+            "source-postgres",
+            bad_secret_volume,
+            run_names["bad_password"],
+        )
+        bad_password_elapsed = time.monotonic() - bad_password_started
+        invalid_secret_results = {
+            kind: backup_run(
+                failed_dir,
+                "source-postgres",
+                volume,
+                run_names[kind],
+            )
+            for kind, volume in invalid_secret_volumes.items()
+        }
 
         collision = _docker(
             "run",
             "--rm",
+            "--name",
+            run_names["collision"],
             "--pull",
             "never",
             "--platform",
@@ -908,6 +1064,8 @@ def _container_backup_restore_contract(
             "--read-only",
             "--cap-drop",
             "ALL",
+            "--cap-add",
+            "DAC_OVERRIDE",
             "--security-opt",
             "no-new-privileges:true",
             "--tmpfs",
@@ -921,8 +1079,8 @@ def _container_backup_restore_contract(
             ),
             "--mount",
             (
-                f"type=bind,source={_bind_source(secret)},"
-                "target=/run/secrets/database_password,readonly"
+                f"type=volume,source={secret_volume},"
+                "target=/run/secrets,readonly"
             ),
             "--mount",
             f"type=bind,source={_bind_source(fake_date)},target=/usr/bin/date,readonly",
@@ -944,11 +1102,34 @@ def _container_backup_restore_contract(
         )
         outputs = "".join(
             item.stdout + item.stderr
-            for item in (seed, backup, checksum, restore, restored_count, failed, collision)
+            for item in (
+                capability_probe,
+                seed,
+                backup,
+                checksum,
+                restore,
+                restored_count,
+                missing_capability,
+                bad_password_result,
+                *invalid_secret_results.values(),
+                collision,
+            )
         )
         collision_entries = sorted(path.name for path in collision_dir.iterdir())
+        residual_job_containers = []
+        for name in run_names.values():
+            observed = _docker(
+                "ps",
+                "--all",
+                "--quiet",
+                "--filter",
+                f"name=^/{name}$",
+            )
+            if observed.stdout.strip():
+                residual_job_containers.append(name)
         passed = (
-            seed.returncode == 0
+            capability_probe.returncode == 0
+            and seed.returncode == 0
             and backup.returncode == 0
             and backup_file.is_file()
             and checksum_file.is_file()
@@ -956,12 +1137,18 @@ def _container_backup_restore_contract(
             and restore.returncode == 0
             and restored_count.returncode == 0
             and restored_count.stdout.strip() == "1"
-            and failed.returncode != 0
+            and missing_capability.returncode == 78
+            and missing_capability_elapsed < 30
+            and bad_password_result.returncode != 0
+            and bad_password_elapsed < 30
+            and all(result.returncode == 78 for result in invalid_secret_results.values())
             and not any(failed_dir.iterdir())
             and collision.returncode == 73
             and collision_entries == [collision_name]
             and collision_target.read_bytes() == b"synthetic collision sentinel\n"
             and password not in outputs
+            and bad_password not in outputs
+            and not residual_job_containers
         )
         return {
             **_check(
@@ -974,11 +1161,21 @@ def _container_backup_restore_contract(
                 "backup": backup.returncode,
                 "checksum": checksum.returncode,
                 "restore": restore.returncode,
-                "failed_backup": failed.returncode,
+                "missing_capability": missing_capability.returncode,
+                "bad_password": bad_password_result.returncode,
+                **{
+                    kind: result.returncode
+                    for kind, result in invalid_secret_results.items()
+                },
                 "collision": collision.returncode,
+            },
+            "observed_fast_failure_seconds": {
+                "missing_capability": round(missing_capability_elapsed, 3),
+                "bad_password": round(bad_password_elapsed, 3),
             },
             "receipt_parsed": bool(receipt),
             "failure_partials_remaining": sum(1 for _ in failed_dir.iterdir()),
+            "residual_job_container_count": len(residual_job_containers),
             "collision_partials_remaining": max(0, len(collision_entries) - 1),
             "collision_reason": (
                 "target_collision"
@@ -995,8 +1192,23 @@ def _container_backup_restore_contract(
             ),
         }
     finally:
-        _docker("rm", "-f", source_name, restore_name, expected={0, 1})
+        _docker(
+            "rm",
+            "-f",
+            source_name,
+            restore_name,
+            *run_names.values(),
+            expected={0, 1},
+        )
         _docker("network", "rm", network, expected={0, 1})
+        _docker(
+            "volume",
+            "rm",
+            secret_volume,
+            bad_secret_volume,
+            *invalid_secret_volumes.values(),
+            expected={0, 1},
+        )
 
 
 def _cleanup_with_runner() -> None:

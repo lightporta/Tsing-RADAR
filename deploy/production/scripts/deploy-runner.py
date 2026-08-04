@@ -109,6 +109,13 @@ LOCKED_ACTIONS = {
 }
 
 RESTORE_SERVICES = ("restore-check-db", "restore-check")
+ONE_SHOT_TIMEOUT_SERVICES = {
+    "prod-db-provision": ("prod-db-provision",),
+    "prod-db-verification": ("prod-db-provision",),
+    "migration": ("migration",),
+    "post-migration-verification": ("post-migration-verification",),
+    "backup": ("backup",),
+}
 WORKFLOW_ACTIONS = (
     "first-deploy-plan",
     "resume-after-migration-plan",
@@ -297,18 +304,24 @@ def _safe_environment() -> dict[str, str]:
 
 
 def _run_command(arguments: Sequence[str], timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        list(arguments),
-        cwd=ROOT,
-        env=_safe_environment(),
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        shell=False,
-    )
+    try:
+        return subprocess.run(
+            list(arguments),
+            cwd=ROOT,
+            env=_safe_environment(),
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            shell=False,
+        )
+    except subprocess.TimeoutExpired:
+        # Never propagate argv or captured child output through the stable
+        # deployment result.  The action-aware caller performs exact labelled
+        # cleanup before reporting the timeout.
+        raise RunnerError("subprocess_timeout", 124) from None
 
 
 def _deployment_identifiers(path: Path = ENV_FILE) -> dict[str, str]:
@@ -615,6 +628,96 @@ def cleanup_restore_services(runner: CommandRunner = _run_command) -> None:
             raise RunnerError("restore_cleanup_remove_failed_manual_action_required")
 
 
+def _one_shot_container_ids(
+    action_id: str,
+    runner: CommandRunner,
+) -> dict[str, str]:
+    services = ONE_SHOT_TIMEOUT_SERVICES.get(action_id)
+    if services is None:
+        raise RunnerError("action_timeout_cleanup_not_supported", 124)
+    found: dict[str, str] = {}
+    for service in services:
+        result = runner(
+            [
+                "docker",
+                "ps",
+                "--all",
+                "--quiet",
+                "--filter",
+                f"label=com.docker.compose.project={PROJECT}",
+                "--filter",
+                f"label=com.docker.compose.service={service}",
+            ],
+            20,
+        )
+        if result.returncode != 0:
+            raise RunnerError("action_timeout_cleanup_discovery_failed", 124)
+        identifiers = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if len(identifiers) > 1:
+            raise RunnerError("action_timeout_cleanup_ambiguous", 124)
+        if identifiers:
+            found[service] = identifiers[0]
+    return found
+
+
+def cleanup_one_shot_action(
+    action_id: str,
+    runner: CommandRunner = _run_command,
+) -> None:
+    """Remove only an exact project/service-labelled timed-out one-shot.
+
+    This function never invokes a Compose down operation and never removes a
+    volume.  Any discovery, label, stop or remove ambiguity fails closed with
+    a stable manual-action reason.
+    """
+
+    containers = _one_shot_container_ids(action_id, runner)
+    for service, identifier in containers.items():
+        inspect_result = runner(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                "{{json .Config.Labels}}",
+                identifier,
+            ],
+            20,
+        )
+        if inspect_result.returncode != 0:
+            raise RunnerError("action_timeout_cleanup_inspect_failed", 124)
+        try:
+            labels = json.loads(inspect_result.stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise RunnerError("action_timeout_cleanup_labels_invalid", 124) from exc
+        if (
+            labels.get("com.docker.compose.project") != PROJECT
+            or labels.get("com.docker.compose.service") != service
+        ):
+            raise RunnerError("action_timeout_cleanup_label_mismatch", 124)
+    for service in reversed(ONE_SHOT_TIMEOUT_SERVICES[action_id]):
+        identifier = containers.get(service)
+        if identifier is None:
+            continue
+        stopped = runner(["docker", "stop", "--time", "10", identifier], 30)
+        if stopped.returncode != 0:
+            raise RunnerError(
+                "action_timeout_cleanup_stop_failed_manual_action_required",
+                124,
+            )
+        removed = runner(["docker", "rm", identifier], 30)
+        if removed.returncode != 0:
+            raise RunnerError(
+                "action_timeout_cleanup_remove_failed_manual_action_required",
+                124,
+            )
+
+
+def _is_timeout_failure(error: BaseException) -> bool:
+    return isinstance(error, subprocess.TimeoutExpired) or (
+        isinstance(error, RunnerError) and error.reason == "subprocess_timeout"
+    )
+
+
 def _parse_backup_created(stdout: str, database_name: str) -> str:
     """Return the one backup created by the immediately preceding job.
 
@@ -665,16 +768,30 @@ def _run_restore_check(runner: CommandRunner, backup_file: str) -> None:
     ]
     primary_error: RunnerError | None = None
     try:
-        database_result = runner(start_database, 210)
-        if database_result.returncode != 0:
-            primary_error = RunnerError("restore_check_failed")
-        else:
-            restore_result = runner(restore, 1200)
-            if restore_result.returncode != 0:
+        try:
+            database_result = runner(start_database, 210)
+            if database_result.returncode != 0:
                 primary_error = RunnerError("restore_check_failed")
+            else:
+                restore_result = runner(restore, 1200)
+                if restore_result.returncode != 0:
+                    primary_error = RunnerError("restore_check_failed")
+        except (RunnerError, subprocess.TimeoutExpired) as exc:
+            if _is_timeout_failure(exc):
+                primary_error = RunnerError(
+                    "restore_check_timeout_cleanup_attempted",
+                    124,
+                )
+            else:
+                raise
     finally:
         try:
             cleanup_restore_services(runner)
+        except subprocess.TimeoutExpired:
+            raise RunnerError(
+                "restore_cleanup_timeout_manual_action_required",
+                124,
+            ) from None
         except RunnerError as cleanup_error:
             raise cleanup_error
     if primary_error is not None:
@@ -705,7 +822,18 @@ def _execute_step(
     if action_id == "restore-check":
         if backup_file is None:
             raise RunnerError("workflow_backup_receipt_missing", 78)
-        _run_restore_check(runner, backup_file)
+        try:
+            _run_restore_check(runner, backup_file)
+        except RunnerError as exc:
+            if exc.reason == "restore_check_timeout_cleanup_attempted":
+                try:
+                    probe_job_lock()
+                except RunnerError:
+                    raise RunnerError(
+                        "restore_check_timeout_cleanup_failed_manual_action_required",
+                        124,
+                    ) from None
+            raise
         probe_job_lock()
         return None
     identifiers = (
@@ -714,7 +842,21 @@ def _execute_step(
         else None
     )
     command, timeout = command_for_action(action_id, identifiers)
-    result = runner(command, timeout)
+    try:
+        result = runner(command, timeout)
+    except (RunnerError, subprocess.TimeoutExpired) as exc:
+        if not _is_timeout_failure(exc):
+            raise
+        try:
+            cleanup_one_shot_action(action_id, runner)
+            if action_id in LOCKED_ACTIONS:
+                probe_job_lock()
+        except (RunnerError, subprocess.TimeoutExpired):
+            raise RunnerError(
+                "action_timeout_cleanup_failed_manual_action_required",
+                124,
+            ) from None
+        raise RunnerError("action_timeout_cleanup_attempted", 124) from None
     if result.returncode != 0:
         raise RunnerError("action_failed")
     created_backup = None

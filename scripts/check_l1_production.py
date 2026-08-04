@@ -290,6 +290,33 @@ def _post_migration_verification_contract(service: dict[str, Any]) -> bool:
     )
 
 
+def _root_database_secret_job_contract(
+    service: dict[str, Any],
+    script_text: str,
+    *,
+    client_commands: tuple[str, ...],
+) -> bool:
+    """Require the narrow root-only capability and noninteractive DB tools."""
+
+    return (
+        service.get("user") in (None, "", "0", "0:0")
+        and service.get("cap_drop") == ["ALL"]
+        and service.get("cap_add") == ["DAC_OVERRIDE"]
+        and service.get("security_opt") == ["no-new-privileges:true"]
+        and not service.get("ports")
+        and "secret_size=$(wc -c" in script_text
+        and "secret_size\" -le 4096" in script_text
+        and 'od -An -v -t x1 "$secret_path"' in script_text
+        and '[ "$octet" != "00" ]' in script_text
+        and "if ! secret_value=$(cat" in script_text
+        and "PGCONNECT_TIMEOUT=10" in script_text
+        and "statement_timeout=600000" in script_text
+        and "lock_timeout=10000" in script_text
+        and all(f"{command} --no-password" in script_text for command in client_commands)
+        and "timeout -s TERM -k " in script_text
+    )
+
+
 def _secret_is_strong(value: str) -> bool:
     placeholders = {"admin", "secret", "changeme", "change-me"}
     return (
@@ -997,6 +1024,28 @@ def run_checks(
                     resume_verification["services"]["post-migration-verification"]
                 ),
                 "post-migration resume verification job is not fixed and isolated",
+            )
+        )
+        backup_script = (DEPLOY / "scripts" / "postgres-backup.sh").read_text(
+            encoding="utf-8"
+        )
+        restore_script = (
+            DEPLOY / "scripts" / "postgres-restore-check.sh"
+        ).read_text(encoding="utf-8")
+        checks.append(
+            _check(
+                "jobs.root_database_secret_reader_is_narrow_and_noninteractive",
+                _root_database_secret_job_contract(
+                    backup["services"]["backup"],
+                    backup_script,
+                    client_commands=("pg_dump",),
+                )
+                and _root_database_secret_job_contract(
+                    restore["services"]["restore-check"],
+                    restore_script,
+                    client_commands=("pg_restore", "psql"),
+                ),
+                "backup/restore secret capability, validation, or noninteractive timeout differs",
             )
         )
         job_lock_mounts = {
