@@ -1,6 +1,7 @@
-"""向量数据库服务（Milvus 占位 + 内存兜底）。
+"""向量数据库服务（Milvus 占位 + 词项特征哈希内存兜底）。
 
-生产期配置 MILVUS_HOST 后启用真实向量检索；否则降级为内存 hash 向量。
+生产期配置 MILVUS_HOST 后启用真实向量检索；否则仅做确定性词项重合回退，
+不得把该回退描述为可靠的语义 embedding。
 """
 
 from typing import Any, Optional
@@ -10,7 +11,7 @@ from app.services.matching import cosine_similarity, hash_embedding
 
 
 class InMemoryVectorStore:
-    """内存向量库（开发期兜底，确定性 hash 向量）。"""
+    """内存向量库（开发期兜底，确定性词项特征哈希）。"""
 
     def __init__(self) -> None:
         self._store: dict[str, tuple[list[float], dict[str, Any]]] = {}

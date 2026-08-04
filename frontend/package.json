@@ -1,6 +1,6 @@
 {
   "name": "tsing-radar-frontend",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
-    "lint": "eslint . --ext .vue,.ts,.tsx --fix",
+    "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{vue,ts,tsx,scss}\""
   },
   "dependencies": {

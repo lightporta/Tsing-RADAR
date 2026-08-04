@@ -1,39 +1,17 @@
-"""[PATCH] 导师列表与排序路由。
+"""导师列表与排序路由。"""
 
-修改点：
-- GET /mentors 添加分页参数 page/size
-- 响应增加 total/page/size 字段
-- 添加 response_model 声明（通过 dict 类型提示）
-"""
-
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from app.services.constants import SORT_METRICS
-from app.services.data_loader import load_mentors
+from app.services.data_loader import load_mentors, mentor_data_summary
 
 router = APIRouter()
 
 
 @router.get("/mentors")
-def get_all_mentors(
-    # [PATCH] 添加分页参数
-    page: int = Query(1, ge=1),
-    size: int = Query(50, ge=1, le=200),
-):
-    """返回扩展后的导师数据（含 radar_traits/popularity/sector/projects/recruitments）。
-
-    [PATCH] 添加分页支持：page/size 参数，响应包含 total/page/size。
-    """
-    all_mentors = load_mentors()
-    total = len(all_mentors)
-    start = (page - 1) * size
-    end = start + size
-    return {
-        "data": all_mentors[start:end],
-        "total": total,
-        "page": page,
-        "size": size,
-    }
+def get_all_mentors():
+    """只返回通过证据审核与发布门的导师数据。"""
+    return {"data": load_mentors(), "meta": mentor_data_summary()}
 
 
 @router.get("/mentors/sort")
@@ -51,4 +29,8 @@ def sort_mentors(metric: str):
         return float((m.get("radar_traits", {}) or {}).get(metric, 0))
 
     sorted_data = sorted(load_mentors(), key=metric_value, reverse=True)
-    return {"data": sorted_data, "metric": metric}
+    return {
+        "data": sorted_data,
+        "metric": metric,
+        "meta": mentor_data_summary(),
+    }

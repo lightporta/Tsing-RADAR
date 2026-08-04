@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { MatchedAdvisor } from '@/types/advisor'
-import { TRAITS, TRAIT_LABEL_MAP } from '@/types/advisor'
+import { TRAITS } from '@/types/advisor'
 
 // =====================================================================
 // 导师详情面板（卡片展开后显示，文档 §3.4 / §4.3.1）
@@ -24,8 +24,44 @@ const projects = computed(() => props.advisor.projects || [])
 
 <template>
   <div class="advisor-detail">
+    <div v-if="advisor.explanation" class="section evidence-section">
+      <h4 class="section-title">可核验证据与不确定性</h4>
+      <p>
+        证据覆盖 {{ ((advisor.evidence_coverage ?? 0) * 100).toFixed(0) }}% ·
+        置信度 {{ ((advisor.evidence_confidence ?? 0) * 100).toFixed(0) }}% ·
+        适配分 {{ (advisor.fit_score ?? advisor.score).toFixed(1) }}
+      </p>
+      <ul class="evidence-list">
+        <li v-for="claim in advisor.explanation.supporting_evidence" :key="claim.statement">
+          <strong>支持：</strong>{{ claim.statement }}
+          <span v-for="citation in claim.citations" :key="citation.evidence_id" class="citation">
+            <a
+              v-if="citation.source_url"
+              :href="citation.source_url"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              来源
+            </a>
+            <span v-else>{{ citation.citation }}</span>
+            · {{ new Date(citation.captured_at).toLocaleDateString() }}
+            · {{ (citation.confidence * 100).toFixed(0) }}%
+          </span>
+        </li>
+        <li v-for="claim in advisor.explanation.counter_evidence" :key="claim.statement">
+          <strong>反证：</strong>{{ claim.statement }}
+        </li>
+        <li v-for="item in advisor.explanation.uncertainties" :key="item">
+          <strong>不确定：</strong>{{ item }}
+        </li>
+        <li v-for="item in advisor.explanation.questions_to_verify" :key="item">
+          <strong>待核实：</strong>{{ item }}
+        </li>
+      </ul>
+    </div>
+
     <!-- 六维特质条 -->
-    <div class="section">
+    <div v-if="advisor.radar_traits" class="section">
       <h4 class="section-title">🎯 六维导师特质</h4>
       <div class="trait-bars">
         <div v-for="row in traitRows" :key="row.label" class="trait-row">
@@ -95,6 +131,34 @@ const projects = computed(() => props.advisor.projects || [])
     color: $text-regular;
     margin-bottom: $spacing-sm;
   }
+}
+
+.evidence-section {
+  padding: $spacing-md;
+  background: rgba(64, 158, 255, 0.04);
+  border-radius: 8px;
+
+  > p {
+    font-size: 12px;
+    color: $text-secondary;
+  }
+}
+
+.evidence-list {
+  margin-top: $spacing-sm;
+  display: grid;
+  gap: 6px;
+
+  li {
+    font-size: 11px;
+    color: $text-regular;
+  }
+}
+
+.citation {
+  display: block;
+  margin-left: 12px;
+  color: $text-secondary;
 }
 
 .trait-bars {

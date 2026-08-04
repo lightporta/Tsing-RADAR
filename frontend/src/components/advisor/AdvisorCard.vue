@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import MiniRadar from '@/components/charts/MiniRadar.vue'
 import AdvisorDetail from './AdvisorDetail.vue'
@@ -24,8 +25,13 @@ const deptColorAvatar = computed(() => deptColor(props.advisor.dept) + '22')
 
 const advisorStore = useAdvisorStore()
 const userStore = useUserStore()
+const router = useRouter()
 const expanded = ref(false)
 const feedbackGiven = ref<1 | -1 | null>(null)
+const comparisonKey = computed(() => props.advisor.advisor_id || props.advisor.name)
+const compared = computed(() =>
+  advisorStore.comparisonIds.includes(comparisonKey.value),
+)
 
 function onClick() {
   if (advisorStore.selectedName === props.advisor.name) {
@@ -42,17 +48,18 @@ function toggleExpand(e: Event) {
   expanded.value = !expanded.value
 }
 
-// 联系导师邮件
+// A5 只进入站内行动准备，不发邮件或联系第三方。
 function contactAdvisor() {
-  const email = props.advisor.contact_email
-  if (!email) {
-    ElMessage.warning('该导师未公开邮箱')
+  router.push('/profile')
+}
+
+function toggleCompare(e: Event) {
+  e.stopPropagation()
+  if (!compared.value && advisorStore.comparisonIds.length >= 3) {
+    ElMessage.warning('最多对比 3 位导师')
     return
   }
-  const student = userStore.profile
-  const subject = `【Tsing-RADAR 推荐】关于攻读您研究生的咨询 - ${student.name || '同学'}`
-  const body = `尊敬的${props.advisor.name}老师：\n\n您好！我是${student.dept} ${student.category}的${student.name || '同学'}，通过 Tsing-RADAR 清研寻师雷达了解到您的研究方向，与我的兴趣高度契合，希望能有机会加入您的课题组。\n\n我的研究兴趣：${student.interest_tags.join('、')}\n\n期待您的回复。\n\n${student.name || ''}\n${student.email || ''}`
-  window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+  advisorStore.toggleComparison(comparisonKey.value)
 }
 
 // 评价反馈
@@ -61,7 +68,6 @@ async function giveFeedback(rating: 1 | -1) {
   feedbackGiven.value = rating
   try {
     await submitFeedback({
-      student_id: userStore.profile.student_id || 'anonymous',
       advisor_id: props.advisor.name,
       rating,
     })
@@ -90,22 +96,26 @@ async function giveFeedback(rating: 1 | -1) {
             {{ advisor.name }}
             <span v-if="advisor.tags?.includes('院士')" class="badge院士">院士</span>
           </h3>
-          <p class="dept">{{ advisor.dept }}</p>
-          <p class="field text-ellipsis">{{ advisor.field }}</p>
+          <p v-if="advisor.dept" class="dept">{{ advisor.dept }}</p>
+          <p v-if="advisor.field" class="field text-ellipsis">{{ advisor.field }}</p>
         </div>
       </div>
 
       <!-- 中：标签 + 契合度 -->
       <div class="card-middle">
         <div class="tags">
-          <span v-for="tag in advisor.tags.slice(0, 3)" :key="tag" class="tag">{{ tag }}</span>
+          <span v-for="tag in (advisor.tags || []).slice(0, 3)" :key="tag" class="tag">{{ tag }}</span>
         </div>
         <div class="score-row">
           <div class="synergy">
-            <span class="synergy-label">契合度</span>
-            <span class="synergy-value">{{ advisor.synergy || advisor.score }}<small>%</small></span>
+            <span class="synergy-label">保守排序</span>
+            <span class="synergy-value">{{ advisor.score.toFixed(1) }}</span>
           </div>
-          <span class="popularity-tag" :class="{ hot: advisor.popularity > 60 }">
+          <span
+            v-if="typeof advisor.popularity === 'number'"
+            class="popularity-tag"
+            :class="{ hot: advisor.popularity > 60 }"
+          >
             {{ advisor.popularity > 60 ? '🔥 热门' : '❄️ 冷门' }}
           </span>
         </div>
@@ -114,15 +124,23 @@ async function giveFeedback(rating: 1 | -1) {
       <!-- 右：迷你雷达 -->
       <div class="card-right">
         <MiniRadar
+          v-if="advisor.radar_traits"
           :advisor-traits="advisor.radar_traits"
           :student-weights="userStore.profile.weights"
           :size="80"
         />
+        <span v-else class="evidence-mini">
+          证据 {{ ((advisor.evidence_coverage ?? 0) * 100).toFixed(0) }}%
+        </span>
         <button class="expand-btn" :class="{ open: expanded }" aria-label="展开详情" @click="toggleExpand">
           <el-icon><ArrowDown /></el-icon>
         </button>
       </div>
     </div>
+
+    <button class="compare-btn" :aria-pressed="compared" @click="toggleCompare">
+      {{ compared ? '移出对比' : '加入对比' }}
+    </button>
 
     <!-- 展开详情面板 -->
     <transition name="slide-up">
@@ -131,7 +149,7 @@ async function giveFeedback(rating: 1 | -1) {
         <div class="card-actions">
           <button class="action-btn primary" @click="contactAdvisor">
             <el-icon><Message /></el-icon>
-            联系导师
+            准备简历
           </button>
           <button
             class="action-btn"
@@ -314,6 +332,19 @@ async function giveFeedback(rating: 1 | -1) {
   margin-top: $spacing-md;
   padding-top: $spacing-md;
   border-top: 1px dashed $color-border;
+}
+
+.compare-btn {
+  margin-top: $spacing-sm;
+  color: $color-primary;
+  font-size: 11px;
+}
+
+.evidence-mini {
+  max-width: 70px;
+  text-align: center;
+  font-size: 11px;
+  color: $text-secondary;
 }
 
 .card-actions {

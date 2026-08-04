@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import ScatterChart from './ScatterChart.vue'
 import RadarChartLarge from './RadarChartLarge.vue'
-import { useAdvisorStore, quadrantName } from '@/stores/useAdvisorStore'
+import { useAdvisorStore } from '@/stores/useAdvisorStore'
 import { useUserStore } from '@/stores/useUserStore'
 import { TRAITS } from '@/types/advisor'
 import { topTraits } from '@/utils/synergy'
@@ -29,7 +29,7 @@ const quadrantColors: Record<string, string> = {
 
 // 大雷达图下方的 3 条核心匹配理由
 const matchReasons = computed<string[]>(() => {
-  if (!selected.value) return []
+  if (!selected.value?.radar_traits) return []
   const tops = topTraits(selected.value.radar_traits, 3)
   return tops.map((k) => {
     const score = selected.value!.radar_traits[k]
@@ -75,22 +75,31 @@ const matchReasons = computed<string[]>(() => {
           <p class="advisor-dept">{{ selected.dept }} · {{ selected.field }}</p>
         </div>
         <button class="back-btn" @click="advisorStore.selectAdvisor(null)">
-          <el-icon><Back /></el-icon>
+          <el-icon aria-hidden="true">←</el-icon>
           返回散点图
         </button>
       </div>
 
       <div class="radar-body">
         <RadarChartLarge
+          v-if="selected.radar_traits"
           :advisor="selected"
           :student-weights="userStore.profile.weights"
         />
+        <div v-else class="evidence-overview">
+          <strong>当前只展示证据化匹配结果</strong>
+          <p>
+            证据覆盖 {{ ((selected.evidence_coverage ?? 0) * 100).toFixed(0) }}% ·
+            置信度 {{ ((selected.evidence_confidence ?? 0) * 100).toFixed(0) }}%
+          </p>
+          <p>缺少经审核的六维导师特质，不绘制雷达图。</p>
+        </div>
       </div>
 
       <div class="radar-footer">
         <div class="synergy-score">
-          <span class="score-label">合伙人契合指数</span>
-          <span class="score-value">{{ selected.synergy || selected.score }}<small>%</small></span>
+          <span class="score-label">保守排序分</span>
+          <span class="score-value">{{ selected.score.toFixed(1) }}</span>
         </div>
         <ul class="match-reasons">
           <li v-for="(reason, i) in matchReasons" :key="i">{{ reason }}</li>
@@ -209,6 +218,18 @@ const matchReasons = computed<string[]>(() => {
   min-height: 280px;
   display: flex;
   justify-content: center;
+}
+
+.evidence-overview {
+  margin: auto;
+  padding: $spacing-xl;
+  text-align: center;
+  color: $text-secondary;
+
+  p {
+    margin-top: $spacing-sm;
+    font-size: 12px;
+  }
 }
 
 .radar-footer {

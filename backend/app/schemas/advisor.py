@@ -1,8 +1,10 @@
 """导师 / 匹配 / 对话相关 Pydantic 模型。"""
 
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel
+
+from app.schemas.matching import MatchRequest
 
 
 class LLMMessage(BaseModel):
@@ -11,21 +13,12 @@ class LLMMessage(BaseModel):
 
 
 class LLMChatRequest(BaseModel):
-    # [PATCH] 增加 model 字段，兼容清小搭传入的 OpenAI 格式
-    model: Optional[str] = None
     messages: list[LLMMessage]
     session_id: Optional[str] = None
-    stream: Optional[bool] = True
 
 
 class LLMEmbeddingRequest(BaseModel):
     text: str
-
-
-class MatchRequest(BaseModel):
-    interest: str
-    portrait: Optional[dict[str, Any]] = None
-    weight: Optional[dict[str, float]] = None
 
 
 class MatchedAdvisorOut(BaseModel):

@@ -1,0 +1,109 @@
+(backend_proxy) {
+    request_body {
+        max_size 1MB
+    }
+    reverse_proxy backend:8000 {
+        header_up -Forwarded
+        header_up -X-Forwarded-For
+        header_up -X-Forwarded-Host
+        header_up -X-Forwarded-Port
+        header_up -X-Forwarded-Proto
+        header_up -X-Real-IP
+        transport http {
+            dial_timeout 3s
+            response_header_timeout 30s
+        }
+    }
+}
+
+{$WEB_HOST} {
+    header -Server
+
+    @forwarded header Forwarded *
+    respond @forwarded "Forwarded headers are not accepted" 400
+
+    @public_get {
+        method GET
+        path /health/live /health/ready /api/session /api/mentors /api/mentors/sort /api/recruitments /api/recruitments/mine /api/scatter /api/applications
+    }
+    handle @public_get {
+        import backend_proxy
+    }
+
+    @public_get_dynamic {
+        method GET
+        path_regexp public_get_dynamic ^/api/(interviews/[A-Za-z0-9_-]+|applications/[A-Za-z0-9_-]+)$
+    }
+    handle @public_get_dynamic {
+        import backend_proxy
+    }
+
+    @public_post {
+        method POST
+        path /api/feedback /api/interviews /api/match /api/recruitments /api/applications
+    }
+    handle @public_post {
+        import backend_proxy
+    }
+
+    @interview_answer {
+        method POST
+        path_regexp interview_answer ^/api/interviews/[A-Za-z0-9_-]+/(answers|confirm)$
+    }
+    handle @interview_answer {
+        import backend_proxy
+    }
+
+    @profile_or_application_patch {
+        method PATCH
+        path_regexp patch_paths ^/api/(interviews/[A-Za-z0-9_-]+/profile|applications/[A-Za-z0-9_-]+)$
+    }
+    handle @profile_or_application_patch {
+        import backend_proxy
+    }
+
+    @session_delete {
+        method DELETE
+        path /api/session
+    }
+    handle @session_delete {
+        import backend_proxy
+    }
+
+    @application_delete {
+        method DELETE
+        path_regexp delete_application ^/api/applications/[A-Za-z0-9_-]+$
+    }
+    handle @application_delete {
+        import backend_proxy
+    }
+
+    @cors_preflight {
+        method OPTIONS
+        path_regexp cors_paths ^/(health/(live|ready)|api/(session|mentors(/sort)?|recruitments(/mine)?|scatter|feedback|match|interviews(/[A-Za-z0-9_-]+(/(answers|confirm|profile))?)?|applications(/[A-Za-z0-9_-]+)?))$
+    }
+    handle @cors_preflight {
+        import backend_proxy
+    }
+
+    @static method GET HEAD
+    handle @static {
+        reverse_proxy frontend:80 {
+            header_up -Forwarded
+            header_up -X-Forwarded-For
+            header_up -X-Forwarded-Host
+            header_up -X-Forwarded-Port
+            header_up -X-Forwarded-Proto
+            header_up -X-Real-IP
+            transport http {
+                dial_timeout 3s
+                response_header_timeout 15s
+            }
+        }
+    }
+
+    # Every backend route not explicitly matched above is denied. In
+    # particular docs, OpenAPI, LLM proxy, training/admin, scraper, documents,
+    # uploads, resume generation, downloads, attachments and /v1 are absent.
+    respond "Route or method not available" 404
+}

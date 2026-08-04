@@ -20,11 +20,11 @@ export interface ChatMessage {
 
 /** 对话附件 */
 export interface ChatAttachment {
+  documentId: string
   name: string
   size: number
   type: string
-  /** 提取出的文本（后端 OCR/embedding 后回填） */
-  extractedText?: string
+  scanScope: 'full_antivirus' | 'structural_signature_only'
 }
 
 /** SSE 流式响应的单帧 */

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Advisor, MatchedAdvisor, SortMetric, ScatterPoint } from '@/types/advisor'
+import type { MatchedAdvisor, SortMetric, ScatterPoint } from '@/types/advisor'
 import * as advisorApi from '@/api/advisor'
 import * as mockApi from '@/mock'
 
@@ -12,8 +12,6 @@ import * as mockApi from '@/mock'
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 export const useAdvisorStore = defineStore('advisor', () => {
-  // —— 全量导师 ——
-  const advisors = ref<Advisor[]>([])
   // —— 匹配后的导师（带 score / synergy / reason）——
   const matchedAdvisors = ref<MatchedAdvisor[]>([])
   // —— 散点数据 ——
@@ -21,7 +19,7 @@ export const useAdvisorStore = defineStore('advisor', () => {
   // —— 当前选中的导师名（联动卡片 / 散点 / 右栏）——
   const selectedName = ref<string | null>(null)
   // —— 排序指标 ——
-  const sortMetric = ref<SortMetric>('synergy')
+  const sortMetric = ref<SortMetric>('score')
   // —— 象限筛选（散点图右上复选框组）——
   const quadrantFilter = ref<Record<string, boolean>>({
     国热: true,
@@ -31,54 +29,71 @@ export const useAdvisorStore = defineStore('advisor', () => {
   })
   // —— 加载态 ——
   const loading = ref(false)
+  const resultStatus = ref<'idle' | 'matched' | 'no_published_data' | 'no_match' | 'error'>('idle')
+  const resultMessage = ref('请先完成访谈并确认画像。')
+  const resultMeta = ref<Record<string, unknown>>({})
+  const comparisonIds = ref<string[]>([])
 
-  const totalCount = computed(() => matchedAdvisors.value.length || advisors.value.length)
+  const totalCount = computed(() => matchedAdvisors.value.length)
 
   /** 当前选中的导师对象 */
   const selectedAdvisor = computed<MatchedAdvisor | null>(() => {
     if (!selectedName.value) return null
     return (
-      matchedAdvisors.value.find((m) => m.name === selectedName.value) ||
-      (advisors.value.find((m) => m.name === selectedName.value) as MatchedAdvisor | undefined) ||
-      null
+      matchedAdvisors.value.find((m) => m.name === selectedName.value) || null
     )
   })
 
-  /** 加载全量导师 + 散点数据 */
+  /** 首页只加载公开可视化；导师推荐必须由确认画像后的 bounded match 产生。 */
   async function loadAll() {
     loading.value = true
     try {
       if (USE_MOCK) {
-        advisors.value = mockApi.mockAdvisors
         scatterPoints.value = mockApi.mockScatterPoints
       } else {
-        const [a, s] = await Promise.all([advisorApi.fetchAdvisors(), advisorApi.fetchScatter()])
-        advisors.value = a.data
-        scatterPoints.value = s.data
+        const scatter = await advisorApi.fetchScatter()
+        scatterPoints.value = scatter.data
       }
-      // 默认匹配结果 = 全量（按 score 降序）
-      matchedAdvisors.value = advisors.value.map((a) => ({
-        ...a,
-        score: a.score,
-        reason: a.reason,
-        synergy: 0,
-      }))
+      // 导师公开列表不等同于推荐；确认画像前不生成匹配结果。
+      matchedAdvisors.value = []
     } finally {
       loading.value = false
     }
   }
 
   /** 综合匹配 */
-  async function match(interest: string, portrait?: Record<string, unknown>, weight?: Record<string, number>) {
+  async function match(
+    interest: string,
+    sessionId: string,
+    portrait?: Record<string, unknown>,
+    weight?: Record<string, number>,
+  ) {
     loading.value = true
     try {
       if (USE_MOCK) {
         matchedAdvisors.value = mockApi.mockMatch(interest)
       } else {
-        const res = await advisorApi.matchAdvisors({ interest, portrait, weight })
+        const res = await advisorApi.matchAdvisors({
+          interest,
+          session_id: sessionId,
+          portrait,
+          weight,
+        })
         matchedAdvisors.value = res.data
+        resultStatus.value = res.status
+        resultMessage.value = res.message
+        resultMeta.value = res.meta
       }
       selectedName.value = null
+      comparisonIds.value = []
+    } catch (error) {
+      resultStatus.value = 'error'
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      resultMessage.value =
+        typeof detail === 'object' && detail && 'message' in detail
+          ? String((detail as { message: unknown }).message)
+          : '匹配请求失败，请检查画像中的待澄清条件后重试。'
+      throw error
     } finally {
       loading.value = false
     }
@@ -87,17 +102,9 @@ export const useAdvisorStore = defineStore('advisor', () => {
   /** 按指标排序 */
   async function sortBy(metric: SortMetric) {
     sortMetric.value = metric
-    if (metric === 'synergy') {
-      matchedAdvisors.value.sort((a, b) => b.synergy - a.synergy || b.score - a.score)
-      return
-    }
-    if (metric === 'popularity') {
-      matchedAdvisors.value.sort((a, b) => b.popularity - a.popularity)
-      return
-    }
-    // 六维雷达指标
-    const key = metric as keyof typeof matchedAdvisors.value[number]['radar_traits']
-    matchedAdvisors.value.sort((a, b) => (b.radar_traits[key] ?? 0) - (a.radar_traits[key] ?? 0))
+    matchedAdvisors.value.sort(
+      (a, b) => Number(b[metric] ?? 0) - Number(a[metric] ?? 0),
+    )
   }
 
   /** 选中导师（联动） */
@@ -110,6 +117,30 @@ export const useAdvisorStore = defineStore('advisor', () => {
     quadrantFilter.value[name] = value
   }
 
+  function toggleComparison(advisorId: string) {
+    if (comparisonIds.value.includes(advisorId)) {
+      comparisonIds.value = comparisonIds.value.filter((item) => item !== advisorId)
+      return
+    }
+    if (comparisonIds.value.length >= 3) return
+    comparisonIds.value = [...comparisonIds.value, advisorId]
+  }
+
+  const comparedAdvisors = computed(() =>
+    matchedAdvisors.value.filter((item) =>
+      comparisonIds.value.includes(item.advisor_id || item.name),
+    ),
+  )
+
+  function resetResults() {
+    matchedAdvisors.value = []
+    selectedName.value = null
+    comparisonIds.value = []
+    resultStatus.value = 'idle'
+    resultMessage.value = '请先完成访谈并确认画像。'
+    resultMeta.value = {}
+  }
+
   /** 按象限筛选后的散点 */
   const filteredScatter = computed(() =>
     scatterPoints.value.filter((p) => {
@@ -119,7 +150,6 @@ export const useAdvisorStore = defineStore('advisor', () => {
   )
 
   return {
-    advisors,
     matchedAdvisors,
     scatterPoints,
     filteredScatter,
@@ -129,11 +159,18 @@ export const useAdvisorStore = defineStore('advisor', () => {
     quadrantFilter,
     loading,
     totalCount,
+    resultStatus,
+    resultMessage,
+    resultMeta,
+    comparisonIds,
+    comparedAdvisors,
     loadAll,
     match,
     sortBy,
     selectAdvisor,
     toggleQuadrant,
+    toggleComparison,
+    resetResults,
   }
 })
 

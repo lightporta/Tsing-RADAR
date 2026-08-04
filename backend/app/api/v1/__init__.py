@@ -4,21 +4,29 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     advisor,
-    chat,
+    applications,
+    artifacts,
+    documents,
     feedback,
+    interview,
     llm,
     match,
     recruitment,
     resume,
     scatter,
+    session,
     train,
     tsinghua,
 )
 
 api_router = APIRouter()
+api_router.include_router(session.router, tags=["会话"])
+api_router.include_router(documents.router, tags=["私有文档"])
+api_router.include_router(artifacts.router, tags=["私有产物"])
+api_router.include_router(applications.router, tags=["站内投递"])
 api_router.include_router(advisor.router, tags=["导师"])
-api_router.include_router(chat.router, tags=["对话"])
 api_router.include_router(feedback.router, tags=["反馈"])
+api_router.include_router(interview.router, tags=["动态访谈"])
 api_router.include_router(llm.router, tags=["LLM"])
 api_router.include_router(match.router, tags=["匹配"])
 api_router.include_router(recruitment.router, tags=["招募"])

@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted, watch, type Ref } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import * as echarts from 'echarts/core'
 import { RadarChart, ScatterChart } from 'echarts/charts'
 import {
@@ -35,8 +35,28 @@ export function useEChart(
   getOption: () => EChartsOption,
 ) {
   const chart = ref<echarts.ECharts | null>(null)
+  let sizeObserver: ResizeObserver | null = null
+  let listeningForResize = false
 
   const resize = () => chart.value?.resize()
+
+  const initialize = () => {
+    if (
+      chart.value ||
+      !el.value ||
+      el.value.clientWidth <= 0 ||
+      el.value.clientHeight <= 0
+    ) {
+      return false
+    }
+    chart.value = echarts.init(el.value)
+    chart.value.setOption(getOption())
+    if (!listeningForResize) {
+      window.addEventListener('resize', resize, { passive: true })
+      listeningForResize = true
+    }
+    return true
+  }
 
   const setOption = (option?: EChartsOption) => {
     if (!chart.value) return
@@ -46,11 +66,13 @@ export function useEChart(
   const refresh = () => setOption(getOption())
 
   onMounted(() => {
-    if (el.value) {
-      chart.value = echarts.init(el.value)
-      chart.value.setOption(getOption())
-      window.addEventListener('resize', resize, { passive: true })
-    }
+    nextTick(() => {
+      if (initialize() || !el.value) return
+      sizeObserver = new ResizeObserver(() => {
+        if (initialize()) sizeObserver?.disconnect()
+      })
+      sizeObserver.observe(el.value)
+    })
   })
 
   // 提供 watch 依赖：依赖变化时刷新
@@ -60,7 +82,8 @@ export function useEChart(
   }
 
   onUnmounted(() => {
-    window.removeEventListener('resize', resize)
+    sizeObserver?.disconnect()
+    if (listeningForResize) window.removeEventListener('resize', resize)
     chart.value?.dispose()
     chart.value = null
   })

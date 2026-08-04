@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
 import { useChatStore } from '@/stores/useChatStore'
+import { useAdvisorStore } from '@/stores/useAdvisorStore'
 
 // =====================================================================
 // 对话栏顶部工具栏（文档 §3.3）
@@ -12,6 +13,7 @@ defineProps<{ collapsed?: boolean }>()
 const emit = defineEmits<{ (e: 'toggle'): void }>()
 
 const chatStore = useChatStore()
+const advisorStore = useAdvisorStore()
 
 async function newConversation() {
   if (chatStore.messageCount > 1) {
@@ -26,17 +28,18 @@ async function newConversation() {
     }
   }
   chatStore.newConversation()
+  advisorStore.resetResults()
 }
 </script>
 
 <template>
   <div class="chat-toolbar">
     <button class="tool-btn" :class="{ collapsed }" aria-label="收起对话栏" @click="emit('toggle')">
-      <el-icon><DArrowLeft /></el-icon>
+      <el-icon aria-hidden="true">«</el-icon>
       <span class="btn-text">收起</span>
     </button>
     <button class="tool-btn primary" aria-label="开启新对话" @click="newConversation">
-      <el-icon><Plus /></el-icon>
+      <el-icon aria-hidden="true">＋</el-icon>
       <span class="btn-text">新对话</span>
     </button>
   </div>

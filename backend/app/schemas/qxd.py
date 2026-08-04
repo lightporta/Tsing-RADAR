@@ -1,88 +1,195 @@
-"""[PATCH] 清小搭 / OpenAI 兼容协议 Schema 定义。
+"""清小搭 OpenAI-compatible 请求、响应扩展与附件 Schema。"""
 
-新增文件：定义符合 OpenAI Chat Completions API 规范的请求/响应模型，
-用于 /api/v1/chat/completions 接口，替代原先不符合协议的 MatchRequest。
-"""
+from __future__ import annotations
 
-from typing import Optional
+import ipaddress
+from datetime import datetime
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field
-
-
-class OpenAIMessage(BaseModel):
-    """OpenAI 消息格式。"""
-    role: str = Field(..., description="system / user / assistant")
-    content: str = Field(..., description="消息文本")
-
-
-class OpenAIChatRequest(BaseModel):
-    """OpenAI Chat Completions 请求体。
-
-    清小搭平台会发送标准 OpenAI 格式：
-    {
-      "model": "tsing-radar-v2",
-      "messages": [{"role":"user","content":"..."}],
-      "stream": false,
-      "temperature": 0.7
-    }
-    """
-    model: str = Field(default="tsing-radar-v2", description="模型标识")
-    messages: list[OpenAIMessage] = Field(..., description="对话消息列表")
-    stream: bool = Field(default=False, description="是否流式返回")
-    temperature: Optional[float] = Field(default=0.7, ge=0, le=2)
-    max_tokens: Optional[int] = Field(default=None, ge=1)
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 
-class OpenAIChoiceMessage(BaseModel):
-    """OpenAI choice.message 格式。"""
-    role: str = "assistant"
-    content: str = ""
+class StrictPayload(BaseModel):
+    """多模态 payload 禁止未知字段，避免误收 base64 等未支持载荷。"""
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class OpenAIChoice(BaseModel):
-    """OpenAI choice 格式。"""
-    index: int = 0
-    message: OpenAIChoiceMessage
-    finish_reason: str = "stop"
+class TextContentPart(StrictPayload):
+    type: Literal["text"]
+    text: str
 
 
-class OpenAIChatResponse(BaseModel):
-    """OpenAI Chat Completions 响应体。"""
-    id: str = ""
-    object: str = "chat.completion"
-    model: str = "tsing-radar-v2"
-    choices: list[OpenAIChoice] = []
+class ImageURLPayload(StrictPayload):
+    url: str
 
 
-class OpenAIDelta(BaseModel):
-    """SSE 流式 delta 片段。"""
-    content: str = ""
+class ImageURLContentPart(StrictPayload):
+    type: Literal["image_url"]
+    image_url: ImageURLPayload
 
 
-class OpenAIStreamChoice(BaseModel):
-    """SSE 流式 choice。"""
-    index: int = 0
-    delta: OpenAIDelta
-    finish_reason: Optional[str] = None
+class InputAudioPayload(StrictPayload):
+    url: str
+    format: Literal["wav", "mp3", "m4a", "webm"]
 
 
-class OpenAIStreamChunk(BaseModel):
-    """SSE 流式单帧。"""
-    id: str = ""
-    object: str = "chat.completion.chunk"
-    model: str = "tsing-radar-v2"
-    choices: list[OpenAIStreamChoice] = []
+class InputAudioContentPart(StrictPayload):
+    type: Literal["input_audio"]
+    input_audio: InputAudioPayload
 
 
-class Attachment(BaseModel):
-    """清小搭多模态附件 (x_soda.attachments)。
+class FilePayload(StrictPayload):
+    url: str | None = None
+    file_id: str | None = None
+    filename: str
 
-    参考《清小搭多模态附件对端接口文档》v1.0。
-    """
+    @model_validator(mode="after")
+    def validate_source(self) -> "FilePayload":
+        if bool(self.url) == bool(self.file_id):
+            raise ValueError("file.url 与 file.file_id 必须且只能提供一个")
+        return self
+
+
+class FileContentPart(StrictPayload):
+    type: Literal["file"]
+    file: FilePayload
+
+
+ContentPart = Annotated[
+    TextContentPart
+    | ImageURLContentPart
+    | InputAudioContentPart
+    | FileContentPart,
+    Field(discriminator="type"),
+]
+
+
+class QXDMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | list[ContentPart]
+
+
+class QXDChatRequest(BaseModel):
+    """兼容常见 OpenAI 请求扩展，但对关键字段执行严格校验。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str | None = None
+    messages: list[QXDMessage] = Field(min_length=1)
+    stream: StrictBool = False
+    max_tokens: int | None = Field(default=None, ge=1)
+    user: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def require_user_message(self) -> "QXDChatRequest":
+        if not any(message.role == "user" for message in self.messages):
+            raise ValueError("messages 至少需要一条 user 消息")
+        return self
+
+
+AttachmentType = Literal[
+    "image",
+    "audio",
+    "video",
+    "pdf",
+    "word",
+    "excel",
+    "ppt",
+    "text",
+    "archive",
+    "file",
+]
+
+
+def _validate_public_http_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("必须是绝对 HTTP(S) URL")
+    if parsed.username or parsed.password:
+        raise ValueError("URL 不得包含用户凭证")
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError("URL 不得指向本地主机")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return value
+    if not address.is_global:
+        raise ValueError("URL 不得指向非公网 IP")
+    return value
+
+
+class SodaAttachment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     fileUrl: str
-    fileName: str
-    fileType: str = Field(..., description="pdf / pptx / docx / xlsx / image / audio / txt / markdown")
-    mimeType: str
-    fileSize: Optional[int] = None
-    previewUrl: Optional[str] = None
-    expiresAt: Optional[str] = None
+    fileName: str = Field(min_length=1)
+    fileType: AttachmentType
+    mimeType: str = Field(min_length=1)
+    fileSize: int | None = Field(default=None, ge=0)
+    previewUrl: str | None = None
+    expiresAt: datetime | None = None
+
+    @field_validator("fileUrl")
+    @classmethod
+    def validate_file_url(cls, value: str) -> str:
+        return _validate_public_http_url(value)
+
+    @field_validator("previewUrl")
+    @classmethod
+    def validate_preview_url(cls, value: str | None) -> str | None:
+        return _validate_public_http_url(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_type_matches_mime(self) -> "SodaAttachment":
+        mime = self.mimeType.lower()
+        checks = {
+            "image": mime.startswith("image/"),
+            "audio": mime.startswith("audio/"),
+            "video": mime.startswith("video/"),
+            "pdf": mime == "application/pdf",
+            "word": mime
+            in {
+                "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            },
+            "excel": mime
+            in {
+                "application/vnd.ms-excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+            "ppt": mime
+            in {
+                "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            },
+            "text": mime.startswith("text/"),
+            "archive": mime
+            in {
+                "application/zip",
+                "application/x-rar-compressed",
+                "application/vnd.rar",
+                "application/x-7z-compressed",
+            },
+            "file": True,
+        }
+        if not checks[self.fileType]:
+            raise ValueError("fileType 与 mimeType 不一致")
+        return self
+
+
+class SodaExtension(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attachments: list[SodaAttachment] = Field(min_length=1)
