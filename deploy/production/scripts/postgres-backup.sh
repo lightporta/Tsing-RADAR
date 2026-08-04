@@ -14,8 +14,13 @@ umask 077
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 temporary=$(mktemp "/backups/${DATABASE_NAME}-${stamp}-XXXXXX.dump.partial")
 target=${temporary%.partial}
+checksum_temporary=""
+cleanup() {
+  [ -z "$temporary" ] || rm -f -- "$temporary"
+  [ -z "$checksum_temporary" ] || rm -f -- "$checksum_temporary"
+}
+trap cleanup EXIT INT TERM
 checksum_temporary=$(mktemp "/backups/.${DATABASE_NAME}-${stamp}-XXXXXX.sha256.partial")
-trap 'rm -f -- "$temporary" "$checksum_temporary"' EXIT INT TERM
 [ ! -e "$target" ] || { echo "backup target collision" >&2; exit 73; }
 [ ! -e "${target}.sha256" ] || { echo "backup checksum collision" >&2; exit 73; }
 pg_dump --host "$DATABASE_HOST" --username "$DATABASE_USER" --dbname "$DATABASE_NAME" --format custom --file "$temporary"
