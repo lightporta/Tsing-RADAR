@@ -46,6 +46,12 @@ services:
       CORS_ORIGINS: ${PROD_CORS_ORIGINS:?Set exact production CORS origins}
     volumes:
       - type: bind
+        source: ./data/empty-mentor-governance.json
+        target: /app/data/mentors.evidence.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
         source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
         target: /run/secrets/database_password
         read_only: true

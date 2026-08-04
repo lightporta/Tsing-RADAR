@@ -68,7 +68,12 @@ forwarded. The fixed sequence is:
    it escapes percent-encoded credentials only for ConfigParser storage. A
    failed migration stops the process before any app starts.
 6. Start backend without edge traffic. Run schema, local readiness, contract and
-   honest zero-published-mentor checks.
+   honest zero-published-mentor checks. The reviewed tracked file
+   `data/empty-mentor-governance.json` is bind-mounted read-only at the image's
+   fixed `/app/data/mentors.evidence.json` path with source auto-creation
+   disabled. It contains no mentor records or identity fields. A missing or
+   malformed file still fails startup; the excluded local evidence dataset is
+   never copied into the image or deployment bundle.
 7. Create the first backup and restore it into the isolated restore-check
    database. Do not restore over the source database.
    Whether the restore succeeds, fails or is interrupted, stop and remove only
@@ -79,6 +84,26 @@ forwarded. The fixed sequence is:
    exact manual inspection; never use `down -v`.
 8. Start frontend. Public edge remains absent until a later cloud batch closes
    domain, TLS, ICP applicability and user authorization.
+
+## Resume after a completed migration
+
+If `first-deploy-plan` completed migration but failed before backend contract,
+backup/restore or frontend startup, do not rerun first deployment and do not
+invoke an individual action. Run only:
+
+`deploy-runner.py --action resume-after-migration-plan --mode execute`
+
+The fixed recovery workflow starts with the normal preflight and infra health
+gate, then runs a locked `post-migration-verification` job as the production
+application role. The job requires the database revision set to equal the
+current Alembic head, the public table set to equal current application
+metadata plus `alembic_version`, and every application table to contain zero
+rows. Revision drift, an unexpected/missing table, or any business row stops
+before backend startup. The workflow then starts backend off traffic, verifies
+readiness plus the exact zero-record mentor response, creates the current
+backup receipt, restores that exact backup in the isolated check database, and
+only then starts frontend. It never provisions the role/database or executes
+migration, accepts no approval flag, and cannot be reduced to single actions.
 
 ## Upgrade
 

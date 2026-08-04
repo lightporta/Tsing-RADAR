@@ -639,6 +639,64 @@ def test_migration_service_requires_exact_application_import_path():
     assert not module._migration_import_contract(service)
 
 
+def test_production_backend_requires_exact_empty_governance_seed_bind():
+    path = ROOT / "scripts" / "check_l1_production.py"
+    spec = importlib.util.spec_from_file_location("check_l1_mentor_seed", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    service = {
+        "volumes": [
+            {
+                "type": "bind",
+                "source": str(module.EMPTY_MENTOR_SEED),
+                "target": "/app/data/mentors.evidence.json",
+                "read_only": True,
+                "bind": {"create_host_path": False},
+            }
+        ]
+    }
+    assert module._empty_mentor_seed_contract(service)
+    service["volumes"][0]["read_only"] = False
+    assert not module._empty_mentor_seed_contract(service)
+    service["volumes"][0]["read_only"] = True
+    service["volumes"][0]["bind"]["create_host_path"] = True
+    assert not module._empty_mentor_seed_contract(service)
+
+
+def test_post_migration_verification_job_is_fixed_and_isolated():
+    path = ROOT / "scripts" / "check_l1_production.py"
+    spec = importlib.util.spec_from_file_location("check_l1_resume_job", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    scripts = DEPLOY / "scripts"
+    service = {
+        "command": ["python", "/opt/tsing-radar/post_migration_verify.py"],
+        "restart": "no",
+        "environment": {"PYTHONPATH": "/app:/opt/tsing-radar"},
+        "volumes": [
+            {
+                "type": "bind",
+                "source": str(scripts / "post_migration_verify.py"),
+                "target": "/opt/tsing-radar/post_migration_verify.py",
+                "read_only": True,
+            },
+            {
+                "type": "bind",
+                "source": str(scripts / "migration_with_lock.py"),
+                "target": "/opt/tsing-radar/migration_with_lock.py",
+                "read_only": True,
+            },
+        ],
+    }
+    assert module._post_migration_verification_contract(service)
+    service["environment"]["PYTHONPATH"] = "/app"
+    assert not module._post_migration_verification_contract(service)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

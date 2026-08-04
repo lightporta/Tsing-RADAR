@@ -24,6 +24,7 @@ QXD = DEPLOY / "compose.qxd.yml"
 MEDIA = DEPLOY / "compose.media.yml"
 STAGE = DEPLOY / "compose.stage.yml"
 JOBS = DEPLOY / "compose.jobs.yml"
+EMPTY_MENTOR_SEED = DEPLOY / "data" / "empty-mentor-governance.json"
 
 HOST_MEMORY_MIB = 7578
 DEFAULT_RESOLVED_LIMIT_MIB = 5184
@@ -218,6 +219,77 @@ def _migration_import_contract(service: dict[str, Any]) -> bool:
     )
 
 
+def _empty_mentor_seed_contract(service: dict[str, Any]) -> bool:
+    """Require the reviewed empty seed at the image's fixed governance path."""
+
+    try:
+        payload = json.loads(EMPTY_MENTOR_SEED.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    source = payload.get("source") if isinstance(payload, dict) else None
+    if (
+        not isinstance(source, dict)
+        or set(payload) != {"schema_version", "generated_at", "source", "records"}
+        or payload.get("schema_version") != "2.0"
+        or payload.get("records") != []
+        or source.get("source_type") != "legacy_seed"
+        or source.get("content_sha256")
+        != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        or source.get("original_record_count") != 0
+        or source.get("raw_retained") is not False
+    ):
+        return False
+    mounts = [
+        item
+        for item in service.get("volumes", [])
+        if isinstance(item, dict)
+        and item.get("target") == "/app/data/mentors.evidence.json"
+    ]
+    if len(mounts) != 1:
+        return False
+    mount = mounts[0]
+    return (
+        mount.get("type") == "bind"
+        and mount.get("read_only") is True
+        and mount.get("bind", {}).get("create_host_path") is False
+        and Path(str(mount.get("source", ""))).resolve(strict=False)
+        == EMPTY_MENTOR_SEED.resolve(strict=False)
+    )
+
+
+def _post_migration_verification_contract(service: dict[str, Any]) -> bool:
+    mounts = {
+        str(item.get("target")): item
+        for item in service.get("volumes", [])
+        if isinstance(item, dict)
+    }
+    expected_scripts = {
+        "/opt/tsing-radar/post_migration_verify.py": DEPLOY
+        / "scripts"
+        / "post_migration_verify.py",
+        "/opt/tsing-radar/migration_with_lock.py": DEPLOY
+        / "scripts"
+        / "migration_with_lock.py",
+    }
+    scripts_ok = True
+    for target, source in expected_scripts.items():
+        item = mounts.get(target, {})
+        scripts_ok = scripts_ok and (
+            item.get("type") == "bind"
+            and item.get("read_only") is True
+            and Path(str(item.get("source", ""))).resolve(strict=False)
+            == source.resolve(strict=False)
+        )
+    return (
+        service.get("command")
+        == ["python", "/opt/tsing-radar/post_migration_verify.py"]
+        and service.get("restart") == "no"
+        and not service.get("ports")
+        and _environment(service).get("PYTHONPATH") == "/app:/opt/tsing-radar"
+        and scripts_ok
+    )
+
+
 def _secret_is_strong(value: str) -> bool:
     placeholders = {"admin", "secret", "changeme", "change-me"}
     return (
@@ -374,6 +446,13 @@ def run_checks(
                 and backend_environment.get("QXD_TRIAL_SINGLE_USER_MODE")
                 == "false",
                 "DEBUG or trial compatibility mode enabled",
+            )
+        )
+        checks.append(
+            _check(
+                "mentor.empty_governance_seed_mounted_fail_closed",
+                _empty_mentor_seed_contract(default_services["backend"]),
+                "backend lacks the exact tracked zero-record governance seed bind",
             )
         )
         resolved_memory = sum(
@@ -658,6 +737,11 @@ def run_checks(
         )
 
         jobs = _compose([INFRA, PROD, JOBS], environment, profiles=("migration",))
+        resume_verification = _compose(
+            [INFRA, PROD, JOBS],
+            environment,
+            profiles=("resume-verification",),
+        )
         database_setup = _compose(
             [INFRA, PROD, JOBS], environment, profiles=("database-setup",)
         )
@@ -728,6 +812,13 @@ def run_checks(
                 },
             ),
             (
+                resume_verification["services"]["post-migration-verification"],
+                {
+                    "/run/secrets/database_password": prod_secrets
+                    / "database_password"
+                },
+            ),
+            (
                 backup["services"]["backup"],
                 {
                     "/run/secrets/database_password": prod_secrets
@@ -784,6 +875,7 @@ def run_checks(
             qxd,
             database_setup,
             jobs,
+            resume_verification,
             backup,
             restore,
             stage_only,
@@ -898,11 +990,23 @@ def run_checks(
                 "migration is not a locked isolated one-shot with /app import path",
             )
         )
+        checks.append(
+            _check(
+                "jobs.post_migration_resume_verification",
+                _post_migration_verification_contract(
+                    resume_verification["services"]["post-migration-verification"]
+                ),
+                "post-migration resume verification job is not fixed and isolated",
+            )
+        )
         job_lock_mounts = {
             service_name: json.dumps(service.get("volumes", []), sort_keys=True)
             for service_name, service in {
                 "prod-db-provision": database_setup["services"]["prod-db-provision"],
                 "migration": jobs["services"]["migration"],
+                "post-migration-verification": resume_verification["services"][
+                    "post-migration-verification"
+                ],
                 "backup": backup["services"]["backup"],
                 "restore-check-db": restore["services"]["restore-check-db"],
                 "stage-backend": stage_only["services"]["stage-backend"],
@@ -918,6 +1022,7 @@ def run_checks(
                     for service_name, configuration in (
                         ("prod-db-provision", database_setup),
                         ("migration", jobs),
+                        ("post-migration-verification", resume_verification),
                         ("backup", backup),
                         ("restore-check-db", restore),
                         ("stage-backend", stage_only),

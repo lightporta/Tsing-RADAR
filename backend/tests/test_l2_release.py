@@ -71,6 +71,7 @@ def test_release_paths_reject_casefold_collisions():
 def test_release_allowlist_excludes_local_data_and_rejects_injection():
     paths = release.collect_source_paths()
     assert "backend/data/mentors.evidence.json" not in paths
+    assert "deploy/production/data/empty-mentor-governance.json" in paths
     assert not any(path.startswith("backend/data/private_local/") for path in paths)
     assert not any(path.startswith(".pytest-") for path in paths)
 
@@ -169,6 +170,10 @@ def test_runner_uses_fixed_argv_without_public_or_destructive_actions():
 
 def test_runner_plan_is_action_ids_only_and_rejects_extra_compose_file():
     assert RUNNER.plan_for("first-deploy-plan") == RUNNER.FIRST_DEPLOY_PLAN
+    assert (
+        RUNNER.plan_for("resume-after-migration-plan")
+        == RUNNER.RESUME_AFTER_MIGRATION_PLAN
+    )
     assert RUNNER.plan_for("upgrade-plan") == RUNNER.UPGRADE_PLAN
     completed = subprocess.run(
         [
@@ -196,6 +201,7 @@ def test_runner_execute_rejects_all_single_deployment_actions():
         "prod-db-provision",
         "prod-db-verification",
         "migration",
+        "post-migration-verification",
         "backup",
         "restore-check",
         "start-backend-off-traffic",
@@ -231,6 +237,71 @@ def test_first_deploy_workflow_enforces_database_and_recovery_gates():
     assert visited.index("prod-db-verification") < visited.index("migration")
     assert visited.index("backup") < visited.index("restore-check")
     assert visited.index("restore-check") < visited.index("start-frontend")
+
+
+def test_resume_after_migration_is_complete_non_bypassable_and_ordered():
+    RUNNER._validate_workflow_contract(
+        "resume-after-migration-plan",
+        RUNNER.RESUME_AFTER_MIGRATION_PLAN,
+    )
+    assert not {
+        "prod-db-provision",
+        "prod-db-verification",
+        "migration",
+    }.intersection(RUNNER.RESUME_AFTER_MIGRATION_PLAN)
+    for omitted in (
+        "post-migration-verification",
+        "contract-check",
+        "backup",
+        "restore-check",
+    ):
+        mutated = tuple(
+            step for step in RUNNER.RESUME_AFTER_MIGRATION_PLAN if step != omitted
+        )
+        with pytest.raises(RUNNER.RunnerError, match="resume_workflow_contract_invalid"):
+            RUNNER._validate_workflow_contract(
+                "resume-after-migration-plan",
+                mutated,
+            )
+
+    visited: list[str] = []
+    RUNNER.execute_workflow(
+        "resume-after-migration-plan",
+        step_executor=lambda step, _runner: visited.append(step),
+    )
+    assert visited == list(RUNNER.RESUME_AFTER_MIGRATION_PLAN)
+    assert visited.index("post-migration-verification") < visited.index(
+        "start-backend-off-traffic"
+    )
+    assert visited.index("contract-check") < visited.index("backup")
+    assert visited.index("backup") < visited.index("restore-check")
+    assert visited.index("restore-check") < visited.index("start-frontend")
+
+
+def test_resume_stops_before_backend_when_post_migration_state_is_not_safe():
+    visited: list[str] = []
+
+    def fail_verification(step, _runner):
+        visited.append(step)
+        if step == "post-migration-verification":
+            raise RUNNER.RunnerError("action_failed")
+
+    with pytest.raises(RUNNER.RunnerError, match="action_failed") as failure:
+        RUNNER.execute_workflow(
+            "resume-after-migration-plan",
+            step_executor=fail_verification,
+        )
+    assert failure.value.failed_step_id == "post-migration-verification"
+    assert "start-backend-off-traffic" not in visited
+
+
+def test_backend_contract_check_requires_honest_zero_mentor_state():
+    command, _timeout = RUNNER.command_for_action("contract-check")
+    script = command[-1]
+    assert "/health/ready" in script
+    assert "/api/mentors" in script
+    assert "'published_records':0" in script
+    assert "mentors.get('data') == []" in script
 
 
 def test_first_deploy_passes_current_backup_receipt_to_restore(monkeypatch):

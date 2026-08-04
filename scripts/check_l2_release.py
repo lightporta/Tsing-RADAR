@@ -242,8 +242,27 @@ def _plan_contract(extra_argument: bool = False) -> bool:
     if upgrade.returncode != 0:
         return False
     upgrade_report = json.loads(upgrade.stdout)
+    resume = _command(
+        [
+            sys.executable,
+            str(RUNNER_PATH),
+            "--action",
+            "resume-after-migration-plan",
+            "--mode",
+            "plan",
+        ],
+        timeout=30,
+        expected=set(range(256)),
+    )
+    if resume.returncode != 0:
+        return False
+    resume_report = json.loads(resume.stdout)
     return (
         report.get("steps") == list(RUNNER.FIRST_DEPLOY_PLAN)
+        and resume_report.get("steps")
+        == list(RUNNER.RESUME_AFTER_MIGRATION_PLAN)
+        and "migration" not in resume_report.get("steps", [])
+        and "post-migration-verification" in resume_report.get("steps", [])
         and upgrade_report.get("steps") == list(RUNNER.UPGRADE_PLAN)
         and "migration" not in upgrade_report.get("steps", [])
         and upgrade_report.get("steps", [])[-1] == RUNNER.COMPATIBILITY_GATE
@@ -260,6 +279,7 @@ def _plan_contract(extra_argument: bool = False) -> bool:
 
 def _workflow_execution_contract(mutation: str | None) -> bool:
     first = list(RUNNER.FIRST_DEPLOY_PLAN)
+    resume = list(RUNNER.RESUME_AFTER_MIGRATION_PLAN)
     upgrade = list(RUNNER.UPGRADE_PLAN)
     if mutation == "runner-missing-db-verification":
         first.remove("prod-db-verification")
@@ -270,6 +290,10 @@ def _workflow_execution_contract(mutation: str | None) -> bool:
         upgrade[-1:] = ["migration"]
     try:
         RUNNER._validate_workflow_contract("first-deploy-plan", tuple(first))
+        RUNNER._validate_workflow_contract(
+            "resume-after-migration-plan",
+            tuple(resume),
+        )
         RUNNER._validate_workflow_contract("upgrade-plan", tuple(upgrade))
     except RUNNER.RunnerError:
         return False
@@ -310,7 +334,19 @@ def _workflow_execution_contract(mutation: str | None) -> bool:
         )
     else:
         upgrade_blocked = False
-    return direct_blocked and upgrade_blocked
+    resume_visited: list[str] = []
+    RUNNER.execute_workflow(
+        "resume-after-migration-plan",
+        step_executor=lambda step, _runner: resume_visited.append(step),
+    )
+    resume_ok = (
+        resume_visited == list(RUNNER.RESUME_AFTER_MIGRATION_PLAN)
+        and "migration" not in resume_visited
+        and resume_visited.index("post-migration-verification")
+        < resume_visited.index("start-backend-off-traffic")
+        and resume_visited.index("backup") < resume_visited.index("restore-check")
+    )
+    return direct_blocked and upgrade_blocked and resume_ok
 
 
 def _source_contract(mutation: str | None) -> tuple[bool, dict[str, object]]:
@@ -867,6 +903,7 @@ def _container_migration_database_probe(
     app_secret.write_text(app_password, encoding="utf-8")
     provision_script = DEPLOY / "scripts" / "database_provision.py"
     migration_script = DEPLOY / "scripts" / "migration_with_lock.py"
+    post_migration_script = DEPLOY / "scripts" / "post_migration_verify.py"
     alembic_environment = ROOT / "backend" / "alembic" / "env.py"
 
     _docker("network", "create", network)
@@ -1005,6 +1042,106 @@ def _container_migration_database_probe(
             "SELECT count(*) FROM alembic_version",
             expected=set(range(256)),
         )
+        verification_arguments = [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            network,
+            "--read-only",
+            "--user",
+            "10001:10001",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:size=32m,mode=1777",
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(post_migration_script)},"
+                "target=/opt/tsing-radar/post_migration_verify.py,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(migration_script)},"
+                "target=/opt/tsing-radar/migration_with_lock.py,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(app_secret)},"
+                "target=/run/secrets/database_password,readonly"
+            ),
+            "--env",
+            "PYTHONPATH=/app:/opt/tsing-radar",
+            "--env",
+            "DATABASE_HOST=postgres",
+            "--env",
+            "DATABASE_PORT=5432",
+            "--env",
+            "DATABASE_NAME=l2_migration",
+            "--env",
+            "DATABASE_USER=l2_migration_app",
+            "--env",
+            "DATABASE_PASSWORD_FILE=/run/secrets/database_password",
+            "--env",
+            "AUTO_CREATE_SCHEMA=false",
+            BACKEND_IMAGE,
+            "python",
+            "/opt/tsing-radar/post_migration_verify.py",
+        ]
+        resume_verified = _docker(
+            *verification_arguments,
+            expected=set(range(256)),
+            timeout=180,
+        )
+        insert_business_row = _docker(
+            "run",
+            "--rm",
+            "--network",
+            network,
+            "--env",
+            f"PGPASSWORD={app_password}",
+            "postgres:16-alpine",
+            "psql",
+            "--set=ON_ERROR_STOP=1",
+            "--host=postgres",
+            "--username=l2_migration_app",
+            "--dbname=l2_migration",
+            "--no-align",
+            "--tuples-only",
+            "--quiet",
+            "--command=INSERT INTO students(student_id) VALUES ('synthetic-probe-01')",
+            expected=set(range(256)),
+        )
+        business_row_count = _docker(
+            "run",
+            "--rm",
+            "--network",
+            network,
+            "--env",
+            f"PGPASSWORD={app_password}",
+            "postgres:16-alpine",
+            "psql",
+            "--set=ON_ERROR_STOP=1",
+            "-h",
+            "postgres",
+            "-U",
+            "l2_migration_app",
+            "-d",
+            "l2_migration",
+            "-Atqc",
+            "SELECT count(*) FROM students",
+            expected=set(range(256)),
+        )
+        nonempty_rejected = _docker(
+            *verification_arguments,
+            expected=set(range(256)),
+            timeout=180,
+        )
         combined_output = (
             provision.stdout
             + provision.stderr
@@ -1012,12 +1149,25 @@ def _container_migration_database_probe(
             + migration.stderr
             + version.stdout
             + version.stderr
+            + resume_verified.stdout
+            + resume_verified.stderr
+            + insert_business_row.stdout
+            + insert_business_row.stderr
+            + business_row_count.stdout
+            + business_row_count.stderr
+            + nonempty_rejected.stdout
+            + nonempty_rejected.stderr
         )
         passed = (
             provision.returncode == 0
             and migration.returncode == 0
             and version.returncode == 0
             and version.stdout.strip() == "1"
+            and resume_verified.returncode == 0
+            and insert_business_row.returncode == 0
+            and business_row_count.returncode == 0
+            and business_row_count.stdout.strip() == "1"
+            and nonempty_rejected.returncode == 70
             and bootstrap_password not in combined_output
             and app_password not in combined_output
         )
@@ -1025,17 +1175,115 @@ def _container_migration_database_probe(
             **_check(
                 "jobs.migration_real_postgres_settings_dsn",
                 passed,
-                "migration wrapper did not apply Alembic through explicit psycopg kwargs",
+                "migration or post-migration resume gate failed its real PostgreSQL contract",
             ),
             "observed_exit_codes": {
                 "provision": provision.returncode,
                 "migration": migration.returncode,
                 "alembic_version": version.returncode,
+                "resume_empty_at_head": resume_verified.returncode,
+                "resume_business_row_rejected": nonempty_rejected.returncode,
+                "synthetic_business_row_count": (
+                    1 if business_row_count.stdout.strip() == "1" else 0
+                ),
             },
         }
     finally:
         _docker("rm", "-f", postgres_name, expected={0, 1})
         _docker("network", "rm", network, expected={0, 1})
+
+
+def _container_empty_mentor_seed_smoke(generation: str) -> dict[str, object]:
+    """Start the locked backend image with only the reviewed empty seed bind."""
+
+    seed = DEPLOY / "data" / "empty-mentor-governance.json"
+    name = f"{CONTAINER_PREFIX}{generation}-mentor-seed"
+    missing = _docker(
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--platform",
+        "linux/amd64",
+        "--network",
+        "none",
+        BACKEND_IMAGE,
+        "python",
+        "-c",
+        (
+            "import asyncio;"
+            "from app.main import startup_event;"
+            "asyncio.run(startup_event())"
+        ),
+        expected=set(range(256)),
+    )
+    try:
+        started = _docker(
+            "run",
+            "--detach",
+            "--name",
+            name,
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "10001:10001",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:size=128m,mode=1777",
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(seed)},"
+                "target=/app/data/mentors.evidence.json,readonly"
+            ),
+            "--env",
+            "DATABASE_URL=sqlite:////tmp/mentor-seed-smoke.db",
+            "--env",
+            "PRIVATE_UPLOAD_ROOT=/tmp/private-uploads",
+            "--env",
+            "OBJECT_STORAGE_LOCAL_ROOT=/tmp/private-objects",
+            BACKEND_IMAGE,
+            expected=set(range(256)),
+        )
+        ready_script = (
+            "import json,urllib.request;"
+            "ready=json.load(urllib.request.urlopen("
+            "'http://127.0.0.1:8000/health/ready',timeout=5));"
+            "mentors=json.load(urllib.request.urlopen("
+            "'http://127.0.0.1:8000/api/mentors',timeout=5));"
+            "assert ready.get('status') == 'ready';"
+            "assert mentors == {'data':[], 'meta':{"
+            "'total_records':0,'published_records':0,"
+            "'withheld_records':0,'policy':'verified_only'}}"
+        )
+        ready = False
+        if started.returncode == 0:
+            ready = _wait_container_exec(
+                name,
+                ["python", "-c", ready_script],
+                attempts=80,
+            )
+        return {
+            **_check(
+                "mentor.locked_backend_empty_seed_startup_and_contract",
+                missing.returncode != 0 and started.returncode == 0 and ready,
+                "locked backend did not fail on missing seed or serve honest zero state with bind",
+            ),
+            "observed_exit_codes": {
+                "missing_seed": missing.returncode,
+                "started_with_seed": started.returncode,
+            },
+            "readiness_and_zero_contract": ready,
+        }
+    finally:
+        _docker("rm", "-f", name, expected={0, 1})
 
 
 def run_container_checks() -> list[dict[str, object]]:
@@ -1076,6 +1324,7 @@ def run_container_checks() -> list[dict[str, object]]:
             )
         )
         checks.append(_container_migration_import_contract())
+        checks.append(_container_empty_mentor_seed_smoke(generation))
 
         local_ephemeral_root = ROOT / ".l2-release"
         local_ephemeral_root.mkdir(exist_ok=True)

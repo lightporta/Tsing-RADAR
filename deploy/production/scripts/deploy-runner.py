@@ -37,6 +37,7 @@ BOOTSTRAP_SECRET_ROOT = Path("/etc/tsing-radar/secrets/bootstrap")
 
 ACTION_IDS = (
     "first-deploy-plan",
+    "resume-after-migration-plan",
     "upgrade-plan",
     "lock-probe",
     "preflight",
@@ -44,6 +45,7 @@ ACTION_IDS = (
     "prod-db-provision",
     "prod-db-verification",
     "migration",
+    "post-migration-verification",
     "backup",
     "restore-check",
     "start-backend-off-traffic",
@@ -57,6 +59,17 @@ FIRST_DEPLOY_PLAN = (
     "prod-db-provision",
     "prod-db-verification",
     "migration",
+    "start-backend-off-traffic",
+    "contract-check",
+    "backup",
+    "restore-check",
+    "start-frontend",
+)
+
+RESUME_AFTER_MIGRATION_PLAN = (
+    "preflight",
+    "infra-health",
+    "post-migration-verification",
     "start-backend-off-traffic",
     "contract-check",
     "backup",
@@ -78,6 +91,7 @@ RESOURCE_COMBINATION = {
     "prod-db-provision": "database-setup",
     "prod-db-verification": "database-setup",
     "migration": "migration",
+    "post-migration-verification": "migration",
     "backup": "backup",
     "restore-check": "restore-check",
     "start-backend-off-traffic": "default",
@@ -89,12 +103,17 @@ LOCKED_ACTIONS = {
     "prod-db-provision",
     "prod-db-verification",
     "migration",
+    "post-migration-verification",
     "backup",
     "restore-check",
 }
 
 RESTORE_SERVICES = ("restore-check-db", "restore-check")
-WORKFLOW_ACTIONS = ("first-deploy-plan", "upgrade-plan")
+WORKFLOW_ACTIONS = (
+    "first-deploy-plan",
+    "resume-after-migration-plan",
+    "upgrade-plan",
+)
 COMPATIBILITY_GATE = "compatibility-gate-requires-separate-authorization"
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{2,62}$")
 
@@ -411,6 +430,15 @@ def command_for_action(
             ],
             300,
         ),
+        "post-migration-verification": (
+            [
+                *_compose_prefix(INFRA, JOBS, profile="resume-verification"),
+                "run",
+                "--rm",
+                "post-migration-verification",
+            ],
+            300,
+        ),
         "backup": (
             [
                 *_compose_prefix(INFRA, JOBS, profile="backup"),
@@ -445,7 +473,13 @@ def command_for_action(
                     "import json,urllib.request;"
                     "data=json.load(urllib.request.urlopen("
                     "'http://127.0.0.1:8000/health/ready',timeout=5));"
-                    "assert data.get('status') in {'ready','ok'}"
+                    "assert data.get('status') in {'ready','ok'};"
+                    "mentors=json.load(urllib.request.urlopen("
+                    "'http://127.0.0.1:8000/api/mentors',timeout=5));"
+                    "assert mentors.get('data') == [];"
+                    "assert mentors.get('meta') == {"
+                    "'total_records':0,'published_records':0,"
+                    "'withheld_records':0,'policy':'verified_only'}"
                 ),
             ],
             30,
@@ -721,6 +755,24 @@ def _validate_workflow_contract(action_id: str, steps: tuple[str, ...]) -> None:
         if "migration" in steps:
             raise RunnerError("upgrade_migration_not_authorized", 77)
         return
+    if action_id == "resume-after-migration-plan":
+        if steps != RESUME_AFTER_MIGRATION_PLAN:
+            raise RunnerError("resume_workflow_contract_invalid", 78)
+        forbidden = {"prod-db-provision", "prod-db-verification", "migration"}
+        if forbidden.intersection(steps):
+            raise RunnerError("resume_workflow_repeats_initialization", 78)
+        required_order = (
+            "post-migration-verification",
+            "start-backend-off-traffic",
+            "contract-check",
+            "backup",
+            "restore-check",
+            "start-frontend",
+        )
+        positions = [steps.index(item) for item in required_order]
+        if positions != sorted(positions):
+            raise RunnerError("resume_workflow_order_invalid", 78)
+        return
     raise RunnerError("workflow_not_executable", 64)
 
 
@@ -778,6 +830,8 @@ def execute_action(action_id: str, runner: CommandRunner = _run_command) -> None
 def plan_for(action_id: str) -> tuple[str, ...]:
     if action_id == "first-deploy-plan":
         return FIRST_DEPLOY_PLAN
+    if action_id == "resume-after-migration-plan":
+        return RESUME_AFTER_MIGRATION_PLAN
     if action_id == "upgrade-plan":
         return UPGRADE_PLAN
     if action_id in ACTION_IDS:

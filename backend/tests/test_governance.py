@@ -27,11 +27,19 @@ from app.services.data_loader import (
     load_mentors,
     mentor_data_summary,
 )
+from app.services import data_loader
 from scripts.audit_evidence_data import audit
 from scripts.migrate_mentor_evidence import migrate_payload
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = BACKEND_ROOT.parent
+EMPTY_GOVERNANCE_SEED = (
+    REPOSITORY_ROOT
+    / "deploy"
+    / "production"
+    / "data"
+    / "empty-mentor-governance.json"
+)
 client = TestClient(app)
 
 
@@ -267,19 +275,69 @@ def test_legacy_migration_quarantines_unsupported_values():
     )
 
 
-def test_public_repository_dataset_starts_empty_and_valid():
-    dataset = load_mentor_dataset()
-    assert isinstance(dataset, MentorDataset)
-    assert dataset.records == []
-    assert dataset.source.raw_retained is False
-    assert load_mentors() == []
-    assert mentor_data_summary() == {
-        "total_records": 0,
-        "published_records": 0,
-        "withheld_records": 0,
-        "policy": "verified_only",
-    }
-    assert audit(dataset) == []
+def _clear_mentor_caches() -> None:
+    data_loader.load_mentors.cache_clear()
+    data_loader.load_match_candidates.cache_clear()
+    data_loader.load_mentor_dataset.cache_clear()
+
+
+def test_release_governance_seed_starts_empty_and_valid(monkeypatch):
+    monkeypatch.setattr(data_loader, "_DATA_PATH", str(EMPTY_GOVERNANCE_SEED))
+    _clear_mentor_caches()
+    try:
+        dataset = load_mentor_dataset()
+        assert isinstance(dataset, MentorDataset)
+        assert dataset.records == []
+        assert dataset.source.original_record_count == 0
+        assert dataset.source.raw_retained is False
+        assert load_mentors() == []
+        assert mentor_data_summary() == {
+            "total_records": 0,
+            "published_records": 0,
+            "withheld_records": 0,
+            "policy": "verified_only",
+        }
+        assert audit(dataset) == []
+    finally:
+        _clear_mentor_caches()
+
+
+def test_missing_governance_seed_fails_closed(monkeypatch, tmp_path):
+    missing = tmp_path / "missing-governance.json"
+    monkeypatch.setattr(data_loader, "_DATA_PATH", str(missing))
+    _clear_mentor_caches()
+    try:
+        with pytest.raises(FileNotFoundError):
+            load_mentor_dataset()
+    finally:
+        _clear_mentor_caches()
+
+
+def test_malformed_nonempty_governance_seed_is_rejected(monkeypatch, tmp_path):
+    malformed = tmp_path / "malformed-governance.json"
+    malformed.write_text(
+        json.dumps(
+            {
+                "schema_version": "2.0",
+                "generated_at": "2026-08-05T00:00:00+08:00",
+                "source": {
+                    "source_type": "legacy_seed",
+                    "content_sha256": "0" * 64,
+                    "original_record_count": 1,
+                    "raw_retained": False,
+                },
+                "records": [{}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(data_loader, "_DATA_PATH", str(malformed))
+    _clear_mentor_caches()
+    try:
+        with pytest.raises(ValidationError):
+            load_mentor_dataset()
+    finally:
+        _clear_mentor_caches()
 
 
 def test_raw_runtime_copies_are_removed():
