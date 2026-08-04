@@ -583,6 +583,66 @@ def _container_lock_probe(lock_file: Path) -> tuple[int, str]:
     return result.returncode, reason
 
 
+def _container_migration_import_contract() -> dict[str, object]:
+    """Prove an out-of-WORKDIR wrapper imports app only via PYTHONPATH=/app."""
+
+    migration_script = DEPLOY / "scripts" / "migration_with_lock.py"
+    probe_code = (
+        "import runpy;"
+        "runpy.run_path('/opt/tsing-radar/migration_with_lock.py', "
+        "run_name='migration_import_probe')"
+    )
+    base_arguments = [
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--platform",
+        "linux/amd64",
+        "--network",
+        "none",
+        "--read-only",
+        "--user",
+        "10001:10001",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--workdir",
+        "/",
+        "--mount",
+        (
+            f"type=bind,source={_bind_source(migration_script)},"
+            "target=/opt/tsing-radar/migration_with_lock.py,readonly"
+        ),
+    ]
+
+    def run_probe(python_path: str | None) -> subprocess.CompletedProcess[str]:
+        arguments = list(base_arguments)
+        if python_path is not None:
+            arguments.extend(("--env", f"PYTHONPATH={python_path}"))
+        arguments.extend((BACKEND_IMAGE, "python", "-c", probe_code))
+        return _docker(*arguments, expected=set(range(256)))
+
+    exact = run_probe("/app")
+    missing = run_probe(None)
+    drifted = run_probe("/srv/app")
+    return {
+        **_check(
+            "jobs.migration_imports_app_from_outside_workdir",
+            exact.returncode == 0
+            and missing.returncode != 0
+            and drifted.returncode != 0,
+            "migration wrapper import path is missing, implicit, or drifted",
+        ),
+        "observed_exit_codes": {
+            "exact": exact.returncode,
+            "missing": missing.returncode,
+            "drifted": drifted.returncode,
+        },
+    }
+
+
 def _cleanup_with_runner() -> None:
     RUNNER.cleanup_restore_services()
 
@@ -828,6 +888,7 @@ def run_container_checks() -> list[dict[str, object]]:
                 "application image platform, uid or excluded data contract failed",
             )
         )
+        checks.append(_container_migration_import_contract())
 
         local_ephemeral_root = ROOT / ".l2-release"
         local_ephemeral_root.mkdir(exist_ok=True)

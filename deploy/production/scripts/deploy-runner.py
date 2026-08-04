@@ -243,10 +243,17 @@ print("prod database verification passed")
 class RunnerError(RuntimeError):
     """Stable runner failure that does not contain subprocess output."""
 
-    def __init__(self, reason: str, exit_code: int = 1) -> None:
+    def __init__(
+        self,
+        reason: str,
+        exit_code: int = 1,
+        *,
+        failed_step_id: str | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.exit_code = exit_code
+        self.failed_step_id = failed_step_id
 
 
 class RunnerInterrupted(RunnerError):
@@ -730,14 +737,28 @@ def execute_workflow(
             raise RunnerError(
                 "upgrade_compatibility_requires_separate_approval",
                 77,
+                failed_step_id=step,
             )
-        if step_executor is not None:
-            step_executor(step, runner)
-            continue
-        created_backup = _execute_step(step, runner, backup_file=backup_file)
+        try:
+            if step_executor is not None:
+                step_executor(step, runner)
+                continue
+            created_backup = _execute_step(step, runner, backup_file=backup_file)
+        except RunnerError as exc:
+            if exc.failed_step_id is not None:
+                raise
+            raise RunnerError(
+                exc.reason,
+                exc.exit_code,
+                failed_step_id=step,
+            ) from exc
         if step == "backup":
             if created_backup is None:
-                raise RunnerError("workflow_backup_receipt_missing", 78)
+                raise RunnerError(
+                    "workflow_backup_receipt_missing",
+                    78,
+                    failed_step_id=step,
+                )
             backup_file = created_backup
 
 
@@ -790,15 +811,18 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False))
         return 0
     except RunnerError as exc:
+        failure_report = {
+            "schema_version": "l2-deploy-result-v1",
+            "status": "failed",
+            "action_id": args.action,
+            "reason": exc.reason,
+            "values_or_host_metadata_emitted": False,
+        }
+        if exc.failed_step_id is not None:
+            failure_report["failed_step_id"] = exc.failed_step_id
         print(
             json.dumps(
-                {
-                    "schema_version": "l2-deploy-result-v1",
-                    "status": "failed",
-                    "action_id": args.action,
-                    "reason": exc.reason,
-                    "values_or_host_metadata_emitted": False,
-                },
+                failure_report,
                 ensure_ascii=False,
             )
         )

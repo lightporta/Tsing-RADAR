@@ -291,6 +291,64 @@ def test_first_deploy_stops_before_migration_when_database_verification_fails():
     assert "start-backend-off-traffic" not in visited
 
 
+def test_workflow_failure_records_stable_step_without_child_output():
+    visited: list[str] = []
+    child_canary = "synthetic-child-output-must-not-escape"
+
+    def fail_migration(step, _runner):
+        visited.append(step)
+        if step == "migration":
+            raise RUNNER.RunnerError("action_failed") from RuntimeError(child_canary)
+
+    with pytest.raises(RUNNER.RunnerError, match="action_failed") as failure:
+        RUNNER.execute_workflow(
+            "first-deploy-plan",
+            step_executor=fail_migration,
+        )
+    assert failure.value.failed_step_id == "migration"
+    assert child_canary not in str(failure.value)
+    assert visited[-1] == "migration"
+    assert "backup" not in visited
+
+
+def test_runner_failure_report_emits_step_id_without_raw_output(
+    monkeypatch,
+    capsys,
+):
+    child_canary = "synthetic-secret-like-child-output"
+
+    def fail_action(_action):
+        raise RUNNER.RunnerError(
+            "action_failed",
+            failed_step_id="migration",
+        ) from RuntimeError(child_canary)
+
+    monkeypatch.setattr(RUNNER, "_install_signal_handlers", lambda: None)
+    monkeypatch.setattr(RUNNER, "execute_action", fail_action)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(checker.RUNNER_PATH),
+            "--action",
+            "first-deploy-plan",
+            "--mode",
+            "execute",
+        ],
+    )
+    assert RUNNER.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "schema_version": "l2-deploy-result-v1",
+        "status": "failed",
+        "action_id": "first-deploy-plan",
+        "reason": "action_failed",
+        "values_or_host_metadata_emitted": False,
+        "failed_step_id": "migration",
+    }
+    assert child_canary not in json.dumps(report)
+
+
 def test_upgrade_stops_after_verified_restore_without_compatibility_approval():
     visited: list[str] = []
     with pytest.raises(
@@ -446,6 +504,37 @@ def test_backup_script_creates_unique_no_clobber_receipt_and_compose_has_no_stat
     assert 'sha256sum -c "$(basename "${target}.sha256")"' in backup_script
     assert backup_script.index("sha256sum -c") < backup_script.index("backup_created=")
     assert "BACKUP_FILE: ${BACKUP_FILE" not in jobs
+
+
+def test_migration_container_probe_requires_exact_app_pythonpath(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_docker(*arguments, **_kwargs):
+        command = list(arguments)
+        calls.append(command)
+        environment = next(
+            (
+                command[index + 1]
+                for index, value in enumerate(command[:-1])
+                if value == "--env" and command[index + 1].startswith("PYTHONPATH=")
+            ),
+            None,
+        )
+        return _completed(returncode=0 if environment == "PYTHONPATH=/app" else 1)
+
+    monkeypatch.setattr(checker, "_docker", fake_docker)
+    report = checker._container_migration_import_contract()
+
+    assert report["status"] == "passed"
+    assert report["observed_exit_codes"] == {
+        "exact": 0,
+        "missing": 1,
+        "drifted": 1,
+    }
+    assert len(calls) == 3
+    assert all("--network" in call and "none" in call for call in calls)
+    assert all("--read-only" in call and "--pull" in call for call in calls)
+    assert all("migration_with_lock.py" in " ".join(call) for call in calls)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="real flock semantics run in L2 container checker")

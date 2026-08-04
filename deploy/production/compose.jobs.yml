@@ -59,6 +59,9 @@ services:
       AUTO_CREATE_SCHEMA: "false"
       MIGRATION_LOCK_TIMEOUT_SECONDS: "5"
       JOB_LOCK_TIMEOUT_SECONDS: "5"
+      # The wrapper is bind-mounted outside WORKDIR.  Pin the application root
+      # so absolute-script execution can deterministically import /app/app.
+      PYTHONPATH: /app
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["python", "/opt/tsing-radar/migration_with_lock.py"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]

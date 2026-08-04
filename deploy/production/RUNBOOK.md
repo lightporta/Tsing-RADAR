@@ -36,7 +36,9 @@ stage has no Milvus endpoint.
 
 Run only `deploy-runner.py --action first-deploy-plan --mode execute`; the
 runner validates the exact immutable workflow before the first subprocess and
-stops on the first failed step. The fixed sequence is:
+stops on the first failed step. Failure JSON includes only a stable
+`failed_step_id` plus a stable reason; captured child stdout/stderr is never
+forwarded. The fixed sequence is:
 
 1. Run the offline checker against dummy secret files and immutable Compose
    image digests. On the server run `secret_preflight.py` against restricted
@@ -58,8 +60,11 @@ stops on the first failed step. The fixed sequence is:
    incomplete stage namespace, a non-empty target or any privilege mismatch
    fails before migration. No single-step migration execute path exists.
 5. Acquire both the shared kernel job lock and the database advisory lock, then
-   run exactly one `migration` job. A failed
-   migration stops the process before any app starts.
+   run exactly one `migration` job. Because its wrapper is bind-mounted at
+   `/opt/tsing-radar`, the service fixes `PYTHONPATH=/app` so the absolute script
+   deterministically imports the image's `/app/app` package without depending
+   on the working directory. A failed migration stops the process before any
+   app starts.
 6. Start backend without edge traffic. Run schema, local readiness, contract and
    honest zero-published-mentor checks.
 7. Create the first backup and restore it into the isolated restore-check

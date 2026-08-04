@@ -197,6 +197,16 @@ def _secret_bind_contract(
     return True
 
 
+def _migration_import_contract(service: dict[str, Any]) -> bool:
+    """Require the out-of-WORKDIR migration wrapper to import /app/app."""
+
+    return (
+        service.get("command")
+        == ["python", "/opt/tsing-radar/migration_with_lock.py"]
+        and _environment(service).get("PYTHONPATH") == "/app"
+    )
+
+
 def _secret_is_strong(value: str) -> bool:
     placeholders = {"admin", "secret", "changeme", "change-me"}
     return (
@@ -869,13 +879,12 @@ def run_checks(
                 "jobs.migration_one_shot",
                 jobs["services"]["migration"].get("restart") == "no"
                 and not jobs["services"]["migration"].get("ports")
-                and jobs["services"]["migration"].get("command")
-                == ["python", "/opt/tsing-radar/migration_with_lock.py"]
+                and _migration_import_contract(jobs["services"]["migration"])
                 and _environment(jobs["services"]["migration"]).get(
                     "MIGRATION_LOCK_TIMEOUT_SECONDS"
                 )
                 == "5",
-                "migration is not a locked isolated one-shot",
+                "migration is not a locked isolated one-shot with /app import path",
             )
         )
         job_lock_mounts = {

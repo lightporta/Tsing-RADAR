@@ -508,6 +508,24 @@ def test_explicit_secret_bind_contract_rejects_unsafe_mount_variants(tmp_path):
     assert not module._secret_bind_contract(with_service_secret, expected)
 
 
+def test_migration_service_requires_exact_application_import_path():
+    path = ROOT / "scripts" / "check_l1_production.py"
+    spec = importlib.util.spec_from_file_location("check_l1_migration_path", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    service = {
+        "command": ["python", "/opt/tsing-radar/migration_with_lock.py"],
+        "environment": {"PYTHONPATH": "/app"},
+    }
+    assert module._migration_import_contract(service)
+    service["environment"].pop("PYTHONPATH")
+    assert not module._migration_import_contract(service)
+    service["environment"]["PYTHONPATH"] = "/srv/app"
+    assert not module._migration_import_contract(service)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
