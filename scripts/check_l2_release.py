@@ -23,6 +23,10 @@ DEPLOY = ROOT / "deploy" / "production"
 RUNNER_PATH = DEPLOY / "scripts" / "deploy-runner.py"
 BACKEND_IMAGE = "tsing-radar-backend:l2-local"
 FRONTEND_IMAGE = "tsing-radar-frontend:l2-local"
+POSTGRES_IMAGE = (
+    "postgres@sha256:"
+    "7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382"
+)
 CONTAINER_PREFIX = "tsing-radar-l2-check-"
 CONTAINER_RUNNER_PATH = "/workspace/deploy/production/scripts/deploy-runner.py"
 CONTAINER_JOB_LOCK = "/var/lib/tsing-radar/job.lock"
@@ -677,6 +681,322 @@ def _container_migration_import_contract() -> dict[str, object]:
             "drifted": drifted.returncode,
         },
     }
+
+
+def _container_backup_restore_contract(
+    temporary_path: Path,
+    generation: str,
+) -> dict[str, object]:
+    """Exercise backup, receipt, checksum, restore and cleanup in the locked image."""
+
+    network = f"{CONTAINER_PREFIX}{generation}-backup-network"
+    source_name = f"{CONTAINER_PREFIX}{generation}-backup-source"
+    restore_name = f"{CONTAINER_PREFIX}{generation}-backup-restore"
+    password = "dummyL2Backup_0123456789abcdef"
+    secret = temporary_path / "backup-password"
+    backup_dir = temporary_path / "backups"
+    failed_dir = temporary_path / "failed-backups"
+    collision_dir = temporary_path / "collision-backups"
+    fixtures_dir = temporary_path / "backup-fixtures"
+    for directory in (backup_dir, failed_dir, collision_dir, fixtures_dir):
+        directory.mkdir()
+    secret.write_text(password, encoding="utf-8")
+    backup_script = DEPLOY / "scripts" / "postgres-backup.sh"
+    restore_script = DEPLOY / "scripts" / "postgres-restore-check.sh"
+
+    fake_date = fixtures_dir / "date"
+    fake_mktemp = fixtures_dir / "mktemp"
+    fake_date.write_bytes(b"#!/bin/sh\nprintf '%s\\n' 20260805T001122Z\n")
+    fake_mktemp.write_bytes(
+        b"#!/bin/sh\n"
+        b"case \"$1\" in\n"
+        b"  *-dump-XXXXXX) path=${1%XXXXXX}Ab12z9 ;;\n"
+        b"  *-sha256-XXXXXX) path=${1%XXXXXX}Cd34x8 ;;\n"
+        b"  *) exit 64 ;;\n"
+        b"esac\n"
+        b"(umask 077; : > \"$path\") || exit 65\n"
+        b"printf '%s\\n' \"$path\"\n"
+    )
+    collision_name = "l2_backup-20260805T001122Z-Ab12z9.dump"
+    collision_target = collision_dir / collision_name
+    collision_target.write_bytes(b"synthetic collision sentinel\n")
+
+    def backup_run(
+        directory: Path,
+        host: str,
+        *extra: str,
+    ) -> subprocess.CompletedProcess[str]:
+        return _docker(
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            network,
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:size=32m,mode=1777",
+            "--mount",
+            f"type=bind,source={_bind_source(directory)},target=/backups",
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(backup_script)},"
+                "target=/opt/postgres-backup.sh,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(secret)},"
+                "target=/run/secrets/database_password,readonly"
+            ),
+            "--env",
+            f"DATABASE_HOST={host}",
+            "--env",
+            "DATABASE_NAME=l2_backup",
+            "--env",
+            "DATABASE_USER=l2_backup",
+            "--env",
+            "DATABASE_PASSWORD_FILE=/run/secrets/database_password",
+            *extra,
+            "--entrypoint",
+            "/bin/sh",
+            POSTGRES_IMAGE,
+            "/opt/postgres-backup.sh",
+            expected=set(range(256)),
+            timeout=180,
+        )
+
+    _docker("network", "create", network)
+    try:
+        for name, alias, user, database in (
+            (source_name, "source-postgres", "l2_backup", "l2_backup"),
+            (restore_name, "restore-postgres", "restore_check", "restore_check"),
+        ):
+            _docker(
+                "run",
+                "--detach",
+                "--name",
+                name,
+                "--pull",
+                "never",
+                "--platform",
+                "linux/amd64",
+                "--network",
+                network,
+                "--network-alias",
+                alias,
+                "--tmpfs",
+                "/var/lib/postgresql/data:size=256m,mode=0700",
+                "--env",
+                f"POSTGRES_USER={user}",
+                "--env",
+                f"POSTGRES_DB={database}",
+                "--env",
+                f"POSTGRES_PASSWORD={password}",
+                POSTGRES_IMAGE,
+            )
+            if not _wait_container_exec(name, ["pg_isready", "-U", user, "-d", database]):
+                raise RuntimeError("ephemeral backup PostgreSQL did not become ready")
+
+        seed = _docker(
+            "exec",
+            source_name,
+            "psql",
+            "--set=ON_ERROR_STOP=1",
+            "--username=l2_backup",
+            "--dbname=l2_backup",
+            "--command=CREATE TABLE synthetic_backup_probe(id integer); INSERT INTO synthetic_backup_probe VALUES (1)",
+            expected=set(range(256)),
+        )
+        backup = backup_run(backup_dir, "source-postgres")
+        receipt = (
+            RUNNER._parse_backup_created(backup.stdout, "l2_backup")
+            if backup.returncode == 0
+            else ""
+        )
+        backup_file = backup_dir / receipt if receipt else backup_dir / "missing"
+        checksum_file = backup_dir / f"{receipt}.sha256" if receipt else backup_dir / "missing.sha256"
+        checksum = _docker(
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--read-only",
+            "--mount",
+            f"type=bind,source={_bind_source(backup_dir)},target=/backups,readonly",
+            "--entrypoint",
+            "/bin/sh",
+            POSTGRES_IMAGE,
+            "-c",
+            'cd /backups && sha256sum -c "$1.sha256" >/dev/null',
+            "backup-check",
+            receipt,
+            expected=set(range(256)),
+        )
+        restore = _docker(
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            network,
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:size=32m,mode=1777",
+            "--mount",
+            f"type=bind,source={_bind_source(backup_dir)},target=/backups,readonly",
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(restore_script)},"
+                "target=/opt/postgres-restore-check.sh,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(secret)},"
+                "target=/run/secrets/restore_check_password,readonly"
+            ),
+            "--env",
+            "RESTORE_CHECK_HOST=restore-postgres",
+            "--env",
+            "RESTORE_CHECK_PASSWORD_FILE=/run/secrets/restore_check_password",
+            "--env",
+            f"BACKUP_FILE={receipt}",
+            "--entrypoint",
+            "/bin/sh",
+            POSTGRES_IMAGE,
+            "/opt/postgres-restore-check.sh",
+            expected=set(range(256)),
+            timeout=180,
+        )
+        restored_count = _docker(
+            "exec",
+            restore_name,
+            "psql",
+            "--username=restore_check",
+            "--dbname=restore_check",
+            "--tuples-only",
+            "--no-align",
+            "--command=SELECT count(*) FROM synthetic_backup_probe",
+            expected=set(range(256)),
+        )
+        failed = backup_run(failed_dir, "missing-postgres")
+
+        collision = _docker(
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:size=32m,mode=1777",
+            "--mount",
+            f"type=bind,source={_bind_source(collision_dir)},target=/backups",
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(backup_script)},"
+                "target=/opt/postgres-backup.sh,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(secret)},"
+                "target=/run/secrets/database_password,readonly"
+            ),
+            "--mount",
+            f"type=bind,source={_bind_source(fake_date)},target=/usr/bin/date,readonly",
+            "--mount",
+            f"type=bind,source={_bind_source(fake_mktemp)},target=/usr/bin/mktemp,readonly",
+            "--env",
+            "DATABASE_HOST=unused",
+            "--env",
+            "DATABASE_NAME=l2_backup",
+            "--env",
+            "DATABASE_USER=l2_backup",
+            "--env",
+            "DATABASE_PASSWORD_FILE=/run/secrets/database_password",
+            "--entrypoint",
+            "/bin/sh",
+            POSTGRES_IMAGE,
+            "/opt/postgres-backup.sh",
+            expected=set(range(256)),
+        )
+        outputs = "".join(
+            item.stdout + item.stderr
+            for item in (seed, backup, checksum, restore, restored_count, failed, collision)
+        )
+        collision_entries = sorted(path.name for path in collision_dir.iterdir())
+        passed = (
+            seed.returncode == 0
+            and backup.returncode == 0
+            and backup_file.is_file()
+            and checksum_file.is_file()
+            and checksum.returncode == 0
+            and restore.returncode == 0
+            and restored_count.returncode == 0
+            and restored_count.stdout.strip() == "1"
+            and failed.returncode != 0
+            and not any(failed_dir.iterdir())
+            and collision.returncode == 73
+            and collision_entries == [collision_name]
+            and collision_target.read_bytes() == b"synthetic collision sentinel\n"
+            and password not in outputs
+        )
+        return {
+            **_check(
+                "jobs.backup_restore_locked_postgres_image",
+                passed,
+                "backup/receipt/restore or failure cleanup contract failed",
+            ),
+            "observed_exit_codes": {
+                "seed": seed.returncode,
+                "backup": backup.returncode,
+                "checksum": checksum.returncode,
+                "restore": restore.returncode,
+                "failed_backup": failed.returncode,
+                "collision": collision.returncode,
+            },
+            "receipt_parsed": bool(receipt),
+            "failure_partials_remaining": sum(1 for _ in failed_dir.iterdir()),
+            "collision_partials_remaining": max(0, len(collision_entries) - 1),
+            "collision_reason": (
+                "target_collision"
+                if "backup target collision" in collision.stderr
+                else "invalid_temporary_name"
+                if "invalid backup temporary name" in collision.stderr
+                else "invalid_checksum_temporary_name"
+                if "invalid checksum temporary name" in collision.stderr
+                else "fixture_permission"
+                if "Permission denied" in collision.stderr
+                else "fixture_not_found"
+                if "not found" in collision.stderr
+                else "unexpected_failure"
+            ),
+        }
+    finally:
+        _docker("rm", "-f", source_name, restore_name, expected={0, 1})
+        _docker("network", "rm", network, expected={0, 1})
 
 
 def _cleanup_with_runner() -> None:
@@ -1337,6 +1657,7 @@ def run_container_checks() -> list[dict[str, object]]:
             checks.append(
                 _container_migration_database_probe(temporary_path, generation)
             )
+            checks.append(_container_backup_restore_contract(temporary_path, generation))
             # Docker Desktop maps a direct workspace file consistently for the
             # numeric container uid; Windows TemporaryDirectory ACLs do not.
             lock_file = local_ephemeral_root / f"{CONTAINER_PREFIX}{generation}.lock"

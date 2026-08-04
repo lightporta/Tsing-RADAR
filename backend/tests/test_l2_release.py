@@ -570,7 +570,11 @@ def test_backup_script_creates_unique_no_clobber_receipt_and_compose_has_no_stat
         REPOSITORY_ROOT / "deploy" / "production" / "compose.jobs.yml"
     ).read_text(encoding="utf-8")
 
-    assert 'mktemp "/backups/${DATABASE_NAME}-${stamp}-XXXXXX.dump.partial"' in backup_script
+    assert 'mktemp "${temporary_prefix}XXXXXX"' in backup_script
+    assert 'mktemp "${checksum_prefix}XXXXXX"' in backup_script
+    assert 'target="/backups/${DATABASE_NAME}-${stamp}-${token}.dump"' in backup_script
+    assert "XXXXXX.dump" not in backup_script
+    assert "XXXXXX.sha256" not in backup_script
     assert 'ln "$temporary" "$target"' in backup_script
     assert 'sha256sum -c "$(basename "${target}.sha256")"' in backup_script
     assert backup_script.index("sha256sum -c") < backup_script.index("backup_created=")
