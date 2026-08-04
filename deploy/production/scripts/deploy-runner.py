@@ -574,21 +574,63 @@ def cleanup_restore_services(runner: CommandRunner = _run_command) -> None:
             raise RunnerError("restore_cleanup_remove_failed_manual_action_required")
 
 
-def _run_restore_check(runner: CommandRunner) -> None:
-    command = [
+def _parse_backup_created(stdout: str, database_name: str) -> str:
+    """Return the one backup created by the immediately preceding job.
+
+    The backup script emits this receipt only after the dump and its checksum
+    both exist and the checksum has been verified.  A random suffix makes the
+    filename unique while the strict database prefix prevents a receipt from a
+    different namespace being handed to restore-check.
+    """
+
+    if len(stdout.encode("utf-8", errors="replace")) > 65536:
+        raise RunnerError("backup_receipt_oversized", 78)
+    receipts = [
+        line.removeprefix("backup_created=")
+        for line in stdout.splitlines()
+        if line.startswith("backup_created=")
+    ]
+    if len(receipts) != 1:
+        raise RunnerError("backup_receipt_invalid", 78)
+    filename = receipts[0]
+    pattern = re.compile(
+        rf"^{re.escape(database_name)}-\d{{8}}T\d{{6}}Z-[A-Za-z0-9]{{6}}\.dump$"
+    )
+    if not pattern.fullmatch(filename):
+        raise RunnerError("backup_receipt_filename_invalid", 78)
+    return filename
+
+
+def _run_restore_check(runner: CommandRunner, backup_file: str) -> None:
+    if not re.fullmatch(r"[a-z][a-z0-9_]{2,62}-\d{8}T\d{6}Z-[A-Za-z0-9]{6}\.dump", backup_file):
+        raise RunnerError("backup_receipt_filename_invalid", 78)
+    start_database = [
         *_compose_prefix(INFRA, JOBS, profile="restore-check"),
         "up",
-        "--abort-on-container-exit",
-        "--exit-code-from",
-        "restore-check",
+        "--detach",
+        "--wait",
+        "--wait-timeout",
+        "180",
         "restore-check-db",
+    ]
+    restore = [
+        *_compose_prefix(INFRA, JOBS, profile="restore-check"),
+        "run",
+        "--rm",
+        "--no-deps",
+        "--env",
+        f"BACKUP_FILE={backup_file}",
         "restore-check",
     ]
     primary_error: RunnerError | None = None
     try:
-        result = runner(command, 1200)
-        if result.returncode != 0:
+        database_result = runner(start_database, 210)
+        if database_result.returncode != 0:
             primary_error = RunnerError("restore_check_failed")
+        else:
+            restore_result = runner(restore, 1200)
+            if restore_result.returncode != 0:
+                primary_error = RunnerError("restore_check_failed")
     finally:
         try:
             cleanup_restore_services(runner)
@@ -608,23 +650,43 @@ def _install_signal_handlers() -> None:
         signal.signal(signal.SIGBREAK, interrupt)
 
 
-def _execute_step(action_id: str, runner: CommandRunner) -> None:
+def _execute_step(
+    action_id: str,
+    runner: CommandRunner,
+    *,
+    backup_file: str | None = None,
+) -> str | None:
     _resource_gate(action_id, runner)
     if action_id in LOCKED_ACTIONS:
         # Probe and release.  The job-lock.sh entrypoint is the sole lock owner
         # while the Compose job actually runs.
         probe_job_lock()
     if action_id == "restore-check":
-        _run_restore_check(runner)
+        if backup_file is None:
+            raise RunnerError("workflow_backup_receipt_missing", 78)
+        _run_restore_check(runner, backup_file)
         probe_job_lock()
-        return
-    identifiers = _deployment_identifiers() if action_id == "prod-db-verification" else None
+        return None
+    identifiers = (
+        _deployment_identifiers()
+        if action_id in {"prod-db-verification", "backup"}
+        else None
+    )
     command, timeout = command_for_action(action_id, identifiers)
     result = runner(command, timeout)
     if result.returncode != 0:
         raise RunnerError("action_failed")
+    created_backup = None
+    if action_id == "backup":
+        if identifiers is None:
+            raise RunnerError("database_identifiers_required", 78)
+        created_backup = _parse_backup_created(
+            result.stdout,
+            identifiers["PROD_DATABASE_NAME"],
+        )
     if action_id in LOCKED_ACTIONS:
         probe_job_lock()
+    return created_backup
 
 
 WorkflowStepExecutor = Callable[[str, CommandRunner], None]
@@ -662,14 +724,21 @@ def execute_workflow(
 ) -> None:
     steps = plan_for(action_id)
     _validate_workflow_contract(action_id, steps)
-    execute_step = step_executor or _execute_step
+    backup_file: str | None = None
     for step in steps:
         if step == COMPATIBILITY_GATE:
             raise RunnerError(
                 "upgrade_compatibility_requires_separate_approval",
                 77,
             )
-        execute_step(step, runner)
+        if step_executor is not None:
+            step_executor(step, runner)
+            continue
+        created_backup = _execute_step(step, runner, backup_file=backup_file)
+        if step == "backup":
+            if created_backup is None:
+                raise RunnerError("workflow_backup_receipt_missing", 78)
+            backup_file = created_backup
 
 
 def execute_action(action_id: str, runner: CommandRunner = _run_command) -> None:

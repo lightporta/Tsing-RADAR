@@ -12,11 +12,20 @@ esac
 export PGPASSWORD="$(cat "$DATABASE_PASSWORD_FILE")"
 umask 077
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
-target="/backups/${DATABASE_NAME}-${stamp}.dump"
-temporary="${target}.partial"
-trap 'rm -f "$temporary"' EXIT INT TERM
+temporary=$(mktemp "/backups/${DATABASE_NAME}-${stamp}-XXXXXX.dump.partial")
+target=${temporary%.partial}
+checksum_temporary=$(mktemp "/backups/.${DATABASE_NAME}-${stamp}-XXXXXX.sha256.partial")
+trap 'rm -f -- "$temporary" "$checksum_temporary"' EXIT INT TERM
+[ ! -e "$target" ] || { echo "backup target collision" >&2; exit 73; }
+[ ! -e "${target}.sha256" ] || { echo "backup checksum collision" >&2; exit 73; }
 pg_dump --host "$DATABASE_HOST" --username "$DATABASE_USER" --dbname "$DATABASE_NAME" --format custom --file "$temporary"
-mv "$temporary" "$target"
-sha256sum "$target" > "${target}.sha256"
+ln "$temporary" "$target"
+rm -f -- "$temporary"
+(cd /backups && sha256sum "$(basename "$target")") > "$checksum_temporary"
+ln "$checksum_temporary" "${target}.sha256"
+rm -f -- "$checksum_temporary"
+[ -f "$target" ] || { echo "backup file unavailable after creation" >&2; exit 66; }
+[ -f "${target}.sha256" ] || { echo "backup checksum unavailable after creation" >&2; exit 66; }
+(cd /backups && sha256sum -c "$(basename "${target}.sha256")") >/dev/null
 unset PGPASSWORD
 printf 'backup_created=%s\n' "$(basename "$target")"

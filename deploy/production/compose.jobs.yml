@@ -155,7 +155,6 @@ services:
     environment:
       RESTORE_CHECK_HOST: restore-check-db
       RESTORE_CHECK_PASSWORD_FILE: /run/secrets/restore_check_password
-      BACKUP_FILE: ${BACKUP_FILE:?Set a specific verified backup filename}
     entrypoint: ["/bin/sh", "/opt/tsing-radar/postgres-restore-check.sh"]
     secrets:
       - restore_check_password

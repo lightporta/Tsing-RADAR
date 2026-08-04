@@ -233,6 +233,47 @@ def test_first_deploy_workflow_enforces_database_and_recovery_gates():
     assert visited.index("restore-check") < visited.index("start-frontend")
 
 
+def test_first_deploy_passes_current_backup_receipt_to_restore(monkeypatch):
+    backup_file = "tsing_radar-20260805T001122Z-Ab12z9.dump"
+    visited: list[tuple[str, str | None]] = []
+
+    def fake_execute(step, _runner, *, backup_file=None):
+        visited.append((step, backup_file))
+        if step == "backup":
+            return "tsing_radar-20260805T001122Z-Ab12z9.dump"
+        return None
+
+    monkeypatch.setattr(RUNNER, "_execute_step", fake_execute)
+    RUNNER.execute_workflow("first-deploy-plan")
+
+    restore_call = next(item for item in visited if item[0] == "restore-check")
+    assert restore_call == ("restore-check", backup_file)
+    assert next(item for item in visited if item[0] == "backup")[1] is None
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    (
+        "",
+        "backup_created=tsing_radar-20260805T001122Z.dump\n",
+        "backup_created=other_db-20260805T001122Z-Ab12z9.dump\n",
+        "backup_created=tsing_radar-20260805T001122Z-Ab12z9.dump\n"
+        "backup_created=tsing_radar-20260805T001123Z-Cd34x8.dump\n",
+        "backup_created=../../escape.dump\n",
+    ),
+)
+def test_backup_receipt_rejects_missing_ambiguous_or_foreign_files(stdout):
+    with pytest.raises(RUNNER.RunnerError, match="backup_receipt"):
+        RUNNER._parse_backup_created(stdout, "tsing_radar")
+
+
+def test_backup_receipt_accepts_one_verified_current_filename():
+    stdout = "compose noise\nbackup_created=tsing_radar-20260805T001122Z-Ab12z9.dump\n"
+    assert RUNNER._parse_backup_created(stdout, "tsing_radar") == (
+        "tsing_radar-20260805T001122Z-Ab12z9.dump"
+    )
+
+
 def test_first_deploy_stops_before_migration_when_database_verification_fails():
     visited: list[str] = []
 
@@ -349,8 +390,62 @@ def test_restore_primary_failure_still_runs_cleanup(monkeypatch):
         lambda _runner: cleaned.append(True),
     )
     with pytest.raises(RUNNER.RunnerError, match="restore_check_failed"):
-        RUNNER._run_restore_check(fake_runner)
+        RUNNER._run_restore_check(
+            fake_runner,
+            "tsing_radar-20260805T001122Z-Ab12z9.dump",
+        )
     assert cleaned == [True]
+
+
+def test_restore_uses_only_the_workflow_backup_receipt(monkeypatch):
+    calls: list[list[str]] = []
+    cleaned: list[bool] = []
+    backup_file = "tsing_radar-20260805T001122Z-Ab12z9.dump"
+
+    def fake_runner(arguments, _timeout):
+        calls.append(list(arguments))
+        return _completed()
+
+    monkeypatch.setattr(
+        RUNNER,
+        "cleanup_restore_services",
+        lambda _runner: cleaned.append(True),
+    )
+    RUNNER._run_restore_check(fake_runner, backup_file)
+
+    assert len(calls) == 2
+    assert calls[0][-6:] == [
+        "up",
+        "--detach",
+        "--wait",
+        "--wait-timeout",
+        "180",
+        "restore-check-db",
+    ]
+    assert calls[1][-6:] == [
+        "run",
+        "--rm",
+        "--no-deps",
+        "--env",
+        f"BACKUP_FILE={backup_file}",
+        "restore-check",
+    ]
+    assert cleaned == [True]
+
+
+def test_backup_script_creates_unique_no_clobber_receipt_and_compose_has_no_static_file():
+    backup_script = (
+        REPOSITORY_ROOT / "deploy" / "production" / "scripts" / "postgres-backup.sh"
+    ).read_text(encoding="utf-8")
+    jobs = (
+        REPOSITORY_ROOT / "deploy" / "production" / "compose.jobs.yml"
+    ).read_text(encoding="utf-8")
+
+    assert 'mktemp "/backups/${DATABASE_NAME}-${stamp}-XXXXXX.dump.partial"' in backup_script
+    assert 'ln "$temporary" "$target"' in backup_script
+    assert 'sha256sum -c "$(basename "${target}.sha256")"' in backup_script
+    assert backup_script.index("sha256sum -c") < backup_script.index("backup_created=")
+    assert "BACKUP_FILE: ${BACKUP_FILE" not in jobs
 
 
 @pytest.mark.skipif(os.name != "posix", reason="real flock semantics run in L2 container checker")
