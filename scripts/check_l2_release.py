@@ -851,6 +851,193 @@ def _container_database_verification(
         _docker("network", "rm", network, expected={0, 1})
 
 
+def _container_migration_database_probe(
+    temporary_path: Path,
+    generation: str,
+) -> dict[str, object]:
+    """Run the real migration wrapper against an ephemeral PostgreSQL target."""
+
+    network = f"{CONTAINER_PREFIX}{generation}-migration-network"
+    postgres_name = f"{CONTAINER_PREFIX}{generation}-migration-postgres"
+    bootstrap_password = "dummyL2MigrationBootstrap_0123456789abcdef"
+    app_password = "dummyL2MigrationApp_@:/?#%[]!"
+    bootstrap_secret = temporary_path / "migration-bootstrap"
+    app_secret = temporary_path / "migration-app"
+    bootstrap_secret.write_text(bootstrap_password, encoding="utf-8")
+    app_secret.write_text(app_password, encoding="utf-8")
+    provision_script = DEPLOY / "scripts" / "database_provision.py"
+    migration_script = DEPLOY / "scripts" / "migration_with_lock.py"
+    alembic_environment = ROOT / "backend" / "alembic" / "env.py"
+
+    _docker("network", "create", network)
+    try:
+        _docker(
+            "run",
+            "--detach",
+            "--name",
+            postgres_name,
+            "--network",
+            network,
+            "--network-alias",
+            "postgres",
+            "--env",
+            "POSTGRES_USER=l2_migration_bootstrap",
+            "--env",
+            f"POSTGRES_PASSWORD={bootstrap_password}",
+            "--env",
+            "POSTGRES_DB=postgres",
+            "postgres:16-alpine",
+        )
+        if not _wait_container_exec(
+            postgres_name,
+            ["pg_isready", "-U", "l2_migration_bootstrap", "-d", "postgres"],
+        ):
+            raise RuntimeError("ephemeral migration PostgreSQL did not become ready")
+
+        provision = _docker(
+            "run",
+            "--rm",
+            "--network",
+            network,
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(provision_script)},"
+                "target=/opt/database_provision.py,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(bootstrap_secret)},"
+                "target=/run/secrets/bootstrap,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(app_secret)},"
+                "target=/run/secrets/database,readonly"
+            ),
+            "--env",
+            "DATABASE_HOST=postgres",
+            "--env",
+            "DATABASE_BOOTSTRAP_USER=l2_migration_bootstrap",
+            "--env",
+            "DATABASE_BOOTSTRAP_PASSWORD_FILE=/run/secrets/bootstrap",
+            "--env",
+            "TARGET_DATABASE_NAME=l2_migration",
+            "--env",
+            "TARGET_DATABASE_USER=l2_migration_app",
+            "--env",
+            "TARGET_DATABASE_PASSWORD_FILE=/run/secrets/database",
+            BACKEND_IMAGE,
+            "python",
+            "/opt/database_provision.py",
+            expected=set(range(256)),
+        )
+        migration = _docker(
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            network,
+            "--read-only",
+            "--user",
+            "10001:10001",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:size=32m,mode=1777",
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(migration_script)},"
+                "target=/opt/tsing-radar/migration_with_lock.py,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(alembic_environment)},"
+                "target=/app/alembic/env.py,readonly"
+            ),
+            "--mount",
+            (
+                f"type=bind,source={_bind_source(app_secret)},"
+                "target=/run/secrets/database_password,readonly"
+            ),
+            "--env",
+            "PYTHONPATH=/app",
+            "--env",
+            "DATABASE_HOST=postgres",
+            "--env",
+            "DATABASE_PORT=5432",
+            "--env",
+            "DATABASE_NAME=l2_migration",
+            "--env",
+            "DATABASE_USER=l2_migration_app",
+            "--env",
+            "DATABASE_PASSWORD_FILE=/run/secrets/database_password",
+            "--env",
+            "AUTO_CREATE_SCHEMA=false",
+            "--env",
+            "MIGRATION_LOCK_TIMEOUT_SECONDS=5",
+            BACKEND_IMAGE,
+            "python",
+            "/opt/tsing-radar/migration_with_lock.py",
+            expected=set(range(256)),
+            timeout=180,
+        )
+        version = _docker(
+            "run",
+            "--rm",
+            "--network",
+            network,
+            "--env",
+            f"PGPASSWORD={app_password}",
+            "postgres:16-alpine",
+            "psql",
+            "-h",
+            "postgres",
+            "-U",
+            "l2_migration_app",
+            "-d",
+            "l2_migration",
+            "-Atqc",
+            "SELECT count(*) FROM alembic_version",
+            expected=set(range(256)),
+        )
+        combined_output = (
+            provision.stdout
+            + provision.stderr
+            + migration.stdout
+            + migration.stderr
+            + version.stdout
+            + version.stderr
+        )
+        passed = (
+            provision.returncode == 0
+            and migration.returncode == 0
+            and version.returncode == 0
+            and version.stdout.strip() == "1"
+            and bootstrap_password not in combined_output
+            and app_password not in combined_output
+        )
+        return {
+            **_check(
+                "jobs.migration_real_postgres_settings_dsn",
+                passed,
+                "migration wrapper did not apply Alembic through explicit psycopg kwargs",
+            ),
+            "observed_exit_codes": {
+                "provision": provision.returncode,
+                "migration": migration.returncode,
+                "alembic_version": version.returncode,
+            },
+        }
+    finally:
+        _docker("rm", "-f", postgres_name, expected={0, 1})
+        _docker("network", "rm", network, expected={0, 1})
+
+
 def run_container_checks() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
     generation = uuid.uuid4().hex[:10]
@@ -898,6 +1085,9 @@ def run_container_checks() -> list[dict[str, object]]:
         ) as temporary:
             temporary_path = Path(temporary)
             checks.append(_container_database_verification(temporary_path, generation))
+            checks.append(
+                _container_migration_database_probe(temporary_path, generation)
+            )
             # Docker Desktop maps a direct workspace file consistently for the
             # numeric container uid; Windows TemporaryDirectory ACLs do not.
             lock_file = local_ephemeral_root / f"{CONTAINER_PREFIX}{generation}.lock"

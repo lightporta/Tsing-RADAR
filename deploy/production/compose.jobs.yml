@@ -67,6 +67,12 @@ services:
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
     volumes:
       - ./scripts/migration_with_lock.py:/opt/tsing-radar/migration_with_lock.py:ro
+      - type: bind
+        source: ../../backend/alembic/env.py
+        target: /app/alembic/env.py
+        read_only: true
+        bind:
+          create_host_path: false
       - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
       - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
       - type: bind

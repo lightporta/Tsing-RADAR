@@ -10,7 +10,10 @@ from app.db.base import Base
 from app import models  # noqa: F401  # 确保所有模型被导入
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# ConfigParser treats percent signs as interpolation tokens. SQLAlchemy URLs
+# legitimately contain percent-escaped credential bytes, so escape only for
+# ConfigParser storage; reading the option restores the original URL bytes.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

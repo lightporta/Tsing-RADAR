@@ -63,8 +63,10 @@ forwarded. The fixed sequence is:
    run exactly one `migration` job. Because its wrapper is bind-mounted at
    `/opt/tsing-radar`, the service fixes `PYTHONPATH=/app` so the absolute script
    deterministically imports the image's `/app/app` package without depending
-   on the working directory. A failed migration stops the process before any
-   app starts.
+   on the working directory. The reviewed Alembic environment file is separately
+   mounted read-only at `/app/alembic/env.py` with source auto-creation disabled;
+   it escapes percent-encoded credentials only for ConfigParser storage. A
+   failed migration stops the process before any app starts.
 6. Start backend without edge traffic. Run schema, local readiness, contract and
    honest zero-published-mentor checks.
 7. Create the first backup and restore it into the isolated restore-check

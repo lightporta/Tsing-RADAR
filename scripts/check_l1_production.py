@@ -200,10 +200,21 @@ def _secret_bind_contract(
 def _migration_import_contract(service: dict[str, Any]) -> bool:
     """Require the out-of-WORKDIR migration wrapper to import /app/app."""
 
+    alembic_mounts = [
+        item
+        for item in service.get("volumes", [])
+        if isinstance(item, dict) and item.get("target") == "/app/alembic/env.py"
+    ]
     return (
         service.get("command")
         == ["python", "/opt/tsing-radar/migration_with_lock.py"]
         and _environment(service).get("PYTHONPATH") == "/app"
+        and len(alembic_mounts) == 1
+        and alembic_mounts[0].get("type") == "bind"
+        and alembic_mounts[0].get("read_only") is True
+        and alembic_mounts[0].get("bind", {}).get("create_host_path") is False
+        and Path(str(alembic_mounts[0].get("source", ""))).resolve(strict=False)
+        == (ROOT / "backend" / "alembic" / "env.py").resolve(strict=False)
     )
 
 

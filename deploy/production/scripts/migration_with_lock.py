@@ -7,10 +7,41 @@ import subprocess
 import time
 
 from app.core.config import Settings
+from sqlalchemy.engine import make_url
 
 LOCK_ID = 0x5453494E47524144  # stable signed-64-safe deployment lock key
 LOCK_BUSY_EXIT = 75
 MIGRATION_FAILED_EXIT = 70
+
+
+def psycopg_connect_kwargs(database_url: str) -> dict[str, object]:
+    """Convert the exact SQLAlchemy psycopg URL into explicit driver kwargs."""
+
+    try:
+        parsed = make_url(database_url)
+        port = parsed.port
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("database URL contract invalid") from exc
+    if (
+        parsed.drivername != "postgresql+psycopg"
+        or not parsed.host
+        or not parsed.database
+        or not parsed.username
+        or not parsed.password
+        or not isinstance(port, int)
+        or isinstance(port, bool)
+        or port < 1
+        or port > 65535
+        or parsed.query
+    ):
+        raise ValueError("database URL contract invalid")
+    return {
+        "host": parsed.host,
+        "port": port,
+        "dbname": parsed.database,
+        "user": parsed.username,
+        "password": parsed.password,
+    }
 
 
 def acquire_deployment_lock(connection, timeout_seconds: float) -> bool:
@@ -47,7 +78,10 @@ def main() -> int:
     connection = None
     acquired = False
     try:
-        connection = psycopg.connect(configured.DATABASE_URL, autocommit=True)
+        connection = psycopg.connect(
+            **psycopg_connect_kwargs(configured.DATABASE_URL),
+            autocommit=True,
+        )
         acquired = acquire_deployment_lock(connection, timeout)
         if not acquired:
             print("migration lock busy", flush=True)

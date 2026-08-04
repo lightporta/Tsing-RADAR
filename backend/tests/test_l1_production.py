@@ -7,6 +7,7 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -435,6 +436,106 @@ def test_migration_wrapper_has_timeout_exit_and_releases_lock_on_failure():
     assert module.LOCK_BUSY_EXIT == 75
 
 
+def test_migration_wrapper_decodes_settings_url_into_explicit_psycopg_kwargs(
+    tmp_path,
+    monkeypatch,
+):
+    path = DEPLOY / "scripts" / "migration_with_lock.py"
+    spec = importlib.util.spec_from_file_location("migration_dsn_contract", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    _clear_direct_secret_environment(monkeypatch)
+    password = "Synthetic@Pass:/?#%[]!"
+    password_file = tmp_path / "database-password"
+    password_file.write_text(password, encoding="utf-8")
+    configured = Settings(
+        DATABASE_HOST="postgres",
+        DATABASE_PORT=5433,
+        DATABASE_NAME="tsing_radar_prod",
+        DATABASE_USER="tsing_radar_app",
+        DATABASE_PASSWORD_FILE=str(password_file),
+    )
+    assert password not in configured.DATABASE_URL
+
+    expected = {
+        "host": "postgres",
+        "port": 5433,
+        "dbname": "tsing_radar_prod",
+        "user": "tsing_radar_app",
+        "password": password,
+    }
+    assert module.psycopg_connect_kwargs(configured.DATABASE_URL) == expected
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, _statement, _parameters):
+            return None
+
+        def fetchone(self):
+            return (True,)
+
+    class Connection:
+        closed = False
+
+        def cursor(self):
+            return Cursor()
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    connect_calls: list[dict[str, object]] = []
+
+    def connect(**kwargs):
+        connect_calls.append(kwargs)
+        return connection
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(module, "Settings", lambda: configured)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0),
+    )
+
+    assert module.main() == 0
+    assert connect_calls == [{**expected, "autocommit": True}]
+    assert connection.closed is True
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    (
+        "postgresql://user:password@postgres:5432/database",
+        "sqlite:///database.db",
+        "postgresql+psycopg://user@postgres:5432/database",
+        "postgresql+psycopg://user:password@postgres/database",
+        "postgresql+psycopg://user:password@postgres:5432/database?sslmode=require",
+    ),
+)
+def test_migration_wrapper_rejects_noncanonical_database_urls(database_url):
+    path = DEPLOY / "scripts" / "migration_with_lock.py"
+    spec = importlib.util.spec_from_file_location("migration_dsn_rejection", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with pytest.raises(ValueError, match="database URL contract invalid"):
+        module.psycopg_connect_kwargs(database_url)
+
+
+def test_alembic_config_escapes_percent_encoded_database_url():
+    source = (ROOT / "backend" / "alembic" / "env.py").read_text(encoding="utf-8")
+    assert 'settings.DATABASE_URL.replace("%", "%%")' in source
+
+
 def test_l1_artifact_checker_passes_with_dummy_secrets_only():
     completed = subprocess.run(
         [sys.executable, "scripts/check_l1_production.py"],
@@ -518,11 +619,23 @@ def test_migration_service_requires_exact_application_import_path():
     service = {
         "command": ["python", "/opt/tsing-radar/migration_with_lock.py"],
         "environment": {"PYTHONPATH": "/app"},
+        "volumes": [
+            {
+                "type": "bind",
+                "source": str(ROOT / "backend" / "alembic" / "env.py"),
+                "target": "/app/alembic/env.py",
+                "read_only": True,
+                "bind": {"create_host_path": False},
+            }
+        ],
     }
     assert module._migration_import_contract(service)
     service["environment"].pop("PYTHONPATH")
     assert not module._migration_import_contract(service)
     service["environment"]["PYTHONPATH"] = "/srv/app"
+    assert not module._migration_import_contract(service)
+    service["environment"]["PYTHONPATH"] = "/app"
+    service["volumes"][0]["read_only"] = False
     assert not module._migration_import_contract(service)
 
 
