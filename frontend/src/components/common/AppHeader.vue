@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import AppLogo from './AppLogo.vue'
-import { useUserStore } from '@/stores/useUserStore'
 
 // =====================================================================
 // 全局 Header（文档 §3.2 / §4.4）
@@ -20,7 +18,6 @@ withDefaults(defineProps<{ showBack?: boolean; title?: string }>(), {
 const emit = defineEmits<{ (e: 'menu-click'): void }>()
 
 const router = useRouter()
-const userStore = useUserStore()
 
 function goProfile() {
   router.push('/profile')
@@ -34,11 +31,6 @@ function goBack() {
 }
 
 function handleProfileClick() {
-  // 占位：清小搭 SSO 校验
-  if (!userStore.isLoggedIn) {
-    userStore.login('同学', '2023000000')
-    ElMessage.success('已登录（SSO 占位）')
-  }
   goProfile()
 }
 </script>
@@ -53,7 +45,7 @@ function handleProfileClick() {
         aria-label="返回首页"
         @click="goBack"
       >
-        <el-icon><ArrowLeft /></el-icon>
+        <el-icon aria-hidden="true">←</el-icon>
         <span class="back-text">返回</span>
       </button>
       <button
@@ -62,7 +54,7 @@ function handleProfileClick() {
         aria-label="打开菜单"
         @click="emit('menu-click')"
       >
-        <el-icon><Menu /></el-icon>
+        <el-icon aria-hidden="true">☰</el-icon>
       </button>
       <AppLogo v-else />
     </div>
@@ -74,10 +66,10 @@ function handleProfileClick() {
     <div class="header-right">
       <slot name="right" />
       <button class="icon-btn" aria-label="个人信息" @click="handleProfileClick">
-        <el-icon><User /></el-icon>
+        <el-icon aria-hidden="true">人</el-icon>
       </button>
       <button class="icon-btn" aria-label="信息平台" @click="goRecruitment">
-        <el-icon><ChatDotRound /></el-icon>
+        <el-icon aria-hidden="true">讯</el-icon>
       </button>
     </div>
   </header>

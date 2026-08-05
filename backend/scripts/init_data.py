@@ -1,39 +1,63 @@
-"""数据初始化脚本：把 mentors.json 导入 advisors 表。
-
-开发期可跳过（路由直接读 JSON）；生产期启用数据库时运行。
-"""
-
-import json
-import os
+"""把证据化导师记录导入 advisors 表；隔离值不会写入业务列。"""
 
 from app.db.session import SessionLocal, init_db
 from app.models.advisor import Advisor
+from app.services.data_loader import load_mentor_dataset
 
 
 def main() -> None:
     init_db()
-    data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "mentors.json")
-    with open(data_path, "r", encoding="utf-8") as f:
-        mentors = json.load(f)
+    dataset = load_mentor_dataset()
 
     db = SessionLocal()
     try:
-        for i, m in enumerate(mentors):
+        for record in dataset.records:
+            fields = record.fields
+            governance = record.governance
             advisor = Advisor(
-                advisor_id=f"T{1000 + i}",
-                name=m.get("name", ""),
-                department=m.get("dept", ""),
-                field=m.get("field", ""),
-                tags=m.get("tags", []),
-                contact_email=m.get("contact_email"),
-                office_loc=m.get("office_loc"),
-                radar_traits=m.get("radar_traits", {}),
-                popularity=m.get("popularity", 0),
-                sector=0 if m.get("sector", "国") == "国" else 1,
+                advisor_id=record.advisor_id,
+                name=fields.get("name", ""),
+                department=fields.get("dept", ""),
+                field=fields.get("field", ""),
+                tags=fields.get("tags", []),
+                profile_text=None,
+                recent_papers=None,
+                contact_email=None,
+                office_loc=None,
+                radar_traits=None,
+                popularity=None,
+                sector=None,
+                provenance={
+                    key: [
+                        entry.model_dump(mode="json", exclude_none=True)
+                        for entry in entries
+                    ]
+                    for key, entries in record.provenance.items()
+                },
+                governance=governance.model_dump(
+                    mode="json",
+                    exclude_none=False,
+                ),
+                quarantined_fields={
+                    key: value.model_dump(mode="json", exclude_none=False)
+                    for key, value in record.quarantined_fields.items()
+                },
+                review_status=governance.review_status.value,
+                publication_status=governance.publication_status.value,
+                authorization_basis=governance.authorization.basis.value,
+                consent_id=governance.authorization.consent_id,
+                record_created_at=governance.created_at,
+                record_updated_at=governance.updated_at,
+                verified_at=governance.verified_at,
+                expires_at=governance.expires_at,
+                takedown_at=governance.takedown.effective_at,
             )
             db.merge(advisor)
         db.commit()
-        print(f"✅ 已导入 {len(mentors)} 位导师到 advisors 表")
+        print(
+            f"imported={len(dataset.records)} "
+            "publication_status=restricted_or_verified"
+        )
     finally:
         db.close()
 

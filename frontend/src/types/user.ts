@@ -18,7 +18,6 @@ export type StudentCategory =
 
 /** 学生信息（对应后端 students 表） */
 export interface StudentProfile {
-  student_id: string
   name: string
   email: string
   dept: string // 院系

@@ -9,6 +9,14 @@ from app.models.application import Application
 from app.models.feedback import Feedback
 from app.models.questionnaire_session import QuestionnaireSession
 from app.models.training_sample import TrainingSample
+from app.models.identity import ExternalIdentity, IdentitySession
+from app.models.idempotency import IdempotencyRecord
+from app.models.artifact_audit import ArtifactAuditEvent
+from app.models.private_document import (
+    ArtifactDeliveryGrant,
+    DeletedArtifactTombstone,
+    PrivateDocument,
+)
 
 __all__ = [
     "Student",
@@ -20,4 +28,11 @@ __all__ = [
     "Feedback",
     "QuestionnaireSession",
     "TrainingSample",
+    "ExternalIdentity",
+    "IdentitySession",
+    "IdempotencyRecord",
+    "ArtifactAuditEvent",
+    "PrivateDocument",
+    "ArtifactDeliveryGrant",
+    "DeletedArtifactTombstone",
 ]

@@ -31,6 +31,11 @@ const html = computed(() =>
       <div class="bubble" :class="{ streaming: message.streaming }">
         <div v-if="isUser" class="user-text">{{ message.content }}</div>
         <div v-else class="markdown-body" v-html="html" />
+        <div v-if="isUser && message.attachments?.length" class="message-attachments">
+          <span v-for="item in message.attachments" :key="item.documentId">
+            📎 {{ item.name }}（已私有保存，未注入访谈）
+          </span>
+        </div>
         <span v-if="message.streaming" class="cursor" />
       </div>
     </div>
@@ -109,6 +114,14 @@ const html = computed(() =>
   .user-text {
     white-space: pre-wrap;
   }
+}
+
+.message-attachments {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 11px;
+  opacity: 0.9;
 }
 
 // 流式光标

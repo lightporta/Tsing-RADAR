@@ -11,14 +11,10 @@ import type { SortMetric } from '@/types/advisor'
 const advisorStore = useAdvisorStore()
 
 const sortOptions: Array<{ label: string; value: SortMetric }> = [
-  { label: '契合度优先', value: 'synergy' },
-  { label: '热门度', value: 'popularity' },
-  { label: '学术敏锐度', value: 'acumen' },
-  { label: '人脉资源', value: 'network' },
-  { label: '指导意愿', value: 'mentorship' },
-  { label: '性格包容度', value: 'tolerance' },
-  { label: '经费实力', value: 'funding' },
-  { label: '产出效率', value: 'efficiency' },
+  { label: '保守排序分', value: 'score' },
+  { label: '适配分', value: 'fit_score' },
+  { label: '证据覆盖', value: 'evidence_coverage' },
+  { label: '证据置信', value: 'evidence_confidence' },
 ]
 
 function onSortChange(value: SortMetric) {

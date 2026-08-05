@@ -1,16 +1,17 @@
 import advisorsRaw from './mentors.json'
 import type { Advisor, MatchedAdvisor, ScatterPoint } from '@/types/advisor'
 import type { RecruitmentItem } from '@/types/api'
-import { computeSynergy } from '@/utils/synergy'
-import { deptColor, splitKeywords } from '@/utils/format'
+import { deptColor } from '@/utils/format'
 
 // =====================================================================
 // 前端 Mock 数据服务（文档 §7.3）
 // 当 VITE_USE_MOCK=true 时启用，前端可完全独立于后端开发
-// 数据源：mentors.json（81 位真实导师）
+// A2：旧 Mock 缺少来源与授权证据，当前数据集为空；不得绕过后端发布门。
 // =====================================================================
 
-export const mockAdvisors: Advisor[] = advisorsRaw as Advisor[]
+// 历史 JSON 只保留作视觉开发资产，运行时 Mock 不把它冒充已审核数据。
+void advisorsRaw
+export const mockAdvisors: Advisor[] = []
 
 /** 散点数据：x=popularity, y=sector(0=国/1=私) */
 export const mockScatterPoints: ScatterPoint[] = mockAdvisors.map((m) => ({
@@ -23,48 +24,9 @@ export const mockScatterPoints: ScatterPoint[] = mockAdvisors.map((m) => ({
   advisor: m,
 }))
 
-/** 默认学生权重（与 useUserStore 默认值对齐） */
-const DEFAULT_WEIGHTS = { acumen: 85, network: 60, mentorship: 90, tolerance: 70, funding: 50, efficiency: 75 }
-
-/** 模拟匹配（关键词命中 + Synergy） */
-export function mockMatch(interest: string): MatchedAdvisor[] {
-  const keywords = splitKeywords(interest)
-  const scored: MatchedAdvisor[] = mockAdvisors.map((m) => {
-    // 关键词命中加分
-    const field = m.field.toLowerCase()
-    const tags = m.tags.map((t) => t.toLowerCase())
-    let kwScore = 0
-    for (const k of keywords) {
-      if (field.includes(k)) kwScore += 10
-      if (tags.some((t) => t.includes(k))) kwScore += 8
-    }
-    const base = Math.min(60, kwScore * 3) + (kwScore === 0 ? m.score * 0.4 : 0)
-    const synergy = computeSynergy(DEFAULT_WEIGHTS, m.radar_traits)
-    return {
-      ...m,
-      score: Math.round(Math.min(100, base) * 10) / 10,
-      synergy,
-      reason: mockReason(m, kwScore, synergy),
-    }
-  })
-  scored.sort((a, b) => b.score - a.score || b.synergy - a.synergy)
-  return scored.slice(0, 20)
-}
-
-function mockReason(m: Advisor, kw: number, synergy: number): string {
-  const top = Object.entries(m.radar_traits).sort(([, a], [, b]) => b - a)[0]
-  const traitCn: Record<string, string> = {
-    acumen: '学术敏锐度',
-    network: '人脉资源',
-    mentorship: '指导意愿',
-    tolerance: '性格包容度',
-    funding: '经费实力',
-    efficiency: '产出效率',
-  }
-  if (kw > 0) {
-    return `${m.name}：研究方向「${m.field}」与你的兴趣高度契合，${traitCn[top[0]] ?? ''}突出（契合度 ${synergy}%）。`
-  }
-  return `${m.name}：${traitCn[top[0]] ?? ''}突出，研究方向「${m.field}」，契合度 ${synergy}%。`
+/** Mock 不得制造导师推荐，只保留空数据 UX。 */
+export function mockMatch(_interest: string): MatchedAdvisor[] {
+  return []
 }
 
 /** Mock 招募列表（从导师 recruitments 字段聚合） */
@@ -122,8 +84,8 @@ export function mockChatReply(input: string, userTurns: number): string {
 
   if (completionSignals.some((s) => lower.includes(s)) && userTurns >= 2) {
     return (
-      '感谢你的回答！我已经对你的画像有了清晰认识，' +
-      '正在为你匹配最合适的导师，请稍候查看中部与右侧的推荐结果。RECOMMEND_READY'
+      'Mock 模式不保存访谈状态，也不能确认画像。' +
+      '请连接后端后继续完整的动态访谈流程。'
     )
   }
 

@@ -2,18 +2,15 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { publishRecruitment } from '@/api/recruitment'
-import { useUserStore } from '@/stores/useUserStore'
 
 // =====================================================================
 // 发布招募表单（文档 §6.3 POST /api/recruitments）
 // =====================================================================
 
-const userStore = useUserStore()
 const dialogVisible = ref(false)
 const publishing = ref(false)
 
 const form = ref({
-  publisher_id: '',
   type: '招生',
   title: '',
   req: '',
@@ -26,7 +23,6 @@ const types = ['招生', '实习', '科研助理']
 
 function open() {
   form.value = {
-    publisher_id: userStore.profile.name || '',
     type: '招生',
     title: '',
     req: '',
@@ -45,7 +41,7 @@ async function publish() {
   publishing.value = true
   try {
     await publishRecruitment(form.value)
-    ElMessage.success('招募发布成功')
+    ElMessage.success('已提交审核；通过前不会公开')
     dialogVisible.value = false
   } catch {
     // 错误提示由拦截器处理
@@ -64,9 +60,12 @@ async function publish() {
 
     <el-dialog v-model="dialogVisible" title="发布招募信息" width="500px">
       <el-form :model="form" label-width="80px" label-position="left">
-        <el-form-item label="发布者">
-          <el-input v-model="form.publisher_id" placeholder="导师姓名 / 学长学姐" />
-        </el-form-item>
+        <el-alert
+          title="发布者身份由当前私有会话绑定；本次提交仅进入受限审核队列。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
         <el-form-item label="类型">
           <el-select v-model="form.type">
             <el-option v-for="t in types" :key="t" :label="t" :value="t" />

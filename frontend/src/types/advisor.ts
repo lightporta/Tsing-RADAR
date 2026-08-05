@@ -35,7 +35,7 @@ export interface Recruitment {
   is_urgent?: boolean
 }
 
-/** 导师基础画像（对应 mentors.json 单条记录） */
+/** 导师基础画像（仅用于通过证据审核后的公开记录） */
 export interface Advisor {
   name: string
   dept: string
@@ -54,12 +54,43 @@ export interface Advisor {
 
 /** 匹配后的导师（追加计算字段） */
 export interface MatchedAdvisor extends Advisor {
+  advisor_id: string
   /** 综合匹配分（关键词 + 画像向量契合度） */
   score: number
   /** 一句话推荐理由 */
   reason: string
   /** 合伙人契合指数 Synergy Score（0-100，仅当学生填写六维权重时计算） */
   synergy: number
+  fit_score?: number
+  evidence_coverage?: number
+  evidence_confidence?: number
+  recall_score?: number
+  explanation?: {
+    supporting_evidence: EvidenceClaim[]
+    counter_evidence: EvidenceClaim[]
+    uncertainties: string[]
+    questions_to_verify: string[]
+  }
+  score_breakdown?: Array<{
+    objective: string
+    score?: number | null
+    evidence_coverage: number
+    evidence_confidence: number
+  }>
+}
+
+export interface PublicCitation {
+  evidence_id: string
+  citation_type: string
+  citation: string
+  source_url?: string | null
+  captured_at: string
+  confidence: number
+}
+
+export interface EvidenceClaim {
+  statement: string
+  citations: PublicCitation[]
 }
 
 /** 散点图单个数据点 */
@@ -74,15 +105,11 @@ export interface ScatterPoint {
 }
 
 /** 排序指标 */
-// [PATCH] 移除 synergy —— 后端 SORT_METRICS 不含 synergy，传该值会返回 400
 export type SortMetric =
-  | 'popularity' // 热门度
-  | 'acumen' // 学术敏锐度
-  | 'network' // 人脉资源
-  | 'mentorship' // 指导意愿
-  | 'tolerance' // 性格包容度
-  | 'funding' // 经费实力
-  | 'efficiency' // 产出效率
+  | 'score'
+  | 'fit_score'
+  | 'evidence_coverage'
+  | 'evidence_confidence'
 
 /** 六维度元数据（中文标签 + 英文键），用于雷达图与表单 */
 export interface TraitMeta {

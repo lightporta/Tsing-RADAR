@@ -1,8 +1,19 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ChatMessage, QuickQuestion } from '@/types/chat'
+import type { ChatAttachment, ChatMessage, QuickQuestion } from '@/types/chat'
+import type {
+  InterviewProfilePatch,
+  InterviewQuestion,
+  InterviewPortrait,
+  InterviewState,
+  InterviewStatus,
+} from '@/types/interview'
 import { genId } from '@/utils/format'
 import { streamChat } from '@/api/chat'
+import {
+  confirmInterviewProfile as confirmInterviewProfileApi,
+  editInterviewProfile,
+} from '@/api/interview'
 import * as mockApi from '@/mock'
 
 // =====================================================================
@@ -15,6 +26,11 @@ const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const sessionId = ref<string | undefined>(undefined)
+  const interviewStatus = ref<InterviewStatus>('in_progress')
+  const profile = ref<InterviewPortrait | null>(null)
+  const profileVersion = ref<number | null>(null)
+  const currentQuestion = ref<InterviewQuestion | null>(null)
+  const needsConfirmation = ref(false)
   const streaming = ref(false)
   /** 当前流式请求的 AbortController */
   let controller: AbortController | null = null
@@ -54,7 +70,7 @@ export const useChatStore = defineStore('chat', () => {
   function pushMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): ChatMessage {
     const full: ChatMessage = { ...msg, id: genId('msg'), createdAt: Date.now() }
     messages.value.push(full)
-    return full
+    return messages.value[messages.value.length - 1]
   }
 
   /** 更新最后一条 assistant 消息内容（流式追加） */
@@ -65,19 +81,27 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function applyInterviewState(state: InterviewState) {
+    sessionId.value = state.session_id
+    interviewStatus.value = state.status
+    profile.value = state.profile
+    profileVersion.value = state.profile_version
+    currentQuestion.value = state.current_question
+    needsConfirmation.value = state.needs_confirmation
+    recommendReady.value = state.recommend_ready
+  }
+
   /**
    * 发送消息并接收流式回复
    * @param content 用户输入
-   * @param attachments 附件（简历 PDF/Word 提取文本）
+   * @param attachments 已私有保存的附件元数据；文件内容不注入访谈。
    */
-  async function send(content: string, attachments: string[] = []) {
+  async function send(content: string, attachments: ChatAttachment[] = []) {
     if (!content.trim() || streaming.value) return
+    if (!sessionId.value) sessionId.value = crypto.randomUUID()
 
     // 1) 推入用户消息
-    const userDisplay = attachments.length
-      ? `${content}\n\n_📎 已上传 ${attachments.length} 份简历_`
-      : content
-    pushMessage({ role: 'user', content: userDisplay })
+    pushMessage({ role: 'user', content, attachments })
 
     // 2) 推入空的 assistant 消息占位（流式填充）
     const assistantMsg = pushMessage({ role: 'assistant', content: '', streaming: true })
@@ -95,8 +119,11 @@ export const useChatStore = defineStore('chat', () => {
       await mockStream(reply, (delta) => {
         assistantMsg.content += delta
       })
-      recommendReady.value = reply.includes('RECOMMEND_READY')
-      assistantMsg.content = assistantMsg.content.replace('RECOMMEND_READY', '').trim()
+      assistantMsg.content = assistantMsg.content.trim()
+      assistantMsg.content +=
+        '\n\n_持久化访谈与画像确认在 Mock 模式下不可用，请连接后端进行 A3 流程。_'
+      recommendReady.value = false
+      needsConfirmation.value = false
       assistantMsg.streaming = false
       streaming.value = false
       return
@@ -108,9 +135,8 @@ export const useChatStore = defineStore('chat', () => {
       (delta) => {
         assistantMsg.content += delta
       },
-      ({ recommend_ready, session_id }) => {
-        recommendReady.value = recommend_ready
-        if (session_id) sessionId.value = session_id
+      (state) => {
+        applyInterviewState(state)
         assistantMsg.streaming = false
         streaming.value = false
       },
@@ -120,6 +146,29 @@ export const useChatStore = defineStore('chat', () => {
         streaming.value = false
       },
     )
+  }
+
+  async function updateInterviewProfile(patch: InterviewProfilePatch) {
+    if (!sessionId.value || profileVersion.value === null) {
+      throw new Error('请先开始访谈')
+    }
+    const state = await editInterviewProfile(
+      sessionId.value,
+      profileVersion.value,
+      patch,
+    )
+    applyInterviewState(state)
+  }
+
+  async function confirmInterviewProfile() {
+    if (!sessionId.value || profileVersion.value === null) {
+      throw new Error('请先开始访谈')
+    }
+    const state = await confirmInterviewProfileApi(
+      sessionId.value,
+      profileVersion.value,
+    )
+    applyInterviewState(state)
   }
 
   /** 中断当前流式 */
@@ -134,6 +183,11 @@ export const useChatStore = defineStore('chat', () => {
   function newConversation() {
     abort()
     sessionId.value = undefined
+    interviewStatus.value = 'in_progress'
+    profile.value = null
+    profileVersion.value = null
+    currentQuestion.value = null
+    needsConfirmation.value = false
     recommendReady.value = false
     messages.value = []
     initWelcome()
@@ -142,6 +196,11 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages,
     sessionId,
+    interviewStatus,
+    profile,
+    profileVersion,
+    currentQuestion,
+    needsConfirmation,
     streaming,
     recommendReady,
     quickQuestions,
@@ -150,6 +209,8 @@ export const useChatStore = defineStore('chat', () => {
     initWelcome,
     pushMessage,
     appendToLast,
+    updateInterviewProfile,
+    confirmInterviewProfile,
     send,
     abort,
     newConversation,

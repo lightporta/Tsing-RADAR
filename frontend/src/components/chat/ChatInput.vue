@@ -2,9 +2,9 @@
 import { ref, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useChatStore } from '@/stores/useChatStore'
-import { useUserStore } from '@/stores/useUserStore'
-import { useAdvisorStore } from '@/stores/useAdvisorStore'
 import { formatBytes } from '@/utils/format'
+import { uploadDocument } from '@/api/actions'
+import type { ChatAttachment } from '@/types/chat'
 
 // =====================================================================
 // 底部输入区（文档 §3.3）
@@ -14,12 +14,11 @@ import { formatBytes } from '@/utils/format'
 // =====================================================================
 
 const chatStore = useChatStore()
-const userStore = useUserStore()
-const advisorStore = useAdvisorStore()
 
 const text = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>()
-const attachments = ref<Array<{ name: string; size: number; text: string }>>([])
+const attachments = ref<ChatAttachment[]>([])
+const uploading = ref(false)
 
 // 自适应高度
 function autoResize() {
@@ -37,14 +36,11 @@ function send() {
   }
   if (chatStore.streaming) return
 
-  const attachTexts = attachments.value.map((a) => a.text)
-  chatStore.send(content, attachTexts)
+  chatStore.send(content, [...attachments.value])
   text.value = ''
   attachments.value = []
   nextTick(autoResize)
 
-  // 触发导师匹配（关键词触发）
-  advisorStore.match(content, undefined, userStore.profile.weights)
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -54,31 +50,36 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-// 附件上传（PDF/Word 简历，简单读取文件名与大小，文本提取交后端）
-function onFileChange(e: Event) {
+// 附件立即进入当前主体的私有对象存储；不会把正文注入访谈。
+async function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   if (!input.files) return
-  Array.from(input.files).forEach((file) => {
-    if (!/\.(pdf|docx?|txt)$/i.test(file.name)) {
-      ElMessage.warning(`${file.name} 格式不支持，仅支持 PDF / Word / TXT`)
-      return
-    }
-    // 简单读取 txt 内容；PDF/DOCX 实际由后端 /api/v1/llm/embeddings 提取
-    if (file.size > 5 * 1024 * 1024) {
-      ElMessage.warning(`${file.name} 超过 5MB`)
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => {
-      attachments.value.push({
-        name: file.name,
-        size: file.size,
-        text: typeof reader.result === 'string' ? reader.result : file.name,
-      })
-    }
-    reader.readAsText(file.slice(0, 1024 * 100)) // 仅读取前 100KB 作示意
-  })
+  const selected = Array.from(input.files)
   input.value = ''
+  uploading.value = true
+  try {
+    for (const file of selected) {
+      if (!/\.(pdf|docx)$/i.test(file.name)) {
+        ElMessage.warning(`${file.name} 格式不支持，仅支持 PDF / DOCX`)
+        continue
+      }
+      try {
+        const stored = await uploadDocument(file)
+        attachments.value.push({
+          documentId: stored.document_id,
+          name: stored.original_name,
+          size: stored.size_bytes,
+          type: stored.media_type,
+          scanScope: stored.scan_scope,
+        })
+        ElMessage.success(`${stored.original_name} 已私有保存；内容未自动加入访谈`)
+      } catch {
+        // 统一错误文案由 API 拦截器给出；失败关闭，不保留附件占位。
+      }
+    }
+  } finally {
+    uploading.value = false
+  }
 }
 
 function removeAttachment(idx: number) {
@@ -116,17 +117,30 @@ function stopStream() {
     <!-- 已上传附件预览 -->
     <div v-if="attachments.length" class="attachments">
       <div v-for="(a, i) in attachments" :key="i" class="attachment-chip">
-        <el-icon><Document /></el-icon>
+        <el-icon aria-hidden="true">📄</el-icon>
         <span class="att-name" :title="a.name">{{ a.name }}</span>
         <span class="att-size">{{ formatBytes(a.size) }}</span>
-        <button class="att-remove" aria-label="移除附件" @click="removeAttachment(i)">✕</button>
+        <button
+          class="att-remove"
+          aria-label="从本条消息移除附件关联，不删除私有文件"
+          @click="removeAttachment(i)"
+        >
+          ✕
+        </button>
       </div>
     </div>
 
     <div class="input-row">
-      <label class="input-btn" aria-label="上传简历">
-        <el-icon><Paperclip /></el-icon>
-        <input type="file" multiple accept=".pdf,.doc,.docx,.txt" hidden @change="onFileChange" />
+      <label class="input-btn" :class="{ disabled: uploading }" aria-label="私有上传 PDF 或 DOCX">
+        <el-icon aria-hidden="true">📎</el-icon>
+        <input
+          type="file"
+          multiple
+          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          hidden
+          :disabled="uploading"
+          @change="onFileChange"
+        />
       </label>
 
       <textarea
@@ -145,17 +159,26 @@ function stopStream() {
         aria-label="停止生成"
         @click="stopStream"
       >
-        <el-icon><VideoPause /></el-icon>
+        <el-icon aria-hidden="true">⏸</el-icon>
       </button>
-      <button v-else class="send-btn" aria-label="发送" :disabled="!text.trim()" @click="send">
-        <el-icon><Promotion /></el-icon>
+      <button
+        v-else
+        class="send-btn"
+        aria-label="发送"
+        :disabled="!text.trim() || uploading"
+        @click="send"
+      >
+        <el-icon aria-hidden="true">➤</el-icon>
       </button>
     </div>
 
     <!-- 推荐就绪提示 -->
     <transition name="fade">
-      <div v-if="chatStore.recommendReady" class="recommend-banner">
-        <span>✅ 画像收集完成，已为你匹配右侧推荐导师</span>
+      <div v-if="chatStore.needsConfirmation" class="recommend-banner waiting">
+        <span>画像信息已收集，请检查并确认后再进入匹配。</span>
+      </div>
+      <div v-else-if="chatStore.recommendReady" class="recommend-banner">
+        <span>✅ 画像已确认，匹配前置条件已满足。</span>
       </div>
     </transition>
   </div>
@@ -254,6 +277,10 @@ function stopStream() {
     color: $color-primary;
     background: $color-bg-hover;
   }
+  &.disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
 }
 
 .chat-textarea {
@@ -310,5 +337,9 @@ function stopStream() {
   border-radius: 6px;
   font-size: 12px;
   text-align: center;
+}
+.recommend-banner.waiting {
+  background: rgba(230, 162, 60, 0.1);
+  color: $color-warning;
 }
 </style>

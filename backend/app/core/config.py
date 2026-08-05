@@ -6,9 +6,31 @@
 """
 
 from functools import lru_cache
-from typing import Optional
+import os
+from pathlib import Path
+from typing import Literal, Optional
+from urllib.parse import quote
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_MAX_SECRET_FILE_BYTES = 64 * 1024
+
+
+def _read_secret_file(name: str, value: str) -> str:
+    path = Path(value)
+    try:
+        if not path.is_file() or path.is_symlink():
+            raise ValueError
+        if path.stat().st_size > _MAX_SECRET_FILE_BYTES:
+            raise ValueError
+        material = path.read_text(encoding="utf-8").rstrip("\r\n")
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"{name} secret file is unavailable") from exc
+    if not material or "\x00" in material:
+        raise ValueError(f"{name} secret file is empty or invalid")
+    return material
 
 
 class Settings(BaseSettings):
@@ -17,18 +39,32 @@ class Settings(BaseSettings):
     )
 
     # —— 应用 ——
-    APP_NAME: str = "Tsing-RADAR 清研寻师雷达 v2.1"
-    APP_VERSION: str = "2.1.0"
+    APP_NAME: str = "Tsing-RADAR 清研寻师雷达 v2.2"
+    APP_VERSION: str = "2.2.0"
     DEBUG: bool = True
+    # The additive production Compose sets this flag. Development and the
+    # existing local integration Compose intentionally retain their semantics.
+    PRODUCTION_DEPLOYMENT: bool = False
 
     # —— 数据库 ——
     # 开发期默认 SQLite（开箱即用）；生产期 .env 配置 PostgreSQL
     DATABASE_URL: str = "sqlite:///./tsing_radar.db"
+    DATABASE_HOST: Optional[str] = None
+    DATABASE_PORT: int = Field(default=5432, ge=1, le=65535)
+    DATABASE_NAME: Optional[str] = None
+    DATABASE_USER: Optional[str] = None
+    DATABASE_PASSWORD_FILE: Optional[str] = None
+    # SQLite 开发可自动建表；Compose/生产必须由单独 Alembic 任务管理。
+    AUTO_CREATE_SCHEMA: bool = True
 
     # —— Redis（可选，未配置时降级为内存缓存）——
     REDIS_URL: Optional[str] = None
+    REDIS_HOST: Optional[str] = None
+    REDIS_PORT: int = Field(default=6379, ge=1, le=65535)
+    REDIS_DATABASE: int = Field(default=0, ge=0, le=15)
+    REDIS_PASSWORD_FILE: Optional[str] = None
 
-    # —— 向量数据库（可选，未配置时降级为 hash 伪向量）——
+    # —— 向量数据库（可选；A4 默认使用透明词法回退，不伪装成 embedding）——
     MILVUS_HOST: Optional[str] = None
     MILVUS_PORT: int = 19530
 
@@ -54,15 +90,239 @@ class Settings(BaseSettings):
     )
 
     # —— 管理员（训练触发）——
-    ADMIN_TOKEN: str = "admin"
+    # No public development default. Production validation requires at least
+    # 32 bytes and separation from every other signing/authentication secret.
+    ADMIN_TOKEN: Optional[str] = None
+    ADMIN_TOKEN_FILE: Optional[str] = None
 
     # —— 清小搭平台 ——
     APP_KEY: Optional[str] = None
     QXD_BASE_URL: Optional[str] = None
+    # 平台调用本服务时使用的入站 Bearer 凭证。生产环境必须显式配置。
+    QXD_API_KEY: Optional[str] = None
+    QXD_API_KEY_FILE: Optional[str] = None
+    # Inbound remote media fetching and outbound signed artifact delivery are
+    # separate capabilities. Both remain disabled unless explicitly released.
+    QXD_REMOTE_MEDIA_FETCH_ENABLED: bool = False
+    QXD_ATTACHMENTS_ENABLED: bool = False
+    # 逗号分隔的媒体下载域名白名单；启用远程媒体抓取时必须非空。
+    QXD_MEDIA_ALLOWED_HOSTS: str = ""
+    QXD_MEDIA_MAX_REDIRECTS: int = Field(default=3, ge=0, le=10)
+    QXD_MEDIA_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0, le=60)
+    QXD_REQUEST_TIMEOUT_SECONDS: float = Field(default=110.0, gt=0, lt=120)
+    # 清小搭“测试验证”当前可能只发送最新一条 user 消息，且不提供可验证的
+    # 终端用户 claim。此开关只用于单人、本地、临时隧道试聊；生产启动门拒绝启用。
+    QXD_TRIAL_SINGLE_USER_MODE: bool = False
+    QXD_TRIAL_IDLE_TTL_SECONDS: int = Field(
+        default=10 * 60,
+        ge=60,
+        le=30 * 60,
+    )
+    QXD_TRIAL_ABSOLUTE_TTL_SECONDS: int = Field(
+        default=60 * 60,
+        ge=5 * 60,
+        le=2 * 60 * 60,
+    )
+    QXD_MAX_MEDIA_PARTS: int = Field(default=8, ge=1, le=16)
+    QXD_IMAGE_MAX_BYTES: int = Field(default=20 * 1024 * 1024, gt=0)
+    QXD_AUDIO_MAX_BYTES: int = Field(default=25 * 1024 * 1024, gt=0)
+    QXD_FILE_MAX_BYTES: int = Field(default=200 * 1024 * 1024, gt=0)
+    QXD_MEDIA_MAX_TOTAL_BYTES: int = Field(default=250 * 1024 * 1024, gt=0)
+
+    # —— A5 身份与私有文件 ——
+    # 仅用于服务端摘要，生产环境必须覆盖默认值。
+    SESSION_HMAC_SECRET: str = "local-development-only-change-me"
+    SESSION_HMAC_SECRET_FILE: Optional[str] = None
+    WEB_SESSION_COOKIE: str = "tsing_radar_session"
+    WEB_CSRF_COOKIE: str = "tsing_radar_csrf"
+    WEB_COOKIE_SECURE: bool = False
+    WEB_SESSION_TTL_SECONDS: int = Field(default=7 * 24 * 60 * 60, ge=300)
+    # processing 记录超过此时间会由下一次同键请求原子标记为失败，
+    # 防止进程崩溃后永久占用幂等键。正常生成/解析预算远低于该值。
+    IDEMPOTENCY_PROCESSING_TTL_SECONDS: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+    )
+    # 平台 Bearer 只认证平台调用；终端用户 claim 使用独立密钥验证。
+    QXD_END_USER_SIGNING_SECRET: Optional[str] = None
+    QXD_END_USER_SIGNING_SECRET_FILE: Optional[str] = None
+    PRIVATE_UPLOAD_ROOT: str = "./private_uploads"
+    PRIVATE_UPLOAD_MAX_BYTES: int = Field(default=8 * 1024 * 1024, gt=0)
+    PDF_MAX_PAGES: int = Field(default=120, ge=1, le=1000)
+    PDF_MAX_PAGE_TEXT_CHARS: int = Field(default=100_000, ge=1)
+    PDF_MAX_EXTRACTED_TEXT_CHARS: int = Field(default=500_000, ge=1)
+    PDF_PARSE_TIMEOUT_SECONDS: float = Field(default=8.0, gt=0, le=60)
+
+    # —— A6 私有对象存储、扫描与短时签名交付 ——
+    # 本地开发使用私有文件系统对象存储；生产可切换到私有 S3 兼容桶。
+    OBJECT_STORE_BACKEND: Literal["local", "s3"] = "local"
+    OBJECT_STORAGE_LOCAL_ROOT: Optional[str] = None
+    S3_BUCKET: Optional[str] = None
+    S3_ENDPOINT_URL: Optional[str] = None
+    S3_REGION: Optional[str] = None
+    S3_ACCESS_KEY_ID: Optional[str] = None
+    S3_ACCESS_KEY_ID_FILE: Optional[str] = None
+    S3_SECRET_ACCESS_KEY: Optional[str] = None
+    S3_SECRET_ACCESS_KEY_FILE: Optional[str] = None
+    S3_PROVIDER: Literal["s3_compatible", "tencent_cos"] = "s3_compatible"
+    S3_ADDRESSING_STYLE: Literal["auto", "path", "virtual"] = "auto"
+    # DEP2 本地 MinIO 未配置 KMS，必须显式为 none；非 DEBUG 启动门强制 AES256。
+    S3_SERVER_SIDE_ENCRYPTION: Literal["none", "AES256"] = "AES256"
+    OBJECT_STORAGE_MAX_READ_BYTES: int = Field(
+        default=16 * 1024 * 1024,
+        ge=1024,
+        le=256 * 1024 * 1024,
+    )
+    # 只允许应用层签名 URL；对象桶本身不得设为 public。
+    ARTIFACT_SIGNING_SECRET: str = "local-artifact-signing-change-me"
+    ARTIFACT_SIGNING_SECRET_FILE: Optional[str] = None
+    WEB_DOWNLOAD_TTL_SECONDS: int = Field(default=300, ge=30, le=1800)
+    QXD_ATTACHMENT_TTL_SECONDS: int = Field(default=180, ge=30, le=600)
+    PUBLIC_BASE_URL: Optional[str] = None
+    # 只供本地合同测试显式允许 example.* / *.test；生产模式一律拒绝。
+    ALLOW_TEST_PUBLIC_BASE_URL: bool = False
+    # builtin 只代表结构与已知特征检查，不冒充完整反病毒扫描。
+    FILE_SCAN_MODE: Literal["builtin", "clamav"] = "builtin"
+    CLAMAV_HOST: Optional[str] = None
+    CLAMAV_PORT: int = Field(default=3310, ge=1, le=65535)
+    CLAMAV_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=60)
+    DOCUMENT_CJK_FONT_PATH: Optional[str] = None
+
+    @model_validator(mode="after")
+    def load_file_backed_secrets(self) -> "Settings":
+        """Resolve explicit *_FILE inputs without exposing material in Compose.
+
+        Direct environment values remain supported for existing development and
+        test paths. The production deployment gate separately requires files.
+        """
+
+        fields_set = self.model_fields_set
+        mappings = (
+            ("ADMIN_TOKEN", "ADMIN_TOKEN_FILE"),
+            ("QXD_API_KEY", "QXD_API_KEY_FILE"),
+            (
+                "QXD_END_USER_SIGNING_SECRET",
+                "QXD_END_USER_SIGNING_SECRET_FILE",
+            ),
+            ("SESSION_HMAC_SECRET", "SESSION_HMAC_SECRET_FILE"),
+            ("ARTIFACT_SIGNING_SECRET", "ARTIFACT_SIGNING_SECRET_FILE"),
+            ("S3_ACCESS_KEY_ID", "S3_ACCESS_KEY_ID_FILE"),
+            ("S3_SECRET_ACCESS_KEY", "S3_SECRET_ACCESS_KEY_FILE"),
+        )
+        for target_name, file_name in mappings:
+            secret_path = getattr(self, file_name)
+            if not secret_path:
+                continue
+            if target_name in fields_set:
+                raise ValueError(
+                    f"{target_name} and {file_name} are mutually exclusive"
+                )
+            object.__setattr__(
+                self,
+                target_name,
+                _read_secret_file(file_name, secret_path),
+            )
+
+        if self.DATABASE_PASSWORD_FILE:
+            if "DATABASE_URL" in fields_set:
+                raise ValueError(
+                    "DATABASE_URL and DATABASE_PASSWORD_FILE are mutually exclusive"
+                )
+            if not all(
+                (self.DATABASE_HOST, self.DATABASE_NAME, self.DATABASE_USER)
+            ):
+                raise ValueError(
+                    "DATABASE_HOST, DATABASE_NAME and DATABASE_USER are required"
+                )
+            password = _read_secret_file(
+                "DATABASE_PASSWORD_FILE",
+                self.DATABASE_PASSWORD_FILE,
+            )
+            database_url = (
+                "postgresql+psycopg://"
+                f"{quote(self.DATABASE_USER or '', safe='')}:"
+                f"{quote(password, safe='')}@{self.DATABASE_HOST}:"
+                f"{self.DATABASE_PORT}/{quote(self.DATABASE_NAME or '', safe='')}"
+            )
+            object.__setattr__(self, "DATABASE_URL", database_url)
+
+        if self.REDIS_PASSWORD_FILE:
+            if "REDIS_URL" in fields_set:
+                raise ValueError(
+                    "REDIS_URL and REDIS_PASSWORD_FILE are mutually exclusive"
+                )
+            if not self.REDIS_HOST:
+                raise ValueError("REDIS_HOST is required with REDIS_PASSWORD_FILE")
+            password = _read_secret_file(
+                "REDIS_PASSWORD_FILE",
+                self.REDIS_PASSWORD_FILE,
+            )
+            redis_url = (
+                f"redis://:{quote(password, safe='')}@{self.REDIS_HOST}:"
+                f"{self.REDIS_PORT}/{self.REDIS_DATABASE}"
+            )
+            object.__setattr__(self, "REDIS_URL", redis_url)
+        return self
+
+    @property
+    def production_secret_files_configured(self) -> bool:
+        required = (
+            self.DATABASE_PASSWORD_FILE,
+            self.REDIS_PASSWORD_FILE,
+            self.ADMIN_TOKEN_FILE,
+            self.SESSION_HMAC_SECRET_FILE,
+            self.ARTIFACT_SIGNING_SECRET_FILE,
+            self.S3_ACCESS_KEY_ID_FILE,
+            self.S3_SECRET_ACCESS_KEY_FILE,
+        )
+        return all(required)
+
+    @property
+    def production_secret_file_paths(self) -> tuple[str, ...]:
+        return tuple(
+            value
+            for value in (
+                self.DATABASE_PASSWORD_FILE,
+                self.REDIS_PASSWORD_FILE,
+                self.ADMIN_TOKEN_FILE,
+                self.SESSION_HMAC_SECRET_FILE,
+                self.ARTIFACT_SIGNING_SECRET_FILE,
+                self.S3_ACCESS_KEY_ID_FILE,
+                self.S3_SECRET_ACCESS_KEY_FILE,
+                self.QXD_API_KEY_FILE,
+                self.QXD_END_USER_SIGNING_SECRET_FILE,
+            )
+            if value
+        )
+
+    @property
+    def production_secret_file_permissions_valid(self) -> bool:
+        if not self.production_secret_files_configured:
+            return False
+        for value in self.production_secret_file_paths:
+            path = Path(value)
+            if not path.is_absolute() or not path.is_file() or path.is_symlink():
+                return False
+            if os.name == "posix" and path.stat().st_mode & 0o077:
+                return False
+        return True
 
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def qxd_media_allowed_hosts_list(self) -> list[str]:
+        return [
+            host.strip().lower().rstrip(".")
+            for host in self.QXD_MEDIA_ALLOWED_HOSTS.split(",")
+            if host.strip()
+        ]
+
+    @property
+    def object_storage_local_root(self) -> str:
+        return self.OBJECT_STORAGE_LOCAL_ROOT or self.PRIVATE_UPLOAD_ROOT
 
 
 @lru_cache

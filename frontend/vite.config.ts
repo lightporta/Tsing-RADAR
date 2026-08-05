@@ -32,9 +32,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       // 开发期代理 /api 到后端，避免 CORS 与跨域 Cookie 问题
-      // [PATCH] 移除 /v1 代理：后端所有路由统一注册在 /api 前缀下，/v1 代理无实际对应路由
       proxy: {
         '/api': {
+          target: apiBase,
+          changeOrigin: true,
+        },
+        '/v1': {
           target: apiBase,
           changeOrigin: true,
         },

@@ -8,7 +8,7 @@ import type { StudentCategory } from '@/types/user'
 
 // =====================================================================
 // 个人信息表单（文档 §5.2 / 原 index.html studentPanel 升级）
-// 院系 / 年级 / 学号 / 邮箱 / GPA / 科研经历 / 研究兴趣标签 / 六维权重滑块
+// 这些字段只用于当前浏览器的展示偏好，不参与身份认证。
 // =====================================================================
 
 const userStore = useUserStore()
@@ -49,8 +49,7 @@ function removeTag(idx: number) {
 
 function save() {
   userStore.updateProfile({ ...form })
-  userStore.persist()
-  ElMessage.success('个人信息已保存')
+  ElMessage.success('信息仅保留在当前页面内存，刷新后清除')
 }
 
 function reset() {
@@ -64,14 +63,9 @@ function reset() {
       <h3 class="section-title">基本信息</h3>
       <el-form :model="form" label-width="80px" label-position="left">
         <el-row :gutter="16">
-          <el-col :span="12">
+          <el-col :span="24">
             <el-form-item label="姓名">
               <el-input v-model="form.name" placeholder="请输入姓名" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="学号">
-              <el-input v-model="form.student_id" placeholder="清华学号" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -113,7 +107,7 @@ function reset() {
           </el-col>
           <el-col :span="12">
             <el-form-item label="电话">
-              <el-input v-model="form.phone" placeholder="加密存储" />
+              <el-input v-model="form.phone" placeholder="仅当前页面内存使用" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -147,6 +141,7 @@ function reset() {
           <el-input
             v-model="newTag"
             size="small"
+            aria-label="添加研究兴趣标签"
             placeholder="添加兴趣标签"
             @keydown.enter="addTag"
           />
@@ -182,7 +177,7 @@ function reset() {
     <div class="form-actions">
       <el-button @click="reset">重置</el-button>
       <el-button type="primary" @click="save">
-        <el-icon><Check /></el-icon>
+        <el-icon aria-hidden="true">✓</el-icon>
         保存
       </el-button>
     </div>
@@ -276,6 +271,10 @@ function reset() {
 }
 
 @media (max-width: $bp-tablet) {
+  :deep(.el-col-12) {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
   .weight-sliders {
     grid-template-columns: 1fr;
   }

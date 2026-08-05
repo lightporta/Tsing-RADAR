@@ -11,7 +11,6 @@ export function fetchRecruitments(urgent?: boolean) {
 }
 
 export interface RecruitmentCreateRequest {
-  publisher_id: string
   type: string
   title: string
   req: string

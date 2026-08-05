@@ -26,11 +26,8 @@ const DEFAULT_WEIGHTS = (): Record<TraitKey, number> =>
     {} as Record<TraitKey, number>,
   )
 
-const STORAGE_KEY = 'tsing_radar_user_session'
-
 export const useUserStore = defineStore('user', () => {
   const profile = ref<StudentProfile>({
-    student_id: '',
     name: '',
     email: '',
     dept: '自动化系',
@@ -45,7 +42,6 @@ export const useUserStore = defineStore('user', () => {
   })
 
   const resumes = ref<Resume[]>([])
-  const isLoggedIn = ref(false)
 
   /** 是否已完善基本信息（用于匹配前提示） */
   const isProfileComplete = computed(
@@ -73,55 +69,13 @@ export const useUserStore = defineStore('user', () => {
     resumes.value = resumes.value.filter((r) => r.resume_id !== id)
   }
 
-  /** 模拟登录（清小搭 SSO 占位） */
-  function login(name: string, studentId: string) {
-    profile.value.name = name
-    profile.value.student_id = studentId
-    isLoggedIn.value = true
-  }
-
-  /** 持久化非敏感会话字段到 localStorage（仅名字/院系/权重，不含手机号/邮箱明文） */
-  function persist() {
-    const safe = {
-      name: profile.value.name,
-      dept: profile.value.dept,
-      category: profile.value.category,
-      grade: profile.value.grade,
-      interest_tags: profile.value.interest_tags,
-      weights: profile.value.weights,
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(safe))
-  }
-
-  function restore() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (!raw) return
-      const saved = JSON.parse(raw)
-      profile.value = { ...profile.value, ...saved }
-      if (saved.name) isLoggedIn.value = true
-    } catch {
-      // ignore
-    }
-  }
-
-  function logout() {
-    isLoggedIn.value = false
-    localStorage.removeItem(STORAGE_KEY)
-  }
-
   return {
     profile,
     resumes,
-    isLoggedIn,
     isProfileComplete,
     updateProfile,
     setWeight,
     upsertResume,
     removeResume,
-    login,
-    persist,
-    restore,
-    logout,
   }
 })

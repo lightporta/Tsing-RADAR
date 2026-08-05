@@ -4,17 +4,16 @@
 """
 
 import asyncio
-import json
-import os
-
+from app.services.data_loader import load_mentors
 from app.services.llm import embed_text
 from app.services.vectorstore import get_vector_store
 
 
 async def main() -> None:
-    data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "mentors.json")
-    with open(data_path, "r", encoding="utf-8") as f:
-        mentors = json.load(f)
+    mentors = load_mentors()
+    if not mentors:
+        print("SKIP: 没有通过审核发布门的导师记录，未写入向量库")
+        return
 
     store = get_vector_store()
     count = 0

@@ -2,8 +2,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchRecruitments } from '@/api/recruitment'
+import {
+  createApplication,
+  fetchDocuments,
+  type PrivateDocument,
+} from '@/api/actions'
 import { mockRecruitments } from '@/mock'
 import type { RecruitmentItem } from '@/types/api'
+import { newIdempotencyKey } from '@/api/request'
 
 // =====================================================================
 // 招募信息列表（文档 §2.1.7 / §4.2.3）
@@ -18,6 +24,13 @@ const loading = ref(false)
 const filterUrgent = ref(false)
 const submitDialogVisible = ref(false)
 const submittingItem = ref<RecruitmentItem | null>(null)
+const documents = ref<PrivateDocument[]>([])
+const selectedDocumentId = ref('')
+const submitting = ref(false)
+const pendingApplication = ref<{
+  fingerprint: string
+  key: string
+} | null>(null)
 
 const displayItems = computed(() => {
   // 急招置顶
@@ -44,15 +57,43 @@ async function loadList() {
   }
 }
 
-function openSubmit(item: RecruitmentItem) {
+async function openSubmit(item: RecruitmentItem) {
   submittingItem.value = item
+  documents.value = await fetchDocuments()
+  selectedDocumentId.value = documents.value[0]?.document_id || ''
   submitDialogVisible.value = true
 }
 
 async function confirmSubmit() {
-  // 投递逻辑实际由 ResumeManager 选定 resume_id 后调用 submitResume
-  ElMessage.success(`已投递简历至「${submittingItem.value?.title}」`)
-  submitDialogVisible.value = false
+  if (submitting.value) return
+  if (!submittingItem.value || !selectedDocumentId.value) {
+    ElMessage.warning('请先在个人信息页上传私有 PDF/DOCX')
+    return
+  }
+  submitting.value = true
+  try {
+    const fingerprint = JSON.stringify({
+      recruit_id: submittingItem.value.recruit_id,
+      document_id: selectedDocumentId.value,
+      confirm_in_app_only: true,
+    })
+    if (pendingApplication.value?.fingerprint !== fingerprint) {
+      pendingApplication.value = {
+        fingerprint,
+        key: newIdempotencyKey('create-application'),
+      }
+    }
+    await createApplication(
+      submittingItem.value.recruit_id,
+      selectedDocumentId.value,
+      pendingApplication.value.key,
+    )
+    pendingApplication.value = null
+    ElMessage.success('已创建站内投递记录；未向第三方发送文件')
+    submitDialogVisible.value = false
+  } finally {
+    submitting.value = false
+  }
 }
 
 const typeColors: Record<string, string> = {
@@ -96,17 +137,43 @@ onMounted(loadList)
       </div>
 
       <div v-if="!loading && !displayItems.length" class="empty">
-        <p>暂无招募信息</p>
+        <p>暂无通过审核且仍有效的招募信息</p>
+        <span>用户投稿在审核前不会出现在这里。</span>
       </div>
     </div>
 
     <!-- 投递确认弹窗 -->
     <el-dialog v-model="submitDialogVisible" title="投递简历" width="420px">
       <p v-if="submittingItem">确定将你的简历投递至「<strong>{{ submittingItem.title }}</strong>」？</p>
-      <p class="dialog-hint">投递后可在个人信息页查看投递状态</p>
+      <el-select
+        v-model="selectedDocumentId"
+        class="document-select"
+        placeholder="选择私有简历"
+        aria-label="选择私有简历"
+      >
+        <el-option
+          v-for="item in documents"
+          :key="item.document_id"
+          :label="item.original_name"
+          :value="item.document_id"
+        />
+      </el-select>
+      <p v-if="!documents.length" class="dialog-hint">
+        暂无私有简历，请先前往个人信息页上传。
+      </p>
+      <p class="dialog-hint">
+        确认后只创建站内状态记录，当前版本不会联系第三方或实际发送文件。
+      </p>
       <template #footer>
         <el-button @click="submitDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmSubmit">确认投递</el-button>
+        <el-button
+          type="primary"
+          :loading="submitting"
+          :disabled="!selectedDocumentId"
+          @click="confirmSubmit"
+        >
+          确认仅站内记录
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -221,5 +288,10 @@ onMounted(loadList)
   font-size: 12px;
   color: $text-placeholder;
   margin-top: $spacing-sm;
+}
+
+.document-select {
+  width: 100%;
+  margin-top: $spacing-md;
 }
 </style>

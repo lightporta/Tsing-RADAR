@@ -36,7 +36,7 @@ function toggleChat() {
         aria-label="展开对话栏"
         @click="toggleChat"
       >
-        <el-icon><DArrowRight /></el-icon>
+        <el-icon aria-hidden="true">»</el-icon>
       </button>
 
       <!-- 中栏：导师卡片列表 -->
@@ -117,9 +117,4 @@ function toggleChat() {
   }
 }
 
-@media (max-width: $bp-tablet) {
-  .pc-layout {
-    display: none;
-  }
-}
 </style>

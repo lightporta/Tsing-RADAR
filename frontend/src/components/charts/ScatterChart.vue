@@ -14,7 +14,7 @@ import { useAdvisorStore, quadrantName } from '@/stores/useAdvisorStore'
 // 点击散点联动选中导师卡片
 // =====================================================================
 
-const props = withDefaults(defineProps<{ height?: string }>(), { height: '100%' })
+const { height = '100%' } = defineProps<{ height?: string }>()
 
 const advisorStore = useAdvisorStore()
 const el = ref<HTMLElement | null>(null)
@@ -66,39 +66,13 @@ const option = computed<EChartsOption>(() => ({
     max: 1.5,
     interval: 1,
     // 反转：0(国)在上，1(私)在下
-    inverse: false,
+    inverse: true,
     splitLine: { show: true, lineStyle: { color: '#ebeef5', type: 'dashed' } },
     axisLine: { lineStyle: { color: '#dcdfe6' } },
     axisLabel: {
       color: '#909399',
       formatter: (val: number) => (val === 0 ? '国' : val === 1 ? '私' : ''),
     },
-  },
-  // 四象限背景区域（极淡色）
-  markArea: {
-    silent: true,
-    data: [
-      // 国热（左上 x<60, y=0）
-      [
-        { xAxis: 0, yAxis: -0.5, itemStyle: { color: 'rgba(103, 194, 58, 0.06)' } },
-        { xAxis: 60, yAxis: 0.5 },
-      ],
-      // 国冷（左下 x<60, y=1）—— 实际 y=0 在上，y=1 在下
-      [
-        { xAxis: 0, yAxis: 0.5, itemStyle: { color: 'rgba(144, 147, 153, 0.06)' } },
-        { xAxis: 60, yAxis: 1.5 },
-      ],
-      // 私热（右上 x>=60, y=0）
-      [
-        { xAxis: 60, yAxis: -0.5, itemStyle: { color: 'rgba(230, 162, 60, 0.06)' } },
-        { xAxis: 100, yAxis: 0.5 },
-      ],
-      // 私冷（右下 x>=60, y=1）
-      [
-        { xAxis: 60, yAxis: 0.5, itemStyle: { color: 'rgba(64, 158, 255, 0.06)' } },
-        { xAxis: 100, yAxis: 1.5 },
-      ],
-    ],
   },
   series: [
     {
@@ -109,7 +83,7 @@ const option = computed<EChartsOption>(() => ({
         focus: 'self',
         itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' },
       },
-      // 国热标记区作为 series 的 markArea
+      // 四象限背景区域必须挂在带笛卡尔坐标系的 series 上。
       markArea: {
         silent: true,
         data: [
@@ -117,20 +91,20 @@ const option = computed<EChartsOption>(() => ({
             {
               xAxis: 0,
               yAxis: -0.5,
-              itemStyle: { color: 'rgba(103, 194, 58, 0.06)' },
+              itemStyle: { color: 'rgba(144, 147, 153, 0.06)' },
             },
             { xAxis: 60, yAxis: 0.5 },
           ],
           [
-            { xAxis: 0, yAxis: 0.5, itemStyle: { color: 'rgba(144, 147, 153, 0.06)' } },
+            { xAxis: 0, yAxis: 0.5, itemStyle: { color: 'rgba(64, 158, 255, 0.06)' } },
             { xAxis: 60, yAxis: 1.5 },
           ],
           [
-            { xAxis: 60, yAxis: -0.5, itemStyle: { color: 'rgba(230, 162, 60, 0.06)' } },
+            { xAxis: 60, yAxis: -0.5, itemStyle: { color: 'rgba(103, 194, 58, 0.06)' } },
             { xAxis: 100, yAxis: 0.5 },
           ],
           [
-            { xAxis: 60, yAxis: 0.5, itemStyle: { color: 'rgba(64, 158, 255, 0.06)' } },
+            { xAxis: 60, yAxis: 0.5, itemStyle: { color: 'rgba(230, 162, 60, 0.06)' } },
             { xAxis: 100, yAxis: 1.5 },
           ],
         ],
@@ -153,10 +127,9 @@ function bindClick() {
   })
 }
 
-import { onMounted } from 'vue'
-onMounted(() => {
-  setTimeout(bindClick, 100)
-})
+watch(chart, (instance) => {
+  if (instance) bindClick()
+}, { immediate: true })
 </script>
 
 <template>

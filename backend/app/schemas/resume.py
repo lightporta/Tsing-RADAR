@@ -1,22 +1,15 @@
-"""简历相关 Pydantic 模型。"""
+"""真实私有简历生成与兼容站内投递模型。"""
 
-from typing import Any, Optional
+from pydantic import BaseModel, ConfigDict, StrictBool
 
-from pydantic import BaseModel
+from app.schemas.artifacts import ResumeArtifactRequest
 
-
-class ResumeGenerateRequest(BaseModel):
-    student_name: str
-    dept: str
-    email: str
-    phone: str
-    projects: list[Any] = []
-    awards: list[Any] = []
-    positions: list[Any] = []
-    target_advisor: Optional[str] = None
+ResumeGenerateRequest = ResumeArtifactRequest
 
 
 class ResumeSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     recruit_id: str
-    student_id: str
-    resume_id: str
+    document_id: str
+    confirm_in_app_only: StrictBool

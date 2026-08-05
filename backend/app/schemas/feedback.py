@@ -1,12 +1,13 @@
-"""评价反馈 Pydantic 模型。"""
+"""评价反馈模型；主体由服务端会话提供。"""
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FeedbackRequest(BaseModel):
-    student_id: str
-    advisor_id: str
-    rating: int  # 1 正向 / -1 负向
-    comment: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+
+    advisor_id: str = Field(min_length=1, max_length=100)
+    rating: int
+    comment: Optional[str] = Field(default=None, max_length=1000)

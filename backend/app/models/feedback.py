@@ -10,7 +10,7 @@ class Feedback(Base):
     __tablename__ = "feedback"
 
     feedback_id = Column(String(36), primary_key=True, default=lambda: str(_uuid()))
-    student_id = Column(String(20), index=True)
+    student_id = Column(String(64), nullable=False, index=True)
     advisor_id = Column(String(20), index=True)
     rating = Column(Integer)  # 1=赞，-1=踩
     comment = Column(Text)

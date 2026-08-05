@@ -1,77 +1,93 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import FilterBar from './FilterBar.vue'
 import AdvisorCard from './AdvisorCard.vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
-import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
-
-// =====================================================================
-// 导师卡片列表容器（文档 §3.4）
-// 顶部筛选栏 + 卡片纵向排列 + 无限滚动加载更多
-// =====================================================================
 
 withDefaults(defineProps<{ mobileMode?: boolean }>(), { mobileMode: false })
 
 const advisorStore = useAdvisorStore()
-const listRef = ref<HTMLElement | null>(null)
+const router = useRouter()
+const page = ref(1)
+const pageSize = 5
+const pageCount = computed(() =>
+  Math.max(1, Math.ceil(advisorStore.matchedAdvisors.length / pageSize)),
+)
+const visibleAdvisors = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return advisorStore.matchedAdvisors.slice(start, start + pageSize)
+})
 
-// 分页：每次展示 N 张，滚动到底部加载更多
-const pageSize = 10
-const visibleCount = ref(pageSize)
-
-const visibleAdvisors = computed(() => advisorStore.matchedAdvisors.slice(0, visibleCount.value))
-const hasMore = computed(() => visibleCount.value < advisorStore.matchedAdvisors.length)
-
-// 列表变化时重置分页
-import { watch } from 'vue'
 watch(
   () => advisorStore.matchedAdvisors,
   () => {
-    visibleCount.value = pageSize
+    page.value = 1
   },
 )
 
-const { loading, onScroll } = useInfiniteScroll(listRef, async () => {
-  if (!hasMore.value) return
-  visibleCount.value = Math.min(visibleCount.value + pageSize, advisorStore.matchedAdvisors.length)
-})
+function latestEvidenceTime(item: (typeof advisorStore.matchedAdvisors)[number]) {
+  const dates =
+    item.explanation?.supporting_evidence
+      .flatMap((claim) => claim.citations)
+      .map((citation) => citation.captured_at)
+      .filter(Boolean) || []
+  return dates.sort().at(-1)
+}
 </script>
 
 <template>
   <div class="advisor-list-panel">
     <FilterBar />
 
-    <div ref="listRef" class="list-scroll" @scroll="onScroll">
-      <!-- 空状态 -->
+    <div class="list-scroll" aria-live="polite">
       <div v-if="!advisorStore.matchedAdvisors.length && !advisorStore.loading" class="empty-state">
-        <el-icon class="empty-icon"><Search /></el-icon>
-        <p>暂无匹配导师</p>
-        <span class="empty-hint">在左侧对话栏输入你的研究兴趣开始匹配</span>
+        <el-icon class="empty-icon" aria-hidden="true">⌕</el-icon>
+        <p>{{ advisorStore.resultMessage }}</p>
+        <span v-if="advisorStore.resultStatus === 'no_published_data'" class="empty-hint">
+          这是数据审核状态，不是匹配失败；2027 招生目录也不会冒充导师个人画像。
+        </span>
+        <span v-else class="empty-hint">完成访谈、逐项确认硬约束后再执行匹配。</span>
       </div>
 
-      <!-- 加载中骨架 -->
       <div v-else-if="advisorStore.loading && !advisorStore.matchedAdvisors.length" class="skeleton-list">
         <div v-for="i in 5" :key="i" class="skeleton-card" />
       </div>
 
-      <!-- 卡片列表 -->
       <template v-else>
         <div class="card-list">
           <AdvisorCard
             v-for="advisor in visibleAdvisors"
-            :key="advisor.name"
+            :key="advisor.advisor_id || advisor.name"
             :advisor="advisor"
             :selected="advisorStore.selectedName === advisor.name"
           />
         </div>
 
-        <!-- 加载更多 -->
-        <div v-if="loading" class="load-more">
-          <span class="loading-dot" /> 加载更多…
-        </div>
-        <div v-else-if="!hasMore && visibleAdvisors.length > pageSize" class="load-end">
-          — 已加载全部 {{ advisorStore.matchedAdvisors.length }} 位导师 —
-        </div>
+        <nav v-if="pageCount > 1" class="pagination" aria-label="有界推荐结果分页">
+          <el-button size="small" :disabled="page === 1" @click="page--">上一页</el-button>
+          <span>有界推荐第 {{ page }} / {{ pageCount }} 页（最多 20 条）</span>
+          <el-button size="small" :disabled="page === pageCount" @click="page++">下一页</el-button>
+        </nav>
+
+        <section v-if="advisorStore.comparedAdvisors.length" class="compare-tray" aria-labelledby="compare-title">
+          <div class="compare-head">
+            <h3 id="compare-title">导师对比（{{ advisorStore.comparedAdvisors.length }}/3）</h3>
+            <el-button type="primary" size="small" @click="router.push('/profile')">
+              进入站内行动准备
+            </el-button>
+          </div>
+          <div class="compare-table" role="table" aria-label="导师证据对比">
+            <article v-for="item in advisorStore.comparedAdvisors" :key="item.advisor_id" role="row">
+              <strong>{{ item.name }}</strong>
+              <span>保守排序 {{ item.score.toFixed(1) }}</span>
+              <span>适配 {{ (item.fit_score ?? item.score).toFixed(1) }}</span>
+              <span>覆盖 {{ ((item.evidence_coverage ?? 0) * 100).toFixed(0) }}%</span>
+              <span>置信 {{ ((item.evidence_confidence ?? 0) * 100).toFixed(0) }}%</span>
+              <span>证据截至 {{ latestEvidenceTime(item) || '待核实' }}</span>
+            </article>
+          </div>
+        </section>
       </template>
     </div>
   </div>
@@ -90,84 +106,81 @@ const { loading, onScroll } = useInfiniteScroll(listRef, async () => {
   flex: 1;
   overflow-y: auto;
   padding: $spacing-md $spacing-lg;
-  -webkit-overflow-scrolling: touch;
 }
 
-.card-list {
+.card-list,
+.skeleton-list {
   display: flex;
   flex-direction: column;
   gap: $spacing-md;
 }
 
-// 空状态
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
+  min-height: 260px;
+  padding: 40px 20px;
   color: $text-placeholder;
   text-align: center;
 
   .empty-icon {
     font-size: 40px;
     margin-bottom: $spacing-md;
-    color: $color-border;
   }
   p {
-    font-size: 14px;
     color: $text-secondary;
-    margin-bottom: 4px;
   }
   .empty-hint {
+    margin-top: 6px;
     font-size: 12px;
   }
 }
 
-// 骨架屏
-.skeleton-list {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-md;
-}
 .skeleton-card {
   height: 100px;
   border-radius: $card-radius;
-  background: linear-gradient(90deg, $color-bg 25%, $color-border-light 50%, $color-bg 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  background: $color-border-light;
 }
-@keyframes shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
+
+.pagination,
+.compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+}
+
+.pagination {
+  margin: $spacing-lg 0;
+  font-size: 12px;
+}
+
+.compare-tray {
+  margin-top: $spacing-lg;
+  padding: $spacing-md;
+  border: 1px solid $color-primary-light;
+  border-radius: 10px;
+  background: rgba(64, 158, 255, 0.04);
+}
+
+.compare-table {
+  display: grid;
+  gap: $spacing-xs;
+  margin-top: $spacing-sm;
+
+  article {
+    display: grid;
+    grid-template-columns: 1.1fr repeat(5, 1fr);
+    gap: 6px;
+    font-size: 11px;
   }
 }
 
-.load-more,
-.load-end {
-  text-align: center;
-  padding: $spacing-lg;
-  font-size: 12px;
-  color: $text-placeholder;
-}
-.loading-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: $color-primary;
-  margin-right: 4px;
-  animation: pulse 1s infinite;
-}
-@keyframes pulse {
-  0%, 100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 1;
+@media (max-width: $bp-tablet) {
+  .compare-table article {
+    grid-template-columns: 1fr 1fr;
   }
 }
 </style>

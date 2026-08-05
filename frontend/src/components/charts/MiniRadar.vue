@@ -23,7 +23,17 @@ const props = withDefaults(
     studentWeights?: Record<TraitKey, number>
     size?: number
   }>(),
-  { size: 80 },
+  {
+    size: 80,
+    studentWeights: () => ({
+      acumen: 0,
+      network: 0,
+      mentorship: 0,
+      tolerance: 0,
+      funding: 0,
+      efficiency: 0,
+    }),
+  },
 )
 
 const el = ref<HTMLElement | null>(null)

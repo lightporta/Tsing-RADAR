@@ -40,6 +40,10 @@ function goRecruitment() {
       </section>
       <section class="content-block chart-block">
         <h3 class="block-title">📊 四象限散点图</h3>
+        <p class="axis-legend">
+          横轴：有来源的冷/热信号 · 纵轴：有来源的国家任务/产业方向 ·
+          灰=国冷 绿=国热 蓝=私冷 橙=私热
+        </p>
         <ScatterChart height="240px" />
       </section>
     </main>
@@ -57,11 +61,11 @@ function goRecruitment() {
       <div class="drawer-menu">
         <h3 class="drawer-title">Tsing-RADAR</h3>
         <button class="drawer-item" @click="goProfile">
-          <el-icon><User /></el-icon>
+          <el-icon aria-hidden="true">人</el-icon>
           <span>个人信息</span>
         </button>
         <button class="drawer-item" @click="goRecruitment">
-          <el-icon><ChatDotRound /></el-icon>
+          <el-icon aria-hidden="true">讯</el-icon>
           <span>信息平台</span>
         </button>
       </div>
@@ -100,6 +104,12 @@ function goRecruitment() {
   font-weight: 600;
   margin-bottom: $spacing-md;
   color: $text-primary;
+}
+
+.axis-legend {
+  margin-bottom: $spacing-sm;
+  font-size: 11px;
+  color: $text-secondary;
 }
 
 // 底部对话区
@@ -170,9 +180,4 @@ function goRecruitment() {
   }
 }
 
-@media (min-width: $bp-tablet) {
-  .mobile-layout {
-    display: none;
-  }
-}
 </style>

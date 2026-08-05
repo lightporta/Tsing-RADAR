@@ -1,37 +1,57 @@
-"""[PATCH] 通用依赖（SSO 校验）。
+"""通用鉴权依赖；A5 不再接受客户端自报 student_id。"""
 
-修改点：
-- get_current_student 增加匿名访问日志记录
-- verify_admin 注释明确为 Header 校验
-"""
+import hmac
 
-import logging
-
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import get_db
+from app.services.identity import Principal, require_web_csrf, require_web_principal
+from app.services.idempotency import validate_idempotency_key
 
-logger = logging.getLogger(__name__)
 
-
-async def verify_admin(admin_token: str = Header(None, alias="X-Admin-Token")) -> None:
-    """管理员校验依赖。
-
-    [PATCH] 明确：通过 X-Admin-Token Header 校验，不再从请求体读取。
-    """
-    if admin_token != settings.ADMIN_TOKEN:
+async def verify_admin(
+    admin_token: str | None = Header(None, alias="X-Admin-Token"),
+) -> None:
+    """Authenticate the local admin surface without logging/echoing secrets."""
+    configured = settings.ADMIN_TOKEN
+    if not configured:
+        raise HTTPException(status_code=503, detail="管理员鉴权尚未配置")
+    provided = (admin_token or "").encode("utf-8")
+    expected = configured.encode("utf-8")
+    if not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=403, detail="管理员权限校验失败")
-    return None
 
 
-async def get_current_student(x_student_token: str = Header(None)) -> str:
-    """获取当前登录学生（SSO 占位）。
+def get_current_principal(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Principal:
+    return require_web_principal(db, request)
 
-    [PATCH] 增加匿名访问日志，便于审计。
-    生产对接：GET /api/tsinghua/auth/verify?token={jwt}
-    """
-    if not x_student_token:
-        logger.warning("匿名访问 | path=unknown | 建议：前端注入 X-Student-Token 头")
-        return "anonymous"
-    # 占位：直接返回 token，实际应解析 JWT 获取学号
-    return x_student_token
+
+def get_mutating_principal(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Principal:
+    return require_web_csrf(db, request)
+
+
+def get_current_student(
+    principal: Principal = Depends(get_current_principal),
+) -> str:
+    """兼容既有业务函数；值来自服务端会话，不来自请求头或请求体。"""
+    return principal.subject_id
+
+
+def get_mutating_student(
+    principal: Principal = Depends(get_mutating_principal),
+) -> str:
+    return principal.subject_id
+
+
+def get_idempotency_key(
+    value: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> str:
+    return validate_idempotency_key(value)

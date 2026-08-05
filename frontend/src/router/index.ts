@@ -40,11 +40,10 @@ const router = createRouter({
   },
 })
 
-// 全局前置守卫：设置文档标题 + SSO 占位
+// 全局前置守卫只设置标题；主体由服务端 opaque 会话管理。
 router.beforeEach((to, _from, next) => {
   const title = (to.meta.title as string) || 'Tsing-RADAR'
   document.title = title
-  // TODO: 清小搭 SSO 校验占位，对接 GET /api/tsinghua/auth/verify?token={jwt}
   next()
 })
 
