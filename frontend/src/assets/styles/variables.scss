@@ -1,0 +1,98 @@
+// =====================================================================
+// Tsing-RADAR 主题变量系统
+// 配色严格遵循开发文档 §8.1：主色清华蓝、辅助色橙色用于导师特质雷达
+// =====================================================================
+
+// —— 色彩体系 ——
+$color-primary: #409eff; // 主色：清华蓝系
+$color-primary-light: #79bbff;
+$color-primary-dark: #337ecc;
+$color-accent: #ff9500; // 辅助色：橙色（导师特质雷达）
+$color-accent-light: #ffb340;
+$color-accent-dark: #cc7700;
+
+// —— 业务语义色 ——
+$color-student-radar: rgba(64, 158, 255, 0.2); // 学生需求雷达半透明蓝填充
+$color-student-radar-line: #409eff; // 学生需求雷达描边
+$color-advisor-radar: rgba(255, 149, 0, 0.6); // 导师特质雷达实橙填充
+$color-advisor-radar-line: #ff9500; // 导师特质雷达描边
+
+// —— 背景与文字 ——
+$color-bg: #f5f7fa; // 全局浅灰背景
+$color-bg-card: #ffffff; // 卡片纯白背景
+$color-bg-hover: #ecf5ff; // 列表项悬停浅蓝
+$color-border: #e4e7ed; // 分割线
+$color-border-light: #ebeef5;
+
+$text-primary: #303133; // 主文字
+$text-regular: #606266; // 常规文字
+$text-secondary: #909399; // 次要文字
+$text-placeholder: #a8abb2;
+
+// —— 状态色 ——
+$color-success: #67c23a;
+$color-warning: #e6a23c;
+$color-danger: #f56c6c;
+$color-info: #909399;
+
+// —— 雷达六维度颜色（散点图按维度区分） ——
+$dept-colors: (
+  '自动化系': #4e79a7,
+  '计算机科学与技术系': #f28e2b,
+  '电子工程系': #e15759,
+  '机械工程系': #76b7b2,
+  '材料学院': #59a14f,
+  '其他': #b07aa1,
+);
+
+// —— 尺寸 ——
+$header-height: 60px;
+$header-height-mobile: 48px;
+$panel-toolbar-height: 48px;
+$card-min-height: 100px;
+$card-radius: 8px;
+$mini-radar-size: 80px;
+
+// —— 间距 ——
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 12px;
+$spacing-lg: 16px;
+$spacing-xl: 20px;
+$spacing-xxl: 24px;
+
+// —— 动效 ——
+$transition-base: all 0.3s ease;
+$transition-fast: all 0.2s ease;
+$shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06);
+$shadow-card-hover: 0 6px 20px rgba(64, 158, 255, 0.15);
+$shadow-elevated: 0 8px 30px rgba(0, 0, 0, 0.12);
+
+// —— 响应式断点 ——
+$bp-pc: 1200px; // 完整三栏
+$bp-tablet-wide: 1024px; // 三栏压缩 / 双栏切换
+$bp-tablet: 768px; // 移动端切换
+$bp-phone: 480px; // 小屏手机
+
+// —— Z-index 层级 ——
+$z-header: 100;
+$z-dropdown: 200;
+$z-modal: 1000;
+$z-chat-drag: 50;
+
+// —— CSS 变量导出（供 JS 与运行时主题切换使用） ——
+:root {
+  --color-primary: #{$color-primary};
+  --color-primary-light: #{$color-primary-light};
+  --color-accent: #{$color-accent};
+  --color-bg: #{$color-bg};
+  --color-bg-card: #{$color-bg-card};
+  --color-border: #{$color-border};
+  --text-primary: #{$text-primary};
+  --text-regular: #{$text-regular};
+  --text-secondary: #{$text-secondary};
+  --header-height: #{$header-height};
+  --header-height-mobile: #{$header-height-mobile};
+  --shadow-card: #{$shadow-card};
+  --shadow-card-hover: #{$shadow-card-hover};
+}
