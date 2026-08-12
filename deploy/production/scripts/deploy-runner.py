@@ -418,6 +418,8 @@ def command_for_action(
                 str(STAGE_SECRET_ROOT),
                 "--bootstrap-secret-root",
                 str(BOOTSTRAP_SECRET_ROOT),
+                "--environment-file",
+                str(ENV_FILE),
             ],
             30,
         ),
