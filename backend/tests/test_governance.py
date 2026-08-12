@@ -354,6 +354,10 @@ def test_raw_runtime_copies_are_removed():
     assert "const DEFAULT_MENTORS = [];" in legacy_html
     assert "fetch('mentors.json')" not in legacy_html
 
+    dockerfile = (BACKEND_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY data/" not in dockerfile
+    assert "RUN mkdir -p /app/data" in dockerfile
+
 
 def test_legacy_app_starts_in_fail_closed_empty_state():
     legacy_app_path = REPOSITORY_ROOT / "legacy" / "app.py"
