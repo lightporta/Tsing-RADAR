@@ -49,6 +49,30 @@ def test_development_keeps_existing_direct_provider_order():
     assert configured.configured_llm_providers == ("glm", "deepseek")
 
 
+def test_production_can_explicitly_disable_llm_without_credentials():
+    configured = Settings(
+        _env_file=None,
+        PRODUCTION_DEPLOYMENT=True,
+        LLM_ENABLED=False,
+    )
+
+    assert configured.configured_llm_providers == ()
+    assert configured.llm_credentials == ()
+    assert configured.llm_secret_file_permissions_valid is True
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"LLM_PROVIDER": "glm"},
+        {"GLM_API_KEY": SYNTHETIC_KEY},
+    ],
+)
+def test_disabled_llm_rejects_credentials(kwargs):
+    with pytest.raises(ValidationError, match="LLM_ENABLED=true"):
+        Settings(_env_file=None, LLM_ENABLED=False, **kwargs)
+
+
 @pytest.mark.parametrize(
     "kwargs,reason",
     [

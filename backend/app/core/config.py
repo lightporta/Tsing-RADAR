@@ -70,6 +70,7 @@ class Settings(BaseSettings):
 
     # —— 大模型 ——
     # 生产只接受 provider + 文件型密钥；开发继续兼容既有直接变量。
+    LLM_ENABLED: bool = True
     LLM_PROVIDER: Optional[Literal["glm", "deepseek"]] = None
     LLM_API_KEY_FILE: Optional[str] = None
     GLM_API_KEY: Optional[str] = None
@@ -276,7 +277,13 @@ class Settings(BaseSettings):
             )
             if key
         )
-        if self.LLM_API_KEY_FILE:
+        if not self.LLM_ENABLED:
+            if self.LLM_API_KEY_FILE or self.LLM_PROVIDER or direct_credentials:
+                raise ValueError(
+                    "LLM credentials require LLM_ENABLED=true"
+                )
+            credentials = ()
+        elif self.LLM_API_KEY_FILE:
             if direct_credentials:
                 raise ValueError(
                     "LLM_API_KEY_FILE and direct provider keys are mutually exclusive"
@@ -317,7 +324,7 @@ class Settings(BaseSettings):
 
     @property
     def production_secret_files_configured(self) -> bool:
-        required = (
+        required = [
             self.DATABASE_PASSWORD_FILE,
             self.REDIS_PASSWORD_FILE,
             self.ADMIN_TOKEN_FILE,
@@ -325,8 +332,9 @@ class Settings(BaseSettings):
             self.ARTIFACT_SIGNING_SECRET_FILE,
             self.S3_ACCESS_KEY_ID_FILE,
             self.S3_SECRET_ACCESS_KEY_FILE,
-            self.LLM_API_KEY_FILE,
-        )
+        ]
+        if self.LLM_ENABLED:
+            required.append(self.LLM_API_KEY_FILE)
         return all(required)
 
     @property
@@ -371,6 +379,8 @@ class Settings(BaseSettings):
 
     @property
     def llm_secret_file_permissions_valid(self) -> bool:
+        if not self.LLM_ENABLED:
+            return True
         if not self.LLM_API_KEY_FILE:
             return False
         path = Path(self.LLM_API_KEY_FILE)
