@@ -30,10 +30,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ===== 启动时加载导师库 =====
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(BASE_DIR, "mentors.json"), "r", encoding="utf-8") as f:
-    DEFAULT_MENTORS = json.load(f)
+# ===== 已弃用的只读空状态 =====
+# 旧版导师数据已经从当前版本移除。legacy 应用仅保留代码对照，不再从磁盘
+# 读取、恢复或内嵌导师记录；所有导师相关接口稳定返回诚实空结果。
+DEFAULT_MENTORS: list[dict[str, Any]] = []
 
 # ===== 全局内存存储 =====
 RECRUITMENTS_STORE: list[dict] = []          # 通过 POST 发布的招募
@@ -496,7 +496,7 @@ async def match_mentor(req: MatchRequest):
 def list_recruitments(urgent: Optional[bool] = None):
     """聚合所有导师的招募信息；?urgent=true 只返回急招。"""
     result = []
-    # 1) 来自 mentors.json 的静态招募
+    # 1) 已弃用的静态导师招募（当前固定为空）
     for m in DEFAULT_MENTORS:
         for r in m.get("recruitments", []) or []:
             if urgent is True and not r.get("is_urgent", False):

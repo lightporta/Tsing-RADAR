@@ -4,7 +4,7 @@ import type { SortMetric } from '@/types/advisor'
 
 // =====================================================================
 // 卡片列表顶部筛选栏（文档 §3.4）
-// 左侧：共找到 N 位匹配导师
+// 左侧：匹配数量；无发布数据时明确显示治理空态
 // 右侧：排序下拉（契合度优先 / 热门度 / 学术敏锐度 / 经费实力 等）
 // =====================================================================
 
@@ -24,7 +24,10 @@ function onSortChange(value: SortMetric) {
 
 <template>
   <div class="filter-bar">
-    <span class="count-text">
+    <span v-if="advisorStore.resultStatus === 'no_published_data'" class="count-text">
+      已审核可发布导师 <strong>0</strong> 位
+    </span>
+    <span v-else class="count-text">
       共找到 <strong>{{ advisorStore.totalCount }}</strong> 位匹配导师
     </span>
     <el-select

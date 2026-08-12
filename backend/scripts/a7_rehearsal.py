@@ -34,6 +34,18 @@ def main() -> int:
         sys.path.insert(0, str(backend_root))
         from fastapi.testclient import TestClient
 
+        from app.services import data_loader
+        tracked_empty_seed = (
+            repository_root
+            / "deploy"
+            / "production"
+            / "data"
+            / "empty-mentor-governance.json"
+        )
+        if not tracked_empty_seed.is_file():
+            raise RuntimeError("tracked_empty_mentor_governance_seed_missing")
+        data_loader._DATA_PATH = str(tracked_empty_seed)
+
         from app.main import app
         from app.db.session import engine
         from app.services.rehearsal import (

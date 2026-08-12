@@ -72,6 +72,15 @@ export const useAdvisorStore = defineStore('advisor', () => {
     try {
       if (USE_MOCK) {
         matchedAdvisors.value = mockApi.mockMatch(interest)
+        resultStatus.value = 'no_published_data'
+        resultMessage.value =
+          '前端独立 Mock 当前没有已审核导师数据，因此不会生成虚假推荐。'
+        resultMeta.value = {
+          total_records: 0,
+          published_records: 0,
+          withheld_records: 0,
+          policy: 'verified_only',
+        }
       } else {
         const res = await advisorApi.matchAdvisors({
           interest,

@@ -388,6 +388,7 @@ def run_l1_production_preflight(app_settings: Settings) -> dict[str, Any]:
             bucket=app_settings.S3_BUCKET,
             region=app_settings.S3_REGION,
             addressing_style=app_settings.S3_ADDRESSING_STYLE,
+            server_side_encryption=app_settings.S3_SERVER_SIDE_ENCRYPTION,
         )
         cos_shape_valid = final_host.count(app_settings.S3_BUCKET or "") == 1
     except ObjectStorageError:

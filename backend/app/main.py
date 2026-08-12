@@ -114,6 +114,7 @@ async def startup_event() -> None:
                 bucket=settings.S3_BUCKET,
                 region=settings.S3_REGION,
                 addressing_style=settings.S3_ADDRESSING_STYLE,
+                server_side_encryption=settings.S3_SERVER_SIDE_ENCRYPTION,
             )
         from app.services.qxd_media import validate_remote_media_configuration
 
@@ -156,13 +157,14 @@ async def startup_event() -> None:
         summary["withheld_records"],
     )
 
-    # LLM 配置检查
-    if settings.GLM_API_KEY:
-        logger.info("✅ 已配置 GLM_API_KEY，LLM 走真模型")
-    elif settings.DEEPSEEK_API_KEY:
-        logger.info("✅ 已配置 DEEPSEEK_API_KEY，LLM 走真模型")
+    # 仅记录 provider 与是否配置；绝不记录密钥值、长度、摘要或前后缀。
+    if settings.configured_llm_providers:
+        logger.info(
+            "LLM provider=%s，密钥已配置",
+            ",".join(settings.configured_llm_providers),
+        )
     else:
-        logger.warning("⚠️ 未配置 GLM_API_KEY / DEEPSEEK_API_KEY，LLM 将降级到本地 stub")
+        logger.warning("LLM provider=none，密钥未配置；使用本地规则模式")
 
 
 @app.get("/")

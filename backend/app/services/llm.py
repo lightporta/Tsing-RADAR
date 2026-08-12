@@ -1,6 +1,7 @@
 """通用 LLM 与向量服务。
 
-用户要求接真模型，需在 .env 配置 GLM_API_KEY 或 DEEPSEEK_API_KEY。
+开发环境可配置 GLM_API_KEY 或 DEEPSEEK_API_KEY；生产环境只接受
+LLM_PROVIDER + LLM_API_KEY_FILE，并在 Settings 构造时一次性解析。
 A3 访谈题序、画像状态与确认门不由 LLM 决定。
 """
 
@@ -28,41 +29,28 @@ def _build_payload_messages(messages: list[LLMMessage]) -> list[dict[str, str]]:
 async def llm_complete(messages: list[LLMMessage]) -> Optional[str]:
     """调用 LLM 获取完整回复文本。
 
-    GLM 优先，失败 fallback DeepSeek，均失败返回 None。
+    开发环境保持 GLM 优先、失败后回退 DeepSeek；生产只有显式 provider。
     """
     payload_messages = _build_payload_messages(messages)
-
-    if settings.GLM_API_KEY:
+    provider_config = {
+        "glm": (settings.GLM_BASE_URL, settings.GLM_CHAT_MODEL),
+        "deepseek": (
+            settings.DEEPSEEK_BASE_URL,
+            settings.DEEPSEEK_CHAT_MODEL,
+        ),
+    }
+    for provider, api_key in settings.llm_credentials:
+        base_url, model = provider_config[provider]
         try:
             async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
                 resp = await client.post(
-                    f"{settings.GLM_BASE_URL}/chat/completions",
+                    f"{base_url}/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {settings.GLM_API_KEY}",
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": settings.GLM_CHAT_MODEL,
-                        "messages": payload_messages,
-                        "stream": False,
-                    },
-                )
-                resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
-        except Exception:
-            pass  # 降级到 DeepSeek
-
-    if settings.DEEPSEEK_API_KEY:
-        try:
-            async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
-                resp = await client.post(
-                    f"{settings.DEEPSEEK_BASE_URL}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": settings.DEEPSEEK_CHAT_MODEL,
+                        "model": model,
                         "messages": payload_messages,
                         "stream": False,
                     },
@@ -81,13 +69,21 @@ async def embed_text(text: str) -> list[float]:
     优先 GLM embedding，失败/无 key 时使用确定性的词项特征哈希。
     A4 匹配默认不调用本函数，而使用明确标注的词法/概念召回回退。
     """
-    if settings.GLM_API_KEY:
+    glm_key = next(
+        (
+            api_key
+            for provider, api_key in settings.llm_credentials
+            if provider == "glm"
+        ),
+        None,
+    )
+    if glm_key:
         try:
             async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
                 resp = await client.post(
                     f"{settings.GLM_BASE_URL}/embeddings",
                     headers={
-                        "Authorization": f"Bearer {settings.GLM_API_KEY}",
+                        "Authorization": f"Bearer {glm_key}",
                         "Content-Type": "application/json",
                     },
                     json={"model": settings.GLM_EMBED_MODEL, "input": text},

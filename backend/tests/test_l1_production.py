@@ -31,6 +31,7 @@ DEPLOY = ROOT / "deploy" / "production"
 def _secret(tmp_path: Path, name: str, marker: str) -> str:
     path = tmp_path / name
     path.write_text(marker + "-" + "x" * 40, encoding="utf-8")
+    path.chmod(0o600)
     return str(path)
 
 
@@ -45,6 +46,10 @@ def _clear_direct_secret_environment(monkeypatch) -> None:
         "QXD_END_USER_SIGNING_SECRET",
         "S3_ACCESS_KEY_ID",
         "S3_SECRET_ACCESS_KEY",
+        "LLM_PROVIDER",
+        "LLM_API_KEY_FILE",
+        "GLM_API_KEY",
+        "DEEPSEEK_API_KEY",
         "PUBLIC_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -73,14 +78,16 @@ def _production_settings(tmp_path: Path, monkeypatch) -> Settings:
         OBJECT_STORE_BACKEND="s3",
         S3_PROVIDER="tencent_cos",
         S3_BUCKET="tsing-radar-prod-1250000000",
-        S3_ENDPOINT_URL="https://cos.ap-shanghai.myqcloud.com",
-        S3_REGION="ap-shanghai",
+        S3_ENDPOINT_URL="https://cos.ap-hongkong.myqcloud.com",
+        S3_REGION="ap-hongkong",
         S3_ACCESS_KEY_ID_FILE=_secret(tmp_path, "cos-id", "cos-id"),
         S3_SECRET_ACCESS_KEY_FILE=_secret(
             tmp_path,
             "cos-secret",
             "cos-secret",
         ),
+        LLM_PROVIDER="glm",
+        LLM_API_KEY_FILE=_secret(tmp_path, "llm", "llm"),
         S3_ADDRESSING_STYLE="virtual",
         S3_SERVER_SIDE_ENCRYPTION="AES256",
         FILE_SCAN_MODE="clamav",
@@ -225,26 +232,28 @@ def test_secret_preflight_rejects_weak_and_reused_material_without_echo(tmp_path
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "bucket", "region", "style"),
+    ("endpoint", "bucket", "region", "style", "encryption"),
     [
-        ("http://cos.ap-shanghai.myqcloud.com", "bucket-1250000000", "ap-shanghai", "virtual"),
-        ("https://user@cos.ap-shanghai.myqcloud.com", "bucket-1250000000", "ap-shanghai", "virtual"),
-        ("https://cos.ap-shanghai.myqcloud.com/path", "bucket-1250000000", "ap-shanghai", "virtual"),
-        ("https://cos.ap-shanghai.myqcloud.com?x=1", "bucket-1250000000", "ap-shanghai", "virtual"),
-        ("https://cos.ap-beijing.myqcloud.com", "bucket-1250000000", "ap-shanghai", "virtual"),
-        ("https://bucket-1250000000.cos.ap-shanghai.myqcloud.com", "bucket-1250000000", "ap-shanghai", "virtual"),
-        ("https://cos.ap-shanghai.myqcloud.com", "bucket-without-appid", "ap-shanghai", "virtual"),
-        ("https://cos.ap-shanghai.myqcloud.com", "bucket-1250000000", "ap-beijing", "virtual"),
-        ("https://cos.ap-shanghai.myqcloud.com", "bucket-1250000000", "ap-shanghai", "path"),
+        ("http://cos.ap-hongkong.myqcloud.com", "bucket-1250000000", "ap-hongkong", "virtual", "AES256"),
+        ("https://user@cos.ap-hongkong.myqcloud.com", "bucket-1250000000", "ap-hongkong", "virtual", "AES256"),
+        ("https://cos.ap-hongkong.myqcloud.com/path", "bucket-1250000000", "ap-hongkong", "virtual", "AES256"),
+        ("https://cos.ap-hongkong.myqcloud.com?x=1", "bucket-1250000000", "ap-hongkong", "virtual", "AES256"),
+        ("https://cos.ap-shanghai.myqcloud.com", "bucket-1250000000", "ap-hongkong", "virtual", "AES256"),
+        ("https://bucket-1250000000.cos.ap-hongkong.myqcloud.com", "bucket-1250000000", "ap-hongkong", "virtual", "AES256"),
+        ("https://cos.ap-hongkong.myqcloud.com", "bucket-without-appid", "ap-hongkong", "virtual", "AES256"),
+        ("https://cos.ap-hongkong.myqcloud.com", "bucket-1250000000", "ap-shanghai", "virtual", "AES256"),
+        ("https://cos.ap-hongkong.myqcloud.com", "bucket-1250000000", "ap-hongkong", "path", "AES256"),
+        ("https://cos.ap-hongkong.myqcloud.com", "bucket-1250000000", "ap-hongkong", "virtual", "none"),
     ],
 )
-def test_cos_endpoint_contract_fails_closed(endpoint, bucket, region, style):
+def test_cos_endpoint_contract_fails_closed(endpoint, bucket, region, style, encryption):
     with pytest.raises(ObjectStorageError):
         validate_tencent_cos_configuration(
             endpoint_url=endpoint,
             bucket=bucket,
             region=region,
             addressing_style=style,
+            server_side_encryption=encryption,
         )
 
 
@@ -252,18 +261,19 @@ def test_cos_sdk_endpoint_is_bucket_free_and_signed_host_adds_bucket_once(
     monkeypatch,
 ):
     bucket = "tsing-radar-prod-1250000000"
-    endpoint = "https://cos.ap-shanghai.myqcloud.com"
+    endpoint = "https://cos.ap-hongkong.myqcloud.com"
     assert validate_tencent_cos_configuration(
         endpoint_url=endpoint,
         bucket=bucket,
-        region="ap-shanghai",
+        region="ap-hongkong",
         addressing_style="virtual",
-    ) == f"{bucket}.cos.ap-shanghai.myqcloud.com"
+        server_side_encryption="AES256",
+    ) == f"{bucket}.cos.ap-hongkong.myqcloud.com"
 
     monkeypatch.setattr(settings, "S3_PROVIDER", "tencent_cos")
     monkeypatch.setattr(settings, "S3_BUCKET", bucket)
     monkeypatch.setattr(settings, "S3_ENDPOINT_URL", endpoint)
-    monkeypatch.setattr(settings, "S3_REGION", "ap-shanghai")
+    monkeypatch.setattr(settings, "S3_REGION", "ap-hongkong")
     monkeypatch.setattr(settings, "S3_ADDRESSING_STYLE", "virtual")
     monkeypatch.setattr(settings, "S3_ACCESS_KEY_ID", "dummy-access-key")
     monkeypatch.setattr(settings, "S3_SECRET_ACCESS_KEY", "dummy-secret-key")
@@ -274,7 +284,7 @@ def test_cos_sdk_endpoint_is_bucket_free_and_signed_host_adds_bucket_once(
         ExpiresIn=60,
     )
     host = urlsplit(signed).hostname
-    assert host == f"{bucket}.cos.ap-shanghai.myqcloud.com"
+    assert host == f"{bucket}.cos.ap-hongkong.myqcloud.com"
     assert host.count(bucket) == 1
 
 

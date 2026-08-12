@@ -81,9 +81,10 @@ cd Tsing-RADAR
 ```bash
 cd backend
 
-# 配置环境变量（接真模型需填 GLM_API_KEY）
+# 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入你的 GLM_API_KEY（智谱）或 DEEPSEEK_API_KEY
+# 本地开发可填 GLM_API_KEY（智谱）或 DEEPSEEK_API_KEY
+# 生产部署只使用 LLM_PROVIDER + LLM_API_KEY_FILE
 
 # 安装依赖（Python 3.10+）
 pip install -r requirements.txt
@@ -126,7 +127,8 @@ npm run dev
 ```bash
 cp backend/.env.example backend/.env
 # 编辑 backend/.env：
-#   GLM_API_KEY=你的智谱API Key
+#   本地开发可配置 GLM_API_KEY 或 DEEPSEEK_API_KEY
+#   生产环境使用 LLM_PROVIDER + LLM_API_KEY_FILE，不把 Key 写入环境变量
 #   DATABASE_URL=postgresql://tsingradar:tsingradar_dev_pwd@postgres:5432/tsingradar
 #   REDIS_URL=redis://redis:6379/0
 #   MILVUS_HOST=milvus
@@ -138,17 +140,14 @@ cp backend/.env.example backend/.env
 docker-compose up -d
 ```
 
-#### 3️⃣ 数据库初始化与知识库预热（首次部署）
+#### 3️⃣ 数据库迁移（首次部署）
 
 ```bash
 # 执行数据库迁移（创建 9 张表）
 docker-compose exec backend alembic upgrade head
 
-# 导入 81 位导师数据到 PostgreSQL
-docker-compose exec backend python scripts/init_data.py
-
-# 向量化导师数据到 Milvus
-docker-compose exec backend python scripts/vectorize_advisors.py
+# 默认发布导师数据为 0 条。只有通过来源、授权、字段质量和发布审核的
+# 治理数据才能由独立发布流程导入；不要恢复旧 mentors.json。
 ```
 
 #### 4️⃣ 打开应用
@@ -166,7 +165,7 @@ docker-compose exec backend python scripts/vectorize_advisors.py
 
 ```bash
 docker-compose down          # 停止服务（保留数据）
-docker-compose down -v       # 停止并删除所有数据卷
+# 删除数据卷属于破坏性操作，不作为常规停止步骤
 ```
 
 ---
@@ -193,15 +192,26 @@ docker run -d -p 80:80 tsing-radar-frontend
 
 | 变量 | 必填 | 说明 | 默认值 |
 | :--- | :---: | :--- | :--- |
-| `GLM_API_KEY` | ⭐ | 智谱 GLM API Key（接真模型） | 空（降级 stub） |
-| `DEEPSEEK_API_KEY` | | DeepSeek API Key（GLM 兜底） | 空 |
+| `LLM_PROVIDER` | 生产必填 | 生产模型分支：`glm` 或 `deepseek` | 空 |
+| `LLM_API_KEY_FILE` | 生产必填 | 只读密钥文件绝对路径 | 空 |
+| `GLM_API_KEY` | 仅开发 | 本地开发直连智谱 GLM；生产拒绝 | 空 |
+| `DEEPSEEK_API_KEY` | 仅开发 | 本地开发直连 DeepSeek；生产拒绝 | 空 |
 | `DATABASE_URL` | | 数据库连接 | `sqlite:///./tsing_radar.db` |
 | `REDIS_URL` | | Redis 连接（空则内存缓存） | 空 |
 | `MILVUS_HOST` | | Milvus 地址（空则 hash 向量） | 空 |
 | `ADMIN_TOKEN` | | 训练触发管理员 token | `admin` |
 | `CORS_ORIGINS` | | CORS 白名单（逗号分隔） | 本地地址 |
 
-> ⚠️ **LLM 三级降级策略**：`GLM_API_KEY` → `DEEPSEEK_API_KEY` → 本地 stub。未配置任何 Key 时对话/简历功能降级到本地规则引擎（功能仍可运行，但非真 LLM）。
+香港生产目标的私有 COS 使用 bucket-free SDK endpoint
+`https://cos.ap-hongkong.myqcloud.com`、`S3_REGION=ap-hongkong`、
+`S3_ADDRESSING_STYLE=virtual` 与 `S3_SERVER_SIDE_ENCRYPTION=AES256`。
+Bucket 必须为 `bucketname-appid` 格式，访问身份仍只通过独立 `*_FILE`
+密钥文件注入；应用启动门会拒绝其他区域、path-style、HTTP 或未加密配置。
+
+> ⚠️ 本地开发可使用直接环境变量或确定性 stub。生产环境必须显式配置
+> `LLM_PROVIDER=<glm|deepseek>` 与
+> `LLM_API_KEY_FILE=/run/secrets/llm_api_key`；密钥值不得进入 Compose 环境、
+> Git 或日志。未配置真实模型时只能声明本地规则模式，不能冒充真模型。
 
 ### 前端 `frontend/.env.development`
 
@@ -225,7 +235,7 @@ docker run -d -p 80:80 tsing-radar-frontend
 
 | 接口 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- | :--- |
-| 导师列表 | GET | `/api/mentors` | 81 位导师（六维雷达 + 热门指数 + 行业性质） |
+| 导师列表 | GET | `/api/mentors` | 仅返回已通过来源、授权与发布审核的导师；默认 0 条 |
 | 导师排序 | GET | `/api/mentors/sort?metric=` | 7 项指标降序 |
 | 散点图数据 | GET | `/api/scatter` | 四象限散点 |
 | 综合匹配 | POST | `/api/match` | 关键词 + 画像向量 + Synergy |
@@ -250,7 +260,7 @@ Tsing-RADAR/
 │   │   ├── components/        # chat / advisor / charts / common / profile / recruitment
 │   │   ├── composables/       # useEChart / useResponsive / useInfiniteScroll / useRadarOption
 │   │   ├── layouts/           # PCLayout（三栏）/ MobileLayout / SubPageLayout
-│   │   ├── mock/              # 前端独立 Mock（81 位导师）
+│   │   ├── mock/              # 前端独立 Mock（默认诚实空数组）
 │   │   ├── router/            # Vue Router（/ /profile /recruitment）
 │   │   ├── stores/            # Pinia（chat / advisor / user）
 │   │   ├── types/             # TypeScript 类型（无 any）
@@ -269,14 +279,14 @@ Tsing-RADAR/
 │   │   ├── db/                # session / base / redis_client
 │   │   ├── graph/             # LangGraph 对话编排
 │   │   └── main.py            # FastAPI 入口
-│   ├── data/mentors.json      # 81 位导师数据
+│   ├── data/                  # 运行时只读挂载治理数据；仓库不内置导师记录
 │   ├── alembic/               # 数据库迁移
 │   ├── scripts/               # init_data / vectorize / crawl
 │   ├── tests/                 # pytest（23 项测试）
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-├── legacy/                    # 旧实现归档（v1 单文件版本）
+├── legacy/                    # 已弃用旧实现归档；导师能力固定为空状态
 ├── docker-compose.yml         # 完整基础设施编排
 ├── Tsing-RADAR-项目开发技术文档.md
 └── README.md
@@ -346,7 +356,7 @@ cd frontend && npm run build
 | **前端** | Vue 3 · TypeScript · Vite · Element Plus · ECharts 5 · Pinia · Vue Router 4 · Axios · SCSS |
 | **后端** | FastAPI · SQLAlchemy · Alembic · Pydantic · httpx · LangGraph |
 | **基础设施** | PostgreSQL · Redis · Milvus · Docker · nginx |
-| **大模型** | 智谱 GLM · DeepSeek（三级降级） |
+| **大模型** | 智谱 GLM · DeepSeek（生产显式单 provider；本地规则模式仅供开发） |
 
 ---
 
@@ -362,7 +372,9 @@ cd frontend && npm run build
 → 在 `frontend/` 目录下执行 `npm install`。
 
 **Q3：对话功能返回的是固定模板，不是真 LLM？**
-→ 未配置 `GLM_API_KEY` / `DEEPSEEK_API_KEY`，已降级到本地 stub。在 `backend/.env` 填入 Key 后重启。
+→ 当前运行在本地规则模式。本地开发可在 `backend/.env` 配置一个直接
+provider Key；生产部署必须由只读文件提供密钥，并同时设置
+`LLM_PROVIDER` 与 `LLM_API_KEY_FILE`。未配置时不能宣称真模型已交付。
 
 **Q4：前后端跨域报错（CORS）？**
 → 开发期由 vite proxy 自动转发，无需处理。生产期确认 nginx 的 `proxy_pass` 配置正确指向后端。

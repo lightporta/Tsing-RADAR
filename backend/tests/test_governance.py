@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import importlib.util
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -352,3 +353,18 @@ def test_raw_runtime_copies_are_removed():
     legacy_html = (legacy_root / "index.html").read_text(encoding="utf-8")
     assert "const DEFAULT_MENTORS = [];" in legacy_html
     assert "fetch('mentors.json')" not in legacy_html
+
+
+def test_legacy_app_starts_in_fail_closed_empty_state():
+    legacy_app_path = REPOSITORY_ROOT / "legacy" / "app.py"
+    spec = importlib.util.spec_from_file_location(
+        "tsing_radar_legacy_empty_state",
+        legacy_app_path,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.DEFAULT_MENTORS == []
+    source = legacy_app_path.read_text(encoding="utf-8")
+    assert "mentors.json" not in source

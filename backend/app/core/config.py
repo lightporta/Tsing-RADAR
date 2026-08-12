@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, Optional
 from urllib.parse import quote
 
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,7 +68,10 @@ class Settings(BaseSettings):
     MILVUS_HOST: Optional[str] = None
     MILVUS_PORT: int = 19530
 
-    # —— 大模型（用户要求接真模型，需配置）——
+    # —— 大模型 ——
+    # 生产只接受 provider + 文件型密钥；开发继续兼容既有直接变量。
+    LLM_PROVIDER: Optional[Literal["glm", "deepseek"]] = None
+    LLM_API_KEY_FILE: Optional[str] = None
     GLM_API_KEY: Optional[str] = None
     DEEPSEEK_API_KEY: Optional[str] = None
     GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4"
@@ -77,6 +80,7 @@ class Settings(BaseSettings):
     DEEPSEEK_CHAT_MODEL: str = "deepseek-chat"
     GLM_EMBED_MODEL: str = "embedding-3"
     LLM_TIMEOUT: int = 30
+    _llm_credentials: tuple[tuple[str, str], ...] = PrivateAttr(default=())
 
     # —— 邮件（清华 SMTP，OAuth 2.0 占位）——
     SMTP_HOST: Optional[str] = "smtp.tsinghua.edu.cn"
@@ -263,6 +267,52 @@ class Settings(BaseSettings):
                 f"{self.REDIS_PORT}/{self.REDIS_DATABASE}"
             )
             object.__setattr__(self, "REDIS_URL", redis_url)
+
+        direct_credentials = tuple(
+            (provider, key)
+            for provider, key in (
+                ("glm", self.GLM_API_KEY),
+                ("deepseek", self.DEEPSEEK_API_KEY),
+            )
+            if key
+        )
+        if self.LLM_API_KEY_FILE:
+            if direct_credentials:
+                raise ValueError(
+                    "LLM_API_KEY_FILE and direct provider keys are mutually exclusive"
+                )
+            if not self.LLM_PROVIDER:
+                raise ValueError("LLM_PROVIDER is required with LLM_API_KEY_FILE")
+            credentials = (
+                (
+                    self.LLM_PROVIDER,
+                    _read_secret_file(
+                        "LLM_API_KEY_FILE",
+                        self.LLM_API_KEY_FILE,
+                    ),
+                ),
+            )
+        elif self.PRODUCTION_DEPLOYMENT:
+            if direct_credentials:
+                raise ValueError(
+                    "production deployment rejects direct LLM provider keys"
+                )
+            raise ValueError(
+                "production deployment requires LLM_PROVIDER and LLM_API_KEY_FILE"
+            )
+        elif self.LLM_PROVIDER:
+            selected = tuple(
+                item for item in direct_credentials if item[0] == self.LLM_PROVIDER
+            )
+            if len(selected) != 1 or len(direct_credentials) != 1:
+                raise ValueError(
+                    "LLM_PROVIDER must match the only configured direct provider key"
+                )
+            credentials = selected
+        else:
+            # Preserve the existing development order: GLM first, then DeepSeek.
+            credentials = direct_credentials
+        object.__setattr__(self, "_llm_credentials", credentials)
         return self
 
     @property
@@ -275,6 +325,7 @@ class Settings(BaseSettings):
             self.ARTIFACT_SIGNING_SECRET_FILE,
             self.S3_ACCESS_KEY_ID_FILE,
             self.S3_SECRET_ACCESS_KEY_FILE,
+            self.LLM_API_KEY_FILE,
         )
         return all(required)
 
@@ -292,6 +343,7 @@ class Settings(BaseSettings):
                 self.S3_SECRET_ACCESS_KEY_FILE,
                 self.QXD_API_KEY_FILE,
                 self.QXD_END_USER_SIGNING_SECRET_FILE,
+                self.LLM_API_KEY_FILE,
             )
             if value
         )
@@ -307,6 +359,24 @@ class Settings(BaseSettings):
             if os.name == "posix" and path.stat().st_mode & 0o077:
                 return False
         return True
+
+    @property
+    def llm_credentials(self) -> tuple[tuple[str, str], ...]:
+        """Resolved provider/key pairs; file material is read once at startup."""
+        return self._llm_credentials
+
+    @property
+    def configured_llm_providers(self) -> tuple[str, ...]:
+        return tuple(provider for provider, _ in self._llm_credentials)
+
+    @property
+    def llm_secret_file_permissions_valid(self) -> bool:
+        if not self.LLM_API_KEY_FILE:
+            return False
+        path = Path(self.LLM_API_KEY_FILE)
+        if not path.is_absolute() or not path.is_file() or path.is_symlink():
+            return False
+        return not (os.name == "posix" and path.stat().st_mode & 0o077)
 
     @property
     def cors_origins_list(self) -> list[str]:

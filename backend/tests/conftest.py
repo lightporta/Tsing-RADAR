@@ -27,12 +27,27 @@ shutil.rmtree(PRIVATE_UPLOAD_ROOT, ignore_errors=True)
 os.environ["PRIVATE_UPLOAD_ROOT"] = str(PRIVATE_UPLOAD_ROOT)
 os.environ["OBJECT_STORAGE_LOCAL_ROOT"] = str(PRIVATE_UPLOAD_ROOT)
 
+# 干净检出不得依赖本机未跟踪的导师 evidence。测试显式使用仓库中经过
+# 发布门校验的 0 记录治理种子；缺失/损坏文件仍由聚焦负向测试覆盖。
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+TEST_MENTOR_DATA_PATH = (
+    REPOSITORY_ROOT
+    / "deploy"
+    / "production"
+    / "data"
+    / "empty-mentor-governance.json"
+)
+if not TEST_MENTOR_DATA_PATH.is_file():
+    raise RuntimeError("tracked_empty_mentor_governance_seed_missing")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # 清除 settings 缓存，让测试环境变量生效
 import app.core.config as _config  # noqa: E402
+import app.services.data_loader as _data_loader  # noqa: E402
 
 _config.get_settings.cache_clear()
+_data_loader._DATA_PATH = str(TEST_MENTOR_DATA_PATH)
 
 import pytest  # noqa: E402
 

@@ -20,8 +20,8 @@ _ALLOWED_PRIVATE_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 _READ_CHUNK_BYTES = 64 * 1024
-_TENCENT_COS_REGION = "ap-shanghai"
-_TENCENT_COS_ENDPOINT = "https://cos.ap-shanghai.myqcloud.com"
+_TENCENT_COS_REGION = "ap-hongkong"
+_TENCENT_COS_ENDPOINT = "https://cos.ap-hongkong.myqcloud.com"
 _TENCENT_COS_BUCKET = re.compile(
     r"^(?=.{3,63}$)[a-z0-9][a-z0-9-]*[a-z0-9]-[1-9][0-9]{4,12}$"
 )
@@ -41,8 +41,9 @@ def validate_tencent_cos_configuration(
     bucket: str | None,
     region: str | None,
     addressing_style: str,
+    server_side_encryption: str,
 ) -> str:
-    """Validate the Shanghai COS SDK endpoint and return the request host.
+    """Validate the Hong Kong COS SDK endpoint and return the request host.
 
     Tencent COS expects a bucket-free regional SDK endpoint. Botocore adds the
     ``bucketname-appid`` label exactly once when virtual addressing is used.
@@ -58,7 +59,7 @@ def validate_tencent_cos_configuration(
     if (
         endpoint_url != _TENCENT_COS_ENDPOINT
         or parsed.scheme != "https"
-        or parsed.hostname != "cos.ap-shanghai.myqcloud.com"
+        or parsed.hostname != "cos.ap-hongkong.myqcloud.com"
         or parsed.username
         or parsed.password
         or parsed.path not in {"", "/"}
@@ -66,11 +67,13 @@ def validate_tencent_cos_configuration(
         or parsed.fragment
         or port not in {None, 443}
     ):
-        raise ObjectStorageError("腾讯云 COS endpoint 必须为上海 regional service host")
+        raise ObjectStorageError("腾讯云 COS endpoint 必须为香港 regional service host")
     if region != _TENCENT_COS_REGION:
-        raise ObjectStorageError("腾讯云 COS region 必须为 ap-shanghai")
+        raise ObjectStorageError("腾讯云 COS region 必须为 ap-hongkong")
     if addressing_style != "virtual":
         raise ObjectStorageError("腾讯云 COS 必须使用 virtual addressing")
+    if server_side_encryption != "AES256":
+        raise ObjectStorageError("腾讯云 COS 必须使用 AES256 服务端加密")
     if not _TENCENT_COS_BUCKET.fullmatch(bucket):
         raise ObjectStorageError("腾讯云 COS bucket 必须使用 bucketname-appid 格式")
     final_host = f"{bucket}.{parsed.hostname}"
@@ -209,6 +212,7 @@ class S3PrivateObjectStore:
                 bucket=settings.S3_BUCKET,
                 region=settings.S3_REGION,
                 addressing_style=settings.S3_ADDRESSING_STYLE,
+                server_side_encryption=settings.S3_SERVER_SIDE_ENCRYPTION,
             )
         try:
             import boto3
