@@ -353,8 +353,11 @@ def test_database_bootstrap_identity_is_one_shot_and_never_reaches_backend():
 
 def test_production_compose_explicitly_disables_unconfigured_llm():
     prod = (DEPLOY / "compose.prod.yml").read_text(encoding="utf-8")
+    stage = (DEPLOY / "compose.stage.yml").read_text(encoding="utf-8")
     assert 'LLM_ENABLED: "false"' in prod
+    assert 'LLM_ENABLED: "false"' in stage
     assert "LLM_API_KEY_FILE:" not in prod
+    assert "LLM_API_KEY_FILE:" not in stage
     assert "https://cos.ap-hongkong.myqcloud.com" in prod
     assert "S3_REGION: ap-hongkong" in prod
     assert "ap-shanghai" not in prod

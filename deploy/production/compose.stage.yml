@@ -90,6 +90,7 @@ services:
     environment:
       DEBUG: "false"
       PRODUCTION_DEPLOYMENT: "true"
+      LLM_ENABLED: "false"
       AUTO_CREATE_SCHEMA: "false"
       JOB_LOCK_TIMEOUT_SECONDS: "5"
       DATABASE_HOST: postgres
