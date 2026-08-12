@@ -88,6 +88,53 @@ export interface PublicCitation {
   confidence: number
 }
 
+export type MentorResourceType =
+  | 'verified_mentor_profile'
+  | 'mentor_catalog_entry'
+  | 'advisor_group_catalog_entry'
+
+export interface MentorResource {
+  advisor_id: string
+  name: string
+  dept: string
+  title?: string
+  official_homepage?: string
+  entity_type: 'person' | 'advisor_group'
+  resource_type: MentorResourceType
+  identity_status?: 'verified'
+  recommendation_eligibility?: 'eligible'
+  academic_year?: number
+  catalog_types?: Array<'doctoral_general' | 'doctoral_recommendation_exempt'>
+  programs?: string[]
+  research_keywords?: string[]
+  catalog_entries?: Array<{
+    catalog_type: string
+    department_code: string
+    program_code: string
+    direction_code: string
+  }>
+  provenance: Record<string, PublicCitation[]>
+  data_status: {
+    review_status: string
+    verified_at?: string | null
+    expires_at?: string | null
+  }
+}
+
+export interface MentorResourceMeta {
+  total_records: number
+  published_records: number
+  withheld_records: number
+  catalog_records: number
+  verified_profile_records: number
+  match_candidate_records: number
+  policy: 'formal_verified_profiles_only'
+  filtered_records: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
 export interface EvidenceClaim {
   statement: string
   citations: PublicCitation[]

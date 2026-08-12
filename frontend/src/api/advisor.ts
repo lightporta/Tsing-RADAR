@@ -1,5 +1,11 @@
 import { get, post } from './request'
-import type { MatchedAdvisor, ScatterPoint } from '@/types/advisor'
+import type {
+  MatchedAdvisor,
+  MentorResource,
+  MentorResourceMeta,
+  MentorResourceType,
+  ScatterPoint,
+} from '@/types/advisor'
 import type { MatchRequest } from '@/types/api'
 
 // =====================================================================
@@ -9,6 +15,20 @@ import type { MatchRequest } from '@/types/api'
 /** 获取四象限散点图数据 */
 export function fetchScatter() {
   return get<{ data: ScatterPoint[] }>('/api/scatter')
+}
+
+export function fetchMentorResources(params: {
+  q?: string
+  dept?: string
+  resource_type?: MentorResourceType
+  catalog_type?: 'doctoral_general' | 'doctoral_recommendation_exempt'
+  page?: number
+  page_size?: number
+}) {
+  return get<{ data: MentorResource[]; meta: MentorResourceMeta }>(
+    '/api/mentors',
+    params,
+  )
 }
 
 /** 综合匹配（关键词 + 画像向量契合度 + Synergy） */

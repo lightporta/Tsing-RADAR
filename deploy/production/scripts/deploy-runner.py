@@ -491,12 +491,15 @@ def command_for_action(
                     "'http://127.0.0.1:8000/api/mentors',timeout=5));"
                     "expected=int(__import__('os').environ["
                     "'MENTOR_DATA_EXPECTED_PUBLISHED_COUNT']);"
-                    "assert len(mentors.get('data',[])) == expected;"
+                    "expected_match=int(__import__('os').environ["
+                    "'MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT']);"
+                    "assert len(mentors.get('data',[])) <= 20;"
                     "meta=mentors.get('meta',{});"
                     "assert meta.get('total_records') == expected;"
                     "assert meta.get('published_records') == expected;"
                     "assert meta.get('withheld_records') == 0;"
-                    "assert meta.get('policy') == 'verified_only'"
+                    "assert meta.get('match_candidate_records') == expected_match;"
+                    "assert meta.get('policy') == 'formal_verified_profiles_only'"
                 ),
             ],
             30,

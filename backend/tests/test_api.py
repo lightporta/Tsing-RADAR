@@ -51,23 +51,27 @@ def test_get_mentors():
         "total_records": 0,
         "published_records": 0,
         "withheld_records": 0,
-        "policy": "verified_only",
+        "catalog_records": 0,
+        "verified_profile_records": 0,
+        "match_candidate_records": 0,
+        "policy": "formal_verified_profiles_only",
+        "filtered_records": 0,
+        "page": 1,
+        "page_size": 20,
+        "total_pages": 0,
     }
 
 
 def test_sort_mentors():
     """按指标排序导师。"""
     resp = client.get("/api/mentors/sort", params={"metric": "popularity"})
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data == []
-    assert resp.json()["meta"]["withheld_records"] == 0
+    assert resp.status_code == 410
 
 
 def test_sort_mentors_invalid_metric():
     """无效指标应返回 400。"""
     resp = client.get("/api/mentors/sort", params={"metric": "invalid"})
-    assert resp.status_code == 400
+    assert resp.status_code == 410
 
 
 def test_scatter():
@@ -75,7 +79,7 @@ def test_scatter():
     resp = client.get("/api/scatter")
     assert resp.status_code == 200
     assert resp.json()["data"] == []
-    assert resp.json()["meta"]["policy"] == "verified_only"
+    assert resp.json()["meta"]["policy"] == "formal_verified_profiles_only"
 
 
 def test_match():

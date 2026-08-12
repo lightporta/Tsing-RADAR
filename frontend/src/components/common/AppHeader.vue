@@ -22,6 +22,9 @@ const router = useRouter()
 function goProfile() {
   router.push('/profile')
 }
+function goMentors() {
+  router.push('/mentors')
+}
 function goRecruitment() {
   router.push('/recruitment')
 }
@@ -65,6 +68,9 @@ function handleProfileClick() {
     <!-- 右侧：学生信息 + 信息平台 -->
     <div class="header-right">
       <slot name="right" />
+      <button class="icon-btn" aria-label="导师资源库" @click="goMentors">
+        <el-icon aria-hidden="true">师</el-icon>
+      </button>
       <button class="icon-btn" aria-label="个人信息" @click="handleProfileClick">
         <el-icon aria-hidden="true">人</el-icon>
       </button>

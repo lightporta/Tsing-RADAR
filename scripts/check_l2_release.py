@@ -1808,7 +1808,10 @@ def _container_empty_mentor_seed_smoke(generation: str) -> dict[str, object]:
             "assert ready.get('status') == 'ready';"
             "assert mentors == {'data':[], 'meta':{"
             "'total_records':0,'published_records':0,"
-            "'withheld_records':0,'policy':'verified_only'}}"
+            "'withheld_records':0,'catalog_records':0,"
+            "'verified_profile_records':0,'match_candidate_records':0,"
+            "'policy':'formal_verified_profiles_only','filtered_records':0,"
+            "'page':1,'page_size':20,'total_pages':0}}"
         )
         ready = False
         if started.returncode == 0:

@@ -15,6 +15,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'Tsing-RADAR 清研寻师雷达' },
   },
   {
+    path: '/mentors',
+    name: 'mentors',
+    component: () => import('@/views/MentorLibraryView.vue'),
+    meta: { title: '导师资源库 · Tsing-RADAR' },
+  },
+  {
     path: '/profile',
     name: 'profile',
     component: () => import('@/views/ProfileView.vue'),

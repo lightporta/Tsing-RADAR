@@ -400,7 +400,11 @@ class GovernedMentorRecord(BaseModel):
 class DatasetSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_type: Literal["legacy_seed", "official_catalog"]
+    source_type: Literal[
+        "legacy_seed",
+        "official_catalog",
+        "official_catalog_and_profiles",
+    ]
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     original_record_count: int = Field(ge=0)
     raw_retained: Literal[False] = False

@@ -38,7 +38,33 @@ def load_mentor_dataset() -> MentorDataset:
         )
         if actual_count != expected_count:
             raise RuntimeError("mentor_dataset_published_count_mismatch")
+    expected_match_candidates = os.getenv(
+        "MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT", ""
+    ).strip()
+    if expected_match_candidates:
+        try:
+            expected_candidate_count = int(expected_match_candidates)
+        except ValueError as exc:
+            raise RuntimeError(
+                "mentor_dataset_expected_match_candidate_count_invalid"
+            ) from exc
+        actual_candidate_count = sum(
+            _is_formal_match_candidate(record.to_internal_match_dict())
+            for record in dataset.records
+        )
+        if actual_candidate_count != expected_candidate_count:
+            raise RuntimeError("mentor_dataset_match_candidate_count_mismatch")
     return dataset
+
+
+def _is_formal_match_candidate(candidate: dict[str, Any] | None) -> bool:
+    """Only independently reviewed profile records may enter matching."""
+    return bool(
+        candidate
+        and candidate.get("resource_type") == "verified_mentor_profile"
+        and candidate.get("identity_status") == "verified"
+        and candidate.get("recommendation_eligibility") == "eligible"
+    )
 
 
 @lru_cache(maxsize=1)
@@ -58,10 +84,7 @@ def load_match_candidates() -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for record in load_mentor_dataset().records:
         candidate = record.to_internal_match_dict()
-        if candidate is not None and candidate.get("resource_type") not in {
-            "mentor_catalog_entry",
-            "advisor_group_catalog_entry",
-        }:
+        if _is_formal_match_candidate(candidate):
             candidates.append(candidate)
     return candidates
 
@@ -70,11 +93,26 @@ def mentor_data_summary() -> dict[str, int | str]:
     """返回不含导师内容的数据治理计数。"""
     records = load_mentor_dataset().records
     published_count = len(load_mentors())
+    match_candidate_count = len(load_match_candidates())
+    catalog_count = sum(
+        record.fields.get("resource_type")
+        in {"mentor_catalog_entry", "advisor_group_catalog_entry"}
+        and record.to_public_dict() is not None
+        for record in records
+    )
+    profile_count = sum(
+        record.fields.get("resource_type") == "verified_mentor_profile"
+        and record.to_public_dict() is not None
+        for record in records
+    )
     return {
         "total_records": len(records),
         "published_records": published_count,
         "withheld_records": len(records) - published_count,
-        "policy": "verified_only",
+        "catalog_records": catalog_count,
+        "verified_profile_records": profile_count,
+        "match_candidate_records": match_candidate_count,
+        "policy": "formal_verified_profiles_only",
     }
 
 

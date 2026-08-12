@@ -63,14 +63,14 @@ def run_confirmed_match(
             message="硬约束仍需由你确认成结构化条件，暂不执行匹配。",
             questions=questions,
         )
-    if meta["published_records"] == 0:
+    if meta["match_candidate_records"] == 0:
         return MatchApplicationOutcome(
             status="no_published_data",
             items=[],
             meta=meta,
             message=(
-                "暂无通过审核的数据，因此现在不能诚实地产生导师推荐。"
-                "待有来源、已授权且通过发布审核的数据进入后再匹配。"
+                "暂无通过审核的数据可作为正式推荐导师画像，因此现在不能"
+                "诚实地产生导师推荐。目录资源可检索，但不会冒充导师画像。"
             ),
             questions=[],
         )

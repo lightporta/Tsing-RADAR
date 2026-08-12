@@ -301,8 +301,10 @@ def test_backend_contract_check_requires_configured_reviewed_mentor_state():
     assert "/health/ready" in script
     assert "/api/mentors" in script
     assert "MENTOR_DATA_EXPECTED_PUBLISHED_COUNT" in script
-    assert "len(mentors.get('data',[])) == expected" in script
+    assert "MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT" in script
+    assert "len(mentors.get('data',[])) <= 20" in script
     assert "meta.get('published_records') == expected" in script
+    assert "meta.get('match_candidate_records') == expected_match" in script
 
 
 def test_first_deploy_passes_current_backup_receipt_to_restore(monkeypatch):

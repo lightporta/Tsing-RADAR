@@ -24,6 +24,7 @@ from app.schemas.governance import (
     TakedownMetadata,
 )
 from app.services.data_loader import (
+    _is_formal_match_candidate,
     load_mentor_dataset,
     load_match_candidates,
     load_mentors,
@@ -219,6 +220,84 @@ def test_mentor_list_and_scatter_never_rehydrate_private_provenance(
     assert "source_ref" not in serialized
 
 
+def test_formal_match_eligibility_requires_all_three_release_markers():
+    eligible = {
+        "resource_type": "verified_mentor_profile",
+        "identity_status": "verified",
+        "recommendation_eligibility": "eligible",
+    }
+    assert _is_formal_match_candidate(eligible) is True
+    for field_name in eligible:
+        candidate = dict(eligible)
+        candidate.pop(field_name)
+        assert _is_formal_match_candidate(candidate) is False
+    catalog = {
+        **eligible,
+        "resource_type": "mentor_catalog_entry",
+    }
+    assert _is_formal_match_candidate(catalog) is False
+
+
+def test_formal_mentor_search_filters_and_paginates(monkeypatch):
+    records = [
+        {
+            "advisor_id": "prof_a",
+            "name": "甲导师",
+            "dept": "电子工程系",
+            "title": "教授",
+            "resource_type": "verified_mentor_profile",
+            "entity_type": "person",
+            "research_keywords": ["量子信息"],
+            "catalog_types": ["doctoral_general"],
+        },
+        {
+            "advisor_id": "prof_b",
+            "name": "乙导师",
+            "dept": "电子工程系",
+            "title": "副教授",
+            "resource_type": "verified_mentor_profile",
+            "entity_type": "person",
+            "research_keywords": ["信号处理"],
+            "catalog_types": ["doctoral_recommendation_exempt"],
+        },
+        {
+            "advisor_id": "cat_a",
+            "name": "目录导师",
+            "dept": "物理系",
+            "resource_type": "mentor_catalog_entry",
+            "entity_type": "person",
+            "research_keywords": ["量子信息"],
+            "catalog_types": ["doctoral_general"],
+        },
+    ]
+    summary = {
+        "total_records": 3,
+        "published_records": 3,
+        "withheld_records": 0,
+        "catalog_records": 1,
+        "verified_profile_records": 2,
+        "match_candidate_records": 2,
+        "policy": "formal_verified_profiles_only",
+    }
+    monkeypatch.setattr(advisor_api, "load_mentors", lambda: records)
+    monkeypatch.setattr(advisor_api, "mentor_data_summary", lambda: summary)
+
+    response = client.get(
+        "/api/mentors",
+        params={
+            "q": "量子",
+            "resource_type": "verified_mentor_profile",
+            "page_size": 1,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["advisor_id"] for item in payload["data"]] == ["prof_a"]
+    assert payload["meta"]["filtered_records"] == 1
+    assert payload["meta"]["total_pages"] == 1
+    assert payload["meta"]["match_candidate_records"] == 2
+
+
 def test_verified_record_can_publish_but_expired_record_cannot():
     assert _verified_record().to_public_dict()["name"] == "示例导师"
     expired = _verified_record(
@@ -297,7 +376,10 @@ def test_release_governance_seed_starts_empty_and_valid(monkeypatch):
             "total_records": 0,
             "published_records": 0,
             "withheld_records": 0,
-            "policy": "verified_only",
+            "catalog_records": 0,
+            "verified_profile_records": 0,
+            "match_candidate_records": 0,
+            "policy": "formal_verified_profiles_only",
         }
         assert audit(dataset) == []
     finally:
@@ -409,6 +491,9 @@ def test_catalog_resource_is_public_but_never_a_match_candidate(monkeypatch, tmp
     monkeypatch.setattr(data_loader, "_DATA_PATH", str(path))
     monkeypatch.delenv("MENTOR_DATA_EXPECTED_FILE_SHA256", raising=False)
     monkeypatch.delenv("MENTOR_DATA_EXPECTED_PUBLISHED_COUNT", raising=False)
+    monkeypatch.delenv(
+        "MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT", raising=False
+    )
     _clear_mentor_caches()
     try:
         assert len(load_mentors()) == 1
