@@ -489,10 +489,14 @@ def command_for_action(
                     "assert data.get('status') in {'ready','ok'};"
                     "mentors=json.load(urllib.request.urlopen("
                     "'http://127.0.0.1:8000/api/mentors',timeout=5));"
-                    "assert mentors.get('data') == [];"
-                    "assert mentors.get('meta') == {"
-                    "'total_records':0,'published_records':0,"
-                    "'withheld_records':0,'policy':'verified_only'}"
+                    "expected=int(__import__('os').environ["
+                    "'MENTOR_DATA_EXPECTED_PUBLISHED_COUNT']);"
+                    "assert len(mentors.get('data',[])) == expected;"
+                    "meta=mentors.get('meta',{});"
+                    "assert meta.get('total_records') == expected;"
+                    "assert meta.get('published_records') == expected;"
+                    "assert meta.get('withheld_records') == 0;"
+                    "assert meta.get('policy') == 'verified_only'"
                 ),
             ],
             30,

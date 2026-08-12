@@ -295,13 +295,14 @@ def test_resume_stops_before_backend_when_post_migration_state_is_not_safe():
     assert "start-backend-off-traffic" not in visited
 
 
-def test_backend_contract_check_requires_honest_zero_mentor_state():
+def test_backend_contract_check_requires_configured_reviewed_mentor_state():
     command, _timeout = RUNNER.command_for_action("contract-check")
     script = command[-1]
     assert "/health/ready" in script
     assert "/api/mentors" in script
-    assert "'published_records':0" in script
-    assert "mentors.get('data') == []" in script
+    assert "MENTOR_DATA_EXPECTED_PUBLISHED_COUNT" in script
+    assert "len(mentors.get('data',[])) == expected" in script
+    assert "meta.get('published_records') == expected" in script
 
 
 def test_first_deploy_passes_current_backup_receipt_to_restore(monkeypatch):

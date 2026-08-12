@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import os
 from functools import lru_cache
 from typing import Any
@@ -19,8 +19,26 @@ _DATA_PATH = os.path.join(
 @lru_cache(maxsize=1)
 def load_mentor_dataset() -> MentorDataset:
     """读取并严格验证治理数据集；验证失败时拒绝启动数据链路。"""
-    with open(_DATA_PATH, "r", encoding="utf-8") as file:
-        return MentorDataset.model_validate(json.load(file))
+    with open(_DATA_PATH, "rb") as file:
+        payload = file.read()
+    expected_sha256 = os.getenv("MENTOR_DATA_EXPECTED_FILE_SHA256", "").strip()
+    if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise RuntimeError("mentor_dataset_sha256_mismatch")
+    dataset = MentorDataset.model_validate_json(payload)
+    expected_published = os.getenv(
+        "MENTOR_DATA_EXPECTED_PUBLISHED_COUNT", ""
+    ).strip()
+    if expected_published:
+        try:
+            expected_count = int(expected_published)
+        except ValueError as exc:
+            raise RuntimeError("mentor_dataset_expected_count_invalid") from exc
+        actual_count = sum(
+            record.to_public_dict() is not None for record in dataset.records
+        )
+        if actual_count != expected_count:
+            raise RuntimeError("mentor_dataset_published_count_mismatch")
+    return dataset
 
 
 @lru_cache(maxsize=1)
@@ -40,7 +58,10 @@ def load_match_candidates() -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for record in load_mentor_dataset().records:
         candidate = record.to_internal_match_dict()
-        if candidate is not None:
+        if candidate is not None and candidate.get("resource_type") not in {
+            "mentor_catalog_entry",
+            "advisor_group_catalog_entry",
+        }:
             candidates.append(candidate)
     return candidates
 

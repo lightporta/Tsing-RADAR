@@ -44,9 +44,11 @@ services:
       PUBLIC_BASE_URL: ""
       ALLOW_TEST_PUBLIC_BASE_URL: "false"
       CORS_ORIGINS: ${PROD_CORS_ORIGINS:?Set exact production CORS origins}
+      MENTOR_DATA_EXPECTED_FILE_SHA256: ${MENTOR_DATA_EXPECTED_FILE_SHA256:-1e7c9b83922a0a7adbcdc8f6e04c84c3a89b5bf72e4f2a6cd0455080395f99fa}
+      MENTOR_DATA_EXPECTED_PUBLISHED_COUNT: ${MENTOR_DATA_EXPECTED_PUBLISHED_COUNT:-0}
     volumes:
       - type: bind
-        source: ./data/empty-mentor-governance.json
+        source: ${MENTOR_DATA_FILE:-./data/empty-mentor-governance.json}
         target: /app/data/mentors.evidence.json
         read_only: true
         bind:

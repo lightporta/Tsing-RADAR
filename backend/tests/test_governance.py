@@ -25,6 +25,7 @@ from app.schemas.governance import (
 )
 from app.services.data_loader import (
     load_mentor_dataset,
+    load_match_candidates,
     load_mentors,
     mentor_data_summary,
 )
@@ -337,6 +338,81 @@ def test_malformed_nonempty_governance_seed_is_rejected(monkeypatch, tmp_path):
     try:
         with pytest.raises(ValidationError):
             load_mentor_dataset()
+    finally:
+        _clear_mentor_caches()
+
+
+def test_mentor_dataset_checksum_and_count_fail_closed(monkeypatch):
+    monkeypatch.setattr(data_loader, "_DATA_PATH", str(EMPTY_GOVERNANCE_SEED))
+    monkeypatch.setenv("MENTOR_DATA_EXPECTED_FILE_SHA256", "0" * 64)
+    monkeypatch.setenv("MENTOR_DATA_EXPECTED_PUBLISHED_COUNT", "0")
+    _clear_mentor_caches()
+    try:
+        with pytest.raises(RuntimeError, match="mentor_dataset_sha256_mismatch"):
+            load_mentor_dataset()
+    finally:
+        _clear_mentor_caches()
+
+
+def test_catalog_resource_is_public_but_never_a_match_candidate(monkeypatch, tmp_path):
+    timestamp = "2026-08-12T12:00:00+08:00"
+    def evidence():
+        return {
+            "evidence_id": str(uuid.uuid4()),
+            "source_type": "public_fact",
+            "source_ref": "https://yz.tsinghua.edu.cn/info/1014/3001.htm",
+            "captured_at": timestamp,
+            "verification_status": "verified",
+            "confidence": 1.0,
+            "method": "official-catalog-mentor-projection/1.0",
+            "method_version": "1.0",
+        }
+    payload = {
+        "schema_version": "2.0",
+        "generated_at": timestamp,
+        "source": {
+            "source_type": "official_catalog",
+            "content_sha256": "1" * 64,
+            "original_record_count": 1,
+            "raw_retained": False,
+        },
+        "records": [
+            {
+                "schema_version": "2.0",
+                "advisor_id": "cat_1234567890abcdef",
+                "fields": {
+                    "name": "目录导师",
+                    "resource_type": "mentor_catalog_entry",
+                },
+                "provenance": {
+                    "name": [evidence()],
+                    "resource_type": [evidence()],
+                },
+                "governance": {
+                    "review_status": "verified",
+                    "publication_status": "published",
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                    "verified_at": timestamp,
+                    "authorization": {
+                        "basis": "public_source",
+                        "scope": ["name", "resource_type"],
+                    },
+                    "takedown": {"status": "active"},
+                },
+                "quarantined_fields": {},
+            }
+        ],
+    }
+    path = tmp_path / "catalog-resource.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(data_loader, "_DATA_PATH", str(path))
+    monkeypatch.delenv("MENTOR_DATA_EXPECTED_FILE_SHA256", raising=False)
+    monkeypatch.delenv("MENTOR_DATA_EXPECTED_PUBLISHED_COUNT", raising=False)
+    _clear_mentor_caches()
+    try:
+        assert len(load_mentors()) == 1
+        assert load_match_candidates() == []
     finally:
         _clear_mentor_caches()
 
