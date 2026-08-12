@@ -21,7 +21,7 @@ export function fetchMentorResources(params: {
   q?: string
   dept?: string
   resource_type?: MentorResourceType
-  catalog_type?: 'doctoral_general' | 'doctoral_recommendation_exempt'
+  catalog_type?: 'doctoral_regular' | 'doctoral_recommendation_exempt'
   page?: number
   page_size?: number
 }) {

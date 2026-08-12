@@ -15,7 +15,7 @@ const filters = reactive<{
   q: string
   dept: string
   resourceType: MentorResourceType | ''
-  catalogType: '' | 'doctoral_general' | 'doctoral_recommendation_exempt'
+  catalogType: '' | 'doctoral_regular' | 'doctoral_recommendation_exempt'
   page: number
   pageSize: number
 }>({
@@ -71,7 +71,7 @@ function sourceLinks(item: MentorResource) {
 }
 
 function catalogLabel(value: string) {
-  return value === 'doctoral_general' ? '普通招考' : '推免目录'
+  return value === 'doctoral_regular' ? '普通招考' : '推免目录'
 }
 
 onMounted(loadResources)
@@ -106,7 +106,7 @@ onMounted(loadResources)
         </el-select>
         <el-select v-model="filters.catalogType" placeholder="全部目录类型">
           <el-option label="全部目录类型" value="" />
-          <el-option label="普通招考" value="doctoral_general" />
+          <el-option label="普通招考" value="doctoral_regular" />
           <el-option label="推免目录" value="doctoral_recommendation_exempt" />
         </el-select>
         <el-button type="primary" native-type="submit">检索</el-button>

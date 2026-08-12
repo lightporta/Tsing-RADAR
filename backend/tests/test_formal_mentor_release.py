@@ -31,12 +31,12 @@ def _candidate() -> MentorDataset:
         "identity_status": "pending_review",
         "recommendation_eligibility": "withheld",
         "academic_year": 2027,
-        "catalog_types": ["doctoral_general"],
+        "catalog_types": ["doctoral_regular"],
         "programs": ["示例专业"],
         "research_keywords": ["可信研究方向"],
         "catalog_entries": [
             {
-                "catalog_type": "doctoral_general",
+                "catalog_type": "doctoral_regular",
                 "department_code": "001",
                 "program_code": "080000",
                 "direction_code": "01",

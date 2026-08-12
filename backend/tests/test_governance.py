@@ -248,7 +248,7 @@ def test_formal_mentor_search_filters_and_paginates(monkeypatch):
             "resource_type": "verified_mentor_profile",
             "entity_type": "person",
             "research_keywords": ["量子信息"],
-            "catalog_types": ["doctoral_general"],
+            "catalog_types": ["doctoral_regular"],
         },
         {
             "advisor_id": "prof_b",
@@ -267,7 +267,7 @@ def test_formal_mentor_search_filters_and_paginates(monkeypatch):
             "resource_type": "mentor_catalog_entry",
             "entity_type": "person",
             "research_keywords": ["量子信息"],
-            "catalog_types": ["doctoral_general"],
+            "catalog_types": ["doctoral_regular"],
         },
     ]
     summary = {
@@ -296,6 +296,16 @@ def test_formal_mentor_search_filters_and_paginates(monkeypatch):
     assert payload["meta"]["filtered_records"] == 1
     assert payload["meta"]["total_pages"] == 1
     assert payload["meta"]["match_candidate_records"] == 2
+
+    regular = client.get(
+        "/api/mentors",
+        params={"catalog_type": "doctoral_regular", "page_size": 100},
+    )
+    assert regular.status_code == 200
+    assert {item["advisor_id"] for item in regular.json()["data"]} == {
+        "prof_a",
+        "cat_a",
+    }
 
 
 def test_verified_record_can_publish_but_expired_record_cannot():

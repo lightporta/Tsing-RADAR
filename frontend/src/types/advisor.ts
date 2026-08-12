@@ -104,7 +104,7 @@ export interface MentorResource {
   identity_status?: 'verified'
   recommendation_eligibility?: 'eligible'
   academic_year?: number
-  catalog_types?: Array<'doctoral_general' | 'doctoral_recommendation_exempt'>
+  catalog_types?: Array<'doctoral_regular' | 'doctoral_recommendation_exempt'>
   programs?: string[]
   research_keywords?: string[]
   catalog_entries?: Array<{

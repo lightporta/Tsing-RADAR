@@ -31,7 +31,7 @@ def get_all_mentors(
     | None = None,
     entity_type: Literal["person", "advisor_group"] | None = None,
     catalog_type: Literal[
-        "doctoral_general",
+        "doctoral_regular",
         "doctoral_recommendation_exempt",
     ]
     | None = None,
