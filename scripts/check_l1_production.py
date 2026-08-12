@@ -99,6 +99,30 @@ RESOURCE_COMBINATIONS = (
 )
 
 
+def gateway_read_only_runtime_contract(
+    compose_text: str,
+    nginx_text: str,
+) -> bool:
+    """Validate the fixed unprivileged Nginx writable-surface contract."""
+
+    tmpfs_contract = "/tmp:size=32m,mode=1770,uid=101,gid=101"
+    required_temp_paths = (
+        "client_body_temp_path /tmp/client_body;",
+        "proxy_temp_path /tmp/proxy;",
+        "fastcgi_temp_path /tmp/fastcgi;",
+        "uwsgi_temp_path /tmp/uwsgi;",
+        "scgi_temp_path /tmp/scgi;",
+    )
+    return (
+        "read_only: true" in compose_text
+        and "cap_drop:" in compose_text
+        and "ALL" in compose_text
+        and tmpfs_contract in compose_text
+        and all(item in nginx_text for item in required_temp_paths)
+        and "pid /tmp/nginx.pid;" in nginx_text
+    )
+
+
 def _check(check_id: str, passed: bool, detail: str) -> dict[str, str]:
     return {
         "id": check_id,
@@ -1176,6 +1200,19 @@ def run_checks(
     )
     media_gateway = (DEPLOY / "media-gateway" / "nginx.conf").read_text(
         encoding="utf-8"
+    )
+    qxd_gateway = (DEPLOY / "qxd-gateway" / "nginx.conf").read_text(
+        encoding="utf-8"
+    )
+    qxd_overlay = QXD.read_text(encoding="utf-8")
+    media_overlay = MEDIA.read_text(encoding="utf-8")
+    checks.append(
+        _check(
+            "gateways.read_only_unprivileged_tmpfs",
+            gateway_read_only_runtime_contract(qxd_overlay, qxd_gateway)
+            and gateway_read_only_runtime_contract(media_overlay, media_gateway),
+            "QXD/media gateway temp paths are not confined to UID 101 tmpfs",
+        )
     )
     media_log_format = next(
         line.strip()

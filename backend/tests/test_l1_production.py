@@ -24,6 +24,8 @@ from app.services.preflight import run_l1_production_preflight
 from app.core.security_validation import validate_production_secrets
 from app.services.qxd_media import validate_remote_media_configuration
 
+from scripts.check_l1_production import gateway_read_only_runtime_contract
+
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy" / "production"
 
@@ -404,6 +406,62 @@ def test_media_access_log_never_contains_signed_uri_or_query_tokens():
     assert "$http_cookie" not in log_format
     assert "route_id=qxd_attachment" in log_format
     assert "access_log off" in config
+
+
+@pytest.mark.parametrize(
+    ("compose_mutation", "config_mutation"),
+    (
+        (
+            lambda text: text.replace(",uid=101,gid=101", ""),
+            lambda text: text,
+        ),
+        (
+            lambda text: text,
+            lambda text: text.replace(
+                "client_body_temp_path /tmp/client_body;", ""
+            ),
+        ),
+        (
+            lambda text: text,
+            lambda text: text.replace(
+                "proxy_temp_path /tmp/proxy;", ""
+            ),
+        ),
+        (
+            lambda text: text,
+            lambda text: text.replace(
+                "fastcgi_temp_path /tmp/fastcgi;", ""
+            ),
+        ),
+        (
+            lambda text: text,
+            lambda text: text.replace(
+                "uwsgi_temp_path /tmp/uwsgi;", ""
+            ),
+        ),
+        (
+            lambda text: text,
+            lambda text: text.replace(
+                "scgi_temp_path /tmp/scgi;", ""
+            ),
+        ),
+    ),
+)
+def test_unprivileged_gateway_runtime_contract_rejects_mutations(
+    compose_mutation,
+    config_mutation,
+):
+    for overlay, config_path in (
+        ("compose.qxd.yml", "qxd-gateway/nginx.conf"),
+        ("compose.media.yml", "media-gateway/nginx.conf"),
+    ):
+        compose = (DEPLOY / overlay).read_text(encoding="utf-8")
+        config = (DEPLOY / config_path).read_text(encoding="utf-8")
+        assert gateway_read_only_runtime_contract(compose, config)
+        assert not gateway_read_only_runtime_contract(
+            compose_mutation(compose),
+            config_mutation(config),
+        )
 
 
 def test_migration_wrapper_has_timeout_exit_and_releases_lock_on_failure():
