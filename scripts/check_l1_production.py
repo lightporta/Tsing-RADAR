@@ -452,7 +452,7 @@ def run_checks(
         elif mutation == "trial-enabled":
             mutation_environment["QXD_TRIAL_SINGLE_USER_MODE"] = "true"
         elif mutation == "cos-http":
-            mutation_environment["S3_ENDPOINT_URL"] = "http://cos.ap-shanghai.myqcloud.com"
+            mutation_environment["S3_ENDPOINT_URL"] = "http://cos.ap-hongkong.myqcloud.com"
         elif mutation == "cos-path-style":
             mutation_environment["S3_ADDRESSING_STYLE"] = "path"
         elif mutation == "sse-disabled":
@@ -537,7 +537,7 @@ def run_checks(
             _check(
                 "cos.sdk_endpoint_bucket_free",
                 backend_environment.get("S3_ENDPOINT_URL")
-                == "https://cos.ap-shanghai.myqcloud.com"
+                == "https://cos.ap-hongkong.myqcloud.com"
                 and backend_environment.get("S3_ADDRESSING_STYLE") == "virtual"
                 and backend_environment.get("S3_SERVER_SIDE_ENCRYPTION")
                 == "AES256"

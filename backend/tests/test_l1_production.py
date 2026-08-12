@@ -355,6 +355,9 @@ def test_production_compose_explicitly_disables_unconfigured_llm():
     prod = (DEPLOY / "compose.prod.yml").read_text(encoding="utf-8")
     assert 'LLM_ENABLED: "false"' in prod
     assert "LLM_API_KEY_FILE:" not in prod
+    assert "https://cos.ap-hongkong.myqcloud.com" in prod
+    assert "S3_REGION: ap-hongkong" in prod
+    assert "ap-shanghai" not in prod
 
 
 def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
