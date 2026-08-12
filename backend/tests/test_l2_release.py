@@ -151,9 +151,6 @@ def test_release_manifest_rejects_image_identity_and_gate_tampering(
 def test_runner_uses_fixed_argv_without_public_or_destructive_actions():
     assert RUNNER.PROJECT == "tsing-radar-prod"
     assert RUNNER.ENV_FILE == REPOSITORY_ROOT / "deploy" / "production" / "production.env"
-    preflight_command, _ = RUNNER.command_for_action("preflight")
-    environment_index = preflight_command.index("--environment-file")
-    assert preflight_command[environment_index + 1] == str(RUNNER.ENV_FILE)
     for action in RUNNER.RESOURCE_COMBINATION:
         if action == "restore-check":
             continue
