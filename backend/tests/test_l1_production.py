@@ -408,6 +408,26 @@ def test_media_access_log_never_contains_signed_uri_or_query_tokens():
     assert "access_log off" in config
 
 
+def test_media_overlay_preserves_hong_kong_cos_file_secret_contract():
+    overlay = (DEPLOY / "compose.media.yml").read_text(encoding="utf-8")
+    required = (
+        'ARTIFACTS_ENABLED: "true"',
+        "OBJECT_STORE_BACKEND: s3",
+        "S3_PROVIDER: tencent_cos",
+        "S3_ENDPOINT_URL: https://cos.ap-hongkong.myqcloud.com",
+        "S3_REGION: ap-hongkong",
+        "S3_ACCESS_KEY_ID_FILE: /run/secrets/cos_access_key_id",
+        "S3_SECRET_ACCESS_KEY_FILE: /run/secrets/cos_secret_access_key",
+        "S3_ADDRESSING_STYLE: virtual",
+        "S3_SERVER_SIDE_ENCRYPTION: AES256",
+        "source: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_access_key_id",
+        "source: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_secret_access_key",
+        "create_host_path: false",
+    )
+    assert all(item in overlay for item in required)
+    assert "cos.ap-shanghai.myqcloud.com" not in overlay
+
+
 @pytest.mark.parametrize(
     ("compose_mutation", "config_mutation"),
     (

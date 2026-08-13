@@ -765,14 +765,26 @@ def run_checks(
             [INFRA, PROD, EDGE, QXD, MEDIA],
             environment,
         )
+        media_backend_environment = _environment(media["services"]["backend"])
         checks.append(
             _check(
                 "media.requires_explicit_overlay",
                 "media-gateway" in media["services"]
-                and _environment(media["services"]["backend"]).get(
-                    "QXD_ATTACHMENTS_ENABLED"
-                )
-                == "true",
+                and media_backend_environment.get("QXD_ATTACHMENTS_ENABLED")
+                == "true"
+                and media_backend_environment.get("ARTIFACTS_ENABLED") == "true"
+                and media_backend_environment.get("OBJECT_STORE_BACKEND") == "s3"
+                and media_backend_environment.get("S3_PROVIDER") == "tencent_cos"
+                and media_backend_environment.get("S3_ENDPOINT_URL")
+                == "https://cos.ap-hongkong.myqcloud.com"
+                and media_backend_environment.get("S3_REGION") == "ap-hongkong"
+                and media_backend_environment.get("S3_ADDRESSING_STYLE") == "virtual"
+                and media_backend_environment.get("S3_SERVER_SIDE_ENCRYPTION")
+                == "AES256"
+                and media_backend_environment.get("S3_ACCESS_KEY_ID_FILE")
+                == "/run/secrets/cos_access_key_id"
+                and media_backend_environment.get("S3_SECRET_ACCESS_KEY_FILE")
+                == "/run/secrets/cos_secret_access_key",
                 "media overlay did not enable its explicit contract",
             )
         )

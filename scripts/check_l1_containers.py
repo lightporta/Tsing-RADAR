@@ -232,7 +232,7 @@ from app.core.config import Settings
 root = Path(tempfile.mkdtemp(prefix='l1-secret-probe-'))
 names = (
     'db', 'redis', 'admin', 'session', 'artifact', 'cos-id', 'cos-secret',
-    'qxd-api', 'qxd-claim',
+    'qxd-api', 'qxd-claim', 'llm-api',
 )
 paths = {}
 for index, name in enumerate(names):
@@ -254,6 +254,8 @@ configured = Settings(
     S3_SECRET_ACCESS_KEY_FILE=paths['cos-secret'],
     QXD_API_KEY_FILE=paths['qxd-api'],
     QXD_END_USER_SIGNING_SECRET_FILE=paths['qxd-claim'],
+    LLM_PROVIDER='glm',
+    LLM_API_KEY_FILE=paths['llm-api'],
 )
 print(
     'qxd_mode_restricted=' + str(not bool((root / 'qxd-api').stat().st_mode & 0o077))
