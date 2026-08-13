@@ -351,12 +351,18 @@ def test_database_bootstrap_identity_is_one_shot_and_never_reaches_backend():
     assert "REVOKE CONNECT ON DATABASE" in provision
 
 
-def test_production_compose_explicitly_disables_unconfigured_llm():
+def test_production_uses_glm_file_secret_while_stage_stays_disabled():
     prod = (DEPLOY / "compose.prod.yml").read_text(encoding="utf-8")
     stage = (DEPLOY / "compose.stage.yml").read_text(encoding="utf-8")
-    assert 'LLM_ENABLED: "false"' in prod
+    assert 'LLM_ENABLED: "true"' in prod
+    assert "LLM_PROVIDER: glm" in prod
+    assert "LLM_API_KEY_FILE: /run/secrets/llm_api_key" in prod
+    assert "source: ${SECRET_ROOT:?Set SECRET_ROOT}/llm_api_key" in prod
+    assert "target: /run/secrets/llm_api_key" in prod
+    assert "create_host_path: false" in prod
+    assert "GLM_API_KEY:" not in prod
+    assert "DEEPSEEK_API_KEY:" not in prod
     assert 'LLM_ENABLED: "false"' in stage
-    assert "LLM_API_KEY_FILE:" not in prod
     assert "LLM_API_KEY_FILE:" not in stage
     assert "https://cos.ap-hongkong.myqcloud.com" in prod
     assert "S3_REGION: ap-hongkong" in prod
@@ -874,6 +880,8 @@ def test_root_database_job_secret_capability_and_noninteractive_contract():
         "weak-qxd-secret",
         "qxd-secret-reuse",
         "resource-overcommit",
+        "missing-llm-secret",
+        "llm-disabled",
     ],
 )
 def test_l1_checker_rejects_security_mutations(mutation):

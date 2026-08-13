@@ -51,6 +51,7 @@ MUTATIONS = (
     "runner-missing-db-verification",
     "runner-skip-backup-restore",
     "runner-upgrade-compatibility-bypass",
+    "prod-llm-contract",
 )
 
 RUNNER_IDENTIFIERS = {
@@ -189,6 +190,28 @@ def _dockerignore_contract(text: str) -> bool:
         "data/mentors.evidence.json",
         "data/private_local/",
     }.issubset(lines)
+
+
+def _production_llm_contract(mutation: str | None = None) -> bool:
+    """Keep the deployable production LLM on the reviewed file-secret interface."""
+
+    text = (DEPLOY / "compose.prod.yml").read_text(encoding="utf-8")
+    if mutation == "prod-llm-contract":
+        text = text.replace('LLM_ENABLED: "true"', 'LLM_ENABLED: "false"', 1)
+    required = (
+        'LLM_ENABLED: "true"',
+        "LLM_PROVIDER: glm",
+        "LLM_API_KEY_FILE: /run/secrets/llm_api_key",
+        "source: ${SECRET_ROOT:?Set SECRET_ROOT}/llm_api_key",
+        "target: /run/secrets/llm_api_key",
+        "read_only: true",
+        "create_host_path: false",
+    )
+    return (
+        all(item in text for item in required)
+        and "GLM_API_KEY:" not in text
+        and "DEEPSEEK_API_KEY:" not in text
+    )
 
 
 def _runner_contract() -> bool:
@@ -453,6 +476,13 @@ def run_static_checks(
             "release.backend_context_excludes_private_governance_data",
             _dockerignore_contract(dockerignore),
             "backend context private-data ignore rule missing",
+        )
+    )
+    checks.append(
+        _check(
+            "release.production_llm_file_secret_contract",
+            _production_llm_contract(mutation),
+            "production LLM file-secret contract is disabled or incomplete",
         )
     )
     root_ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")

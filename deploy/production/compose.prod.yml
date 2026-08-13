@@ -7,7 +7,9 @@ services:
     environment:
       DEBUG: "false"
       PRODUCTION_DEPLOYMENT: "true"
-      LLM_ENABLED: "false"
+      LLM_ENABLED: "true"
+      LLM_PROVIDER: glm
+      LLM_API_KEY_FILE: /run/secrets/llm_api_key
       AUTO_CREATE_SCHEMA: "false"
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
@@ -82,6 +84,12 @@ services:
       - type: bind
         source: ${SECRET_ROOT:?Set SECRET_ROOT}/artifact_signing_secret
         target: /run/secrets/artifact_signing_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/llm_api_key
+        target: /run/secrets/llm_api_key
         read_only: true
         bind:
           create_host_path: false

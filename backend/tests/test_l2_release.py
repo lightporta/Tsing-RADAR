@@ -52,6 +52,19 @@ def test_backend_build_context_excludes_only_private_governance_paths():
     assert not checker._dockerignore_contract(text.replace("data/private_local/", ""))
 
 
+def test_l2_release_gate_rejects_disabled_or_incomplete_production_llm(monkeypatch):
+    assert checker._production_llm_contract()
+    assert not checker._production_llm_contract("prod-llm-contract")
+    monkeypatch.setattr(
+        checker,
+        "_source_contract",
+        lambda _mutation: (True, {"source_files": 0}),
+    )
+    checks = checker.run_static_checks("prod-llm-contract")
+    failed = {item["id"] for item in checks if item["status"] == "failed"}
+    assert failed == {"release.production_llm_file_secret_contract"}
+
+
 @pytest.mark.parametrize(
     "path",
     ("../escape", "/absolute", "C:/absolute", "backend/../escape", "backend//app"),

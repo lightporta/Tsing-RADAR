@@ -41,6 +41,7 @@ SECRET_NAMES = (
     "admin_token",
     "session_hmac_secret",
     "artifact_signing_secret",
+    "llm_api_key",
     "cos_access_key_id",
     "cos_secret_access_key",
     "restore_check_password",
@@ -72,6 +73,8 @@ MUTATIONS = (
     "weak-qxd-secret",
     "qxd-secret-reuse",
     "resource-overcommit",
+    "missing-llm-secret",
+    "llm-disabled",
 )
 EXPECTED_DEFAULT_SERVICES = {
     "postgres",
@@ -392,6 +395,8 @@ def run_checks(
 
         if mutation == "missing-secret":
             (prod_secrets / "admin_token").unlink()
+        elif mutation == "missing-llm-secret":
+            (prod_secrets / "llm_api_key").unlink()
         elif mutation == "secret-reuse":
             (stage_secrets / "admin_token").write_text(
                 (prod_secrets / "admin_token").read_text(encoding="utf-8"),
@@ -464,6 +469,8 @@ def run_checks(
             mutation_environment["PUBLIC_BASE_URL"] = "https://media.invalid"
         elif mutation == "resource-overcommit":
             pass
+        elif mutation == "llm-disabled":
+            mutation_environment["LLM_ENABLED"] = "false"
         if mutation_environment or mutation in {"nonedge-port", "resource-overcommit"}:
             lines = ["services:", "  backend:"]
             if mutation_environment:
@@ -505,6 +512,18 @@ def run_checks(
                 and backend_environment.get("QXD_TRIAL_SINGLE_USER_MODE")
                 == "false",
                 "DEBUG or trial compatibility mode enabled",
+            )
+        )
+        checks.append(
+            _check(
+                "llm.production_glm_file_secret_enabled",
+                backend_environment.get("LLM_ENABLED") == "true"
+                and backend_environment.get("LLM_PROVIDER") == "glm"
+                and backend_environment.get("LLM_API_KEY_FILE")
+                == "/run/secrets/llm_api_key"
+                and not backend_environment.get("GLM_API_KEY")
+                and not backend_environment.get("DEEPSEEK_API_KEY"),
+                "production LLM is disabled, not GLM, or not file-secret only",
             )
         )
         checks.append(
@@ -631,6 +650,7 @@ def run_checks(
                 "admin_token",
                 "session_hmac_secret",
                 "artifact_signing_secret",
+                "llm_api_key",
                 "cos_secret_access_key",
                 "restore_check_password",
                 "qxd_api_key",
@@ -688,6 +708,8 @@ def run_checks(
                         / "session_hmac_secret",
                         "/run/secrets/artifact_signing_secret": prod_secrets
                         / "artifact_signing_secret",
+                        "/run/secrets/llm_api_key": prod_secrets
+                        / "llm_api_key",
                         "/run/secrets/cos_access_key_id": prod_secrets
                         / "cos_access_key_id",
                         "/run/secrets/cos_secret_access_key": prod_secrets
@@ -748,6 +770,8 @@ def run_checks(
                         / "session_hmac_secret",
                         "/run/secrets/artifact_signing_secret": prod_secrets
                         / "artifact_signing_secret",
+                        "/run/secrets/llm_api_key": prod_secrets
+                        / "llm_api_key",
                         "/run/secrets/cos_access_key_id": prod_secrets
                         / "cos_access_key_id",
                         "/run/secrets/cos_secret_access_key": prod_secrets
