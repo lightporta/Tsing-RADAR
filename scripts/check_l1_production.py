@@ -1222,6 +1222,7 @@ def run_checks(
                 for line in web_routes.splitlines()
             )
             and "not path /api/* /v1/* /health/*" in web_routes
+            and "max_size 8500KB" in web_routes
             and (DEPLOY / "edge" / "public-route-allowlist.json").is_file(),
             "default edge route allowlist differs",
         )

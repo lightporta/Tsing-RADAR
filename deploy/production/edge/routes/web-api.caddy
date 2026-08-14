@@ -18,7 +18,9 @@
 
 (backend_upload_proxy) {
     request_body {
-        max_size 10MB
+        # Leave enough multipart framing room for an 8 MiB file while making
+        # clearly oversized requests fail at the edge with HTTP 413.
+        max_size 8500KB
     }
     reverse_proxy backend:8000 {
         header_up -Forwarded

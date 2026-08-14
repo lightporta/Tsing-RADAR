@@ -34,6 +34,7 @@ const positionsText = ref('')
 const targetAdvisor = ref('')
 const downloadingDocumentId = ref<string | null>(null)
 const deletingDocumentId = ref<string | null>(null)
+const MAX_PRIVATE_FILE_BYTES = 8 * 1024 * 1024
 type PendingIntent = { fingerprint: string; key: string }
 const resumeIntent = ref<PendingIntent | null>(null)
 const reportIntent = ref<PendingIntent | null>(null)
@@ -88,6 +89,14 @@ async function onFileSelected(event: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  if (!/\.(pdf|docx)$/i.test(file.name)) {
+    ElMessage.warning('仅支持 PDF 或 DOCX 文件')
+    return
+  }
+  if (file.size > MAX_PRIVATE_FILE_BYTES) {
+    ElMessage.warning('文件不能超过 8 MB，请压缩后重新上传')
+    return
+  }
   uploading.value = true
   try {
     await uploadDocument(file)

@@ -424,6 +424,7 @@ def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
     assert "path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat" in caddy
     assert not any(line.strip() == "path /api/*" for line in caddy.splitlines())
     assert "not path /api/* /v1/* /health/*" in caddy
+    assert "max_size 8500KB" in caddy
     assert caddy.index("not path /api/* /v1/* /health/*") < caddy.index(
         'respond "Route or method not available" 404'
     )

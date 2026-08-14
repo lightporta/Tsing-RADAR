@@ -19,6 +19,7 @@ const text = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>()
 const attachments = ref<ChatAttachment[]>([])
 const uploading = ref(false)
+const MAX_PRIVATE_FILE_BYTES = 8 * 1024 * 1024
 
 // 自适应高度
 function autoResize() {
@@ -61,6 +62,10 @@ async function onFileChange(e: Event) {
     for (const file of selected) {
       if (!/\.(pdf|docx)$/i.test(file.name)) {
         ElMessage.warning(`${file.name} 格式不支持，仅支持 PDF / DOCX`)
+        continue
+      }
+      if (file.size > MAX_PRIVATE_FILE_BYTES) {
+        ElMessage.warning(`${file.name} 超过 8 MB，请压缩后重新上传`)
         continue
       }
       try {
