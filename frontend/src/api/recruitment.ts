@@ -1,4 +1,4 @@
-import { get, post } from './request'
+import { get, post, remove } from './request'
 import type { RecruitmentItem } from '@/types/api'
 
 // =====================================================================
@@ -22,4 +22,20 @@ export interface RecruitmentCreateRequest {
 /** 发布招募 */
 export function publishRecruitment(req: RecruitmentCreateRequest) {
   return post<{ recruit_id: string; status: string }>('/api/recruitments', req)
+}
+
+export interface MyRecruitment {
+  recruit_id: string
+  title: string
+  review_status: string
+  publication_status: string
+  created_at: string
+}
+
+export function fetchMyRecruitments() {
+  return get<{ data: MyRecruitment[] }>('/api/recruitments/mine')
+}
+
+export function withdrawRecruitment(recruitId: string) {
+  return remove<{ status: 'deleted' }>(`/api/recruitments/${recruitId}`)
 }

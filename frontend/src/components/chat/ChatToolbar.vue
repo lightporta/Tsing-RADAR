@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElMessageBox } from 'element-plus'
+import { ref } from 'vue'
 import { useChatStore } from '@/stores/useChatStore'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
 
@@ -14,19 +14,18 @@ const emit = defineEmits<{ (e: 'toggle'): void }>()
 
 const chatStore = useChatStore()
 const advisorStore = useAdvisorStore()
+const confirmVisible = ref(false)
 
-async function newConversation() {
+function requestNewConversation() {
   if (chatStore.messageCount > 1) {
-    try {
-      await ElMessageBox.confirm('确定要开启新对话吗？当前会话将被清空。', '新对话', {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning',
-      })
-    } catch {
-      return
-    }
+    confirmVisible.value = true
+    return
   }
+  startNewConversation()
+}
+
+function startNewConversation() {
+  confirmVisible.value = false
   chatStore.newConversation()
   advisorStore.resetResults()
 }
@@ -38,10 +37,21 @@ async function newConversation() {
       <el-icon aria-hidden="true">«</el-icon>
       <span class="btn-text">收起</span>
     </button>
-    <button class="tool-btn primary" aria-label="开启新对话" @click="newConversation">
+    <button class="tool-btn primary" aria-label="开启新对话" @click="requestNewConversation">
       <el-icon aria-hidden="true">＋</el-icon>
       <span class="btn-text">新对话</span>
     </button>
+
+    <div v-if="confirmVisible" class="confirm-layer" role="dialog" aria-modal="true" aria-labelledby="new-chat-title">
+      <div class="confirm-card">
+        <strong id="new-chat-title">开启新对话？</strong>
+        <p>当前访谈内容和匹配结果会被清空。</p>
+        <div class="confirm-actions">
+          <button class="confirm-btn" @click="confirmVisible = false">继续当前对话</button>
+          <button class="confirm-btn danger" @click="startNewConversation">清空并新建</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -55,6 +65,57 @@ async function newConversation() {
   background: $color-bg;
   border-bottom: 1px solid $color-border-light;
   flex-shrink: 0;
+}
+
+.confirm-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: $spacing-lg;
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(3px);
+}
+
+.confirm-card {
+  width: min(320px, calc(100% - 24px));
+  padding: $spacing-lg;
+  border: 1px solid $color-border;
+  border-radius: 12px;
+  background: $color-bg-card;
+  box-shadow: $shadow-card-hover;
+
+  strong {
+    color: $text-primary;
+    font-size: 15px;
+  }
+
+  p {
+    margin: $spacing-sm 0 $spacing-lg;
+    color: $text-secondary;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: $spacing-sm;
+}
+
+.confirm-btn {
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: $text-regular;
+  font-size: 12px;
+  background: $color-bg-hover;
+
+  &.danger {
+    color: #fff;
+    background: $color-danger;
+  }
 }
 
 .tool-btn {

@@ -9,6 +9,7 @@ import { publishRecruitment } from '@/api/recruitment'
 
 const dialogVisible = ref(false)
 const publishing = ref(false)
+const emit = defineEmits<{ (event: 'published'): void }>()
 
 const form = ref({
   type: '招生',
@@ -20,6 +21,7 @@ const form = ref({
 })
 
 const types = ['招生', '实习', '科研助理']
+const disablePastDates = (date: Date) => date.getTime() < new Date().setHours(0, 0, 0, 0)
 
 function open() {
   form.value = {
@@ -43,6 +45,7 @@ async function publish() {
     await publishRecruitment(form.value)
     ElMessage.success('已提交审核；通过前不会公开')
     dialogVisible.value = false
+    emit('published')
   } catch {
     // 错误提示由拦截器处理
   } finally {
@@ -81,7 +84,13 @@ async function publish() {
           <el-input v-model="form.major" placeholder="相关专业领域" />
         </el-form-item>
         <el-form-item label="截止日期">
-          <el-date-picker v-model="form.deadline" type="date" value-format="YYYY-MM-DD" placeholder="选择截止日期" />
+          <el-date-picker
+            v-model="form.deadline"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="选择截止日期"
+            :disabled-date="disablePastDates"
+          />
         </el-form-item>
         <el-form-item label="急招">
           <el-switch v-model="form.is_urgent" />

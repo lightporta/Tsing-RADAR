@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { MatchedAdvisor, SortMetric, ScatterPoint } from '@/types/advisor'
+import type { MatchedAdvisor, MentorDistribution, SortMetric } from '@/types/advisor'
 import * as advisorApi from '@/api/advisor'
 import * as mockApi from '@/mock'
 
@@ -14,19 +14,16 @@ const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 export const useAdvisorStore = defineStore('advisor', () => {
   // —— 匹配后的导师（带 score / synergy / reason）——
   const matchedAdvisors = ref<MatchedAdvisor[]>([])
-  // —— 散点数据 ——
-  const scatterPoints = ref<ScatterPoint[]>([])
+  // —— 已发布导师资源的真实聚合分布 ——
+  const distribution = ref<MentorDistribution>({
+    departments: [],
+    resource_types: [],
+    meta: { grouped_advisors: 0, raw_resource_records: 0, basis: 'published_resources_only' },
+  })
   // —— 当前选中的导师名（联动卡片 / 散点 / 右栏）——
   const selectedName = ref<string | null>(null)
   // —— 排序指标 ——
   const sortMetric = ref<SortMetric>('score')
-  // —— 象限筛选（散点图右上复选框组）——
-  const quadrantFilter = ref<Record<string, boolean>>({
-    国热: true,
-    国冷: true,
-    私热: true,
-    私冷: true,
-  })
   // —— 加载态 ——
   const loading = ref(false)
   const resultStatus = ref<'idle' | 'matched' | 'no_published_data' | 'no_match' | 'error'>('idle')
@@ -49,10 +46,13 @@ export const useAdvisorStore = defineStore('advisor', () => {
     loading.value = true
     try {
       if (USE_MOCK) {
-        scatterPoints.value = mockApi.mockScatterPoints
+        distribution.value = {
+          departments: [],
+          resource_types: [],
+          meta: { grouped_advisors: 0, raw_resource_records: 0, basis: 'published_resources_only' },
+        }
       } else {
-        const scatter = await advisorApi.fetchScatter()
-        scatterPoints.value = scatter.data
+        distribution.value = await advisorApi.fetchMentorDistribution()
       }
       // 导师公开列表不等同于推荐；确认画像前不生成匹配结果。
       matchedAdvisors.value = []
@@ -121,11 +121,6 @@ export const useAdvisorStore = defineStore('advisor', () => {
     selectedName.value = name
   }
 
-  /** 设置象限筛选 */
-  function toggleQuadrant(name: string, value: boolean) {
-    quadrantFilter.value[name] = value
-  }
-
   function toggleComparison(advisorId: string) {
     if (comparisonIds.value.includes(advisorId)) {
       comparisonIds.value = comparisonIds.value.filter((item) => item !== advisorId)
@@ -150,22 +145,12 @@ export const useAdvisorStore = defineStore('advisor', () => {
     resultMeta.value = {}
   }
 
-  /** 按象限筛选后的散点 */
-  const filteredScatter = computed(() =>
-    scatterPoints.value.filter((p) => {
-      const q = quadrantName(p.x, p.y)
-      return quadrantFilter.value[q]
-    }),
-  )
-
   return {
     matchedAdvisors,
-    scatterPoints,
-    filteredScatter,
+    distribution,
     selectedName,
     selectedAdvisor,
     sortMetric,
-    quadrantFilter,
     loading,
     totalCount,
     resultStatus,
@@ -177,18 +162,7 @@ export const useAdvisorStore = defineStore('advisor', () => {
     match,
     sortBy,
     selectAdvisor,
-    toggleQuadrant,
     toggleComparison,
     resetResults,
   }
 })
-
-/** 根据散点坐标判定象限名 */
-export function quadrantName(x: number, y: number): '国热' | '国冷' | '私热' | '私冷' {
-  const hot = x > 60
-  const guo = y === 0 // y=0 国 / y=1 私
-  if (guo && hot) return '国热'
-  if (guo && !hot) return '国冷'
-  if (!guo && hot) return '私热'
-  return '私冷'
-}

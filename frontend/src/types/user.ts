@@ -23,7 +23,7 @@ export interface StudentProfile {
   avatarUrl?: string
   email: string
   dept: string // 院系
-  category: StudentCategory // 类别
+  category: StudentCategory | '' // 类别
   grade: string // 年级，如 2023级
   phone?: string
   gpa?: string

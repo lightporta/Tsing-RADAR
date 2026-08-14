@@ -87,6 +87,9 @@ export interface InterviewState {
   clarification_questions: string[]
   recommend_ready: boolean
   assistant_message?: string
+  assistant_mode?: 'fixed_interview_with_optional_llm_enhancement'
+  enhancement_provider?: 'glm' | 'deepseek' | null
+  enhancement_status?: 'available' | 'unavailable' | 'disabled'
 }
 
 export type InterviewProfilePatch = Partial<InterviewPortrait>

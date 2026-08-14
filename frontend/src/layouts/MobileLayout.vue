@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import AppHeader from '@/components/common/AppHeader.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import AdvisorListPanel from '@/components/advisor/AdvisorListPanel.vue'
-import ScatterChart from '@/components/charts/ScatterChart.vue'
+import MentorDistributionChart from '@/components/charts/MentorDistributionChart.vue'
 
 // =====================================================================
 // 移动端布局（文档 §4.1）
@@ -178,12 +178,11 @@ function goRecruitment() {
         <AdvisorListPanel :mobile-mode="true" />
       </section>
       <section class="content-block chart-block">
-        <h3 class="block-title">📊 四象限散点图</h3>
+        <h3 class="block-title">📊 已发布导师资源分布</h3>
         <p class="axis-legend">
-          横轴：有来源的冷/热信号 · 纵轴：有来源的国家任务/产业方向 ·
-          灰=国冷 绿=国热 蓝=私冷 橙=私热
+          按院系统计合并后的导师/导师组；不推断热度、经费或指导风格。
         </p>
-        <ScatterChart height="240px" />
+        <MentorDistributionChart height="300px" />
       </section>
     </main>
 

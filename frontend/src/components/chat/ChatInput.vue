@@ -98,10 +98,24 @@ function useQuickQuestion(prompt: string) {
 function stopStream() {
   chatStore.abort()
 }
+
+function retry() {
+  chatStore.retryLastSend()
+}
 </script>
 
 <template>
   <div class="chat-input-area">
+    <div class="assistant-mode">
+      <span class="mode-dot" :class="chatStore.enhancementStatus" />
+      结构化访谈 · GLM 措辞增强
+    </div>
+
+    <div v-if="chatStore.chatError" class="chat-error" role="alert">
+      <span>{{ chatStore.chatError }}</span>
+      <button type="button" :disabled="chatStore.streaming" @click="retry">重试</button>
+    </div>
+
     <!-- 引导问题快捷按钮（仅在消息少时显示） -->
     <div v-if="chatStore.messageCount <= 2" class="quick-questions">
       <button
@@ -190,6 +204,44 @@ function stopStream() {
   background: $color-bg-card;
   border-top: 1px solid $color-border-light;
   flex-shrink: 0;
+}
+
+.assistant-mode {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  color: $text-placeholder;
+  font-size: 10px;
+}
+
+.mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: $color-border;
+
+  &.available { background: $color-success; }
+  &.unavailable { background: $color-warning; }
+}
+
+.chat-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  margin-bottom: $spacing-sm;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: $color-danger;
+  background: rgba(245, 108, 108, 0.08);
+  font-size: 11px;
+
+  button {
+    flex-shrink: 0;
+    color: $color-primary;
+    font-weight: 600;
+  }
 }
 
 .quick-questions {

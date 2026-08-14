@@ -43,9 +43,9 @@ export interface Advisor {
   tags: string[]
   score: number
   reason: string
-  radar_traits: RadarTraits
-  popularity: number // 热门指数 0-100
-  sector: Sector // 行业性质
+  radar_traits?: RadarTraits
+  popularity?: number // 仅在有已审核证据时存在
+  sector?: Sector // 仅在有已审核证据时存在
   projects: AdvisorProject[]
   recruitments: Recruitment[]
   contact_email?: string
@@ -101,6 +101,9 @@ export interface MentorResource {
   official_homepage?: string
   entity_type: 'person' | 'advisor_group'
   resource_type: MentorResourceType
+  resource_types: MentorResourceType[]
+  linked_resource_ids: string[]
+  resource_record_count: number
   identity_status?: 'verified'
   recommendation_eligibility?: 'eligible'
   academic_year?: number
@@ -130,9 +133,29 @@ export interface MentorResourceMeta {
   match_candidate_records: number
   policy: 'formal_verified_profiles_only'
   filtered_records: number
+  grouped_records: number
+  filtered_resource_records: number
   page: number
   page_size: number
   total_pages: number
+}
+
+export interface DepartmentOption {
+  name: string
+  advisor_count: number
+}
+
+export interface MentorDistribution {
+  departments: Array<{ name: string; advisor_count: number }>
+  resource_types: Array<{
+    resource_type: MentorResourceType
+    resource_count: number
+  }>
+  meta: {
+    grouped_advisors: number
+    raw_resource_records: number
+    basis: 'published_resources_only'
+  }
 }
 
 export interface EvidenceClaim {

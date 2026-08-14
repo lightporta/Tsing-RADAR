@@ -23,6 +23,7 @@ declare module 'vue' {
     ElCol: typeof import('element-plus/es')['ElCol']
     ElDatePicker: typeof import('element-plus/es')['ElDatePicker']
     ElDialog: typeof import('element-plus/es')['ElDialog']
+    ElDrawer: typeof import('element-plus/es')['ElDrawer']
     ElEmpty: typeof import('element-plus/es')['ElEmpty']
     ElForm: typeof import('element-plus/es')['ElForm']
     ElFormItem: typeof import('element-plus/es')['ElFormItem']
@@ -37,6 +38,7 @@ declare module 'vue' {
     ElTag: typeof import('element-plus/es')['ElTag']
     FilterBar: typeof import('./components/advisor/FilterBar.vue')['default']
     InterviewProfileCard: typeof import('./components/chat/InterviewProfileCard.vue')['default']
+    MentorDistributionChart: typeof import('./components/charts/MentorDistributionChart.vue')['default']
     MiniRadar: typeof import('./components/charts/MiniRadar.vue')['default']
     ProfileForm: typeof import('./components/profile/ProfileForm.vue')['default']
     PublishForm: typeof import('./components/recruitment/PublishForm.vue')['default']
@@ -45,7 +47,6 @@ declare module 'vue' {
     ResumeManager: typeof import('./components/profile/ResumeManager.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
-    ScatterChart: typeof import('./components/charts/ScatterChart.vue')['default']
   }
   export interface ComponentCustomProperties {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

@@ -4,7 +4,8 @@ import type {
   MentorResource,
   MentorResourceMeta,
   MentorResourceType,
-  ScatterPoint,
+  DepartmentOption,
+  MentorDistribution,
 } from '@/types/advisor'
 import type { MatchRequest } from '@/types/api'
 
@@ -12,9 +13,15 @@ import type { MatchRequest } from '@/types/api'
 // 导师 / 匹配 / 散点图 API
 // =====================================================================
 
-/** 获取四象限散点图数据 */
-export function fetchScatter() {
-  return get<{ data: ScatterPoint[] }>('/api/scatter')
+export function fetchDepartments() {
+  return get<{
+    data: DepartmentOption[]
+    meta: { basis: 'official_list_union_published_resources' }
+  }>('/api/departments')
+}
+
+export function fetchMentorDistribution() {
+  return get<MentorDistribution>('/api/mentor-distribution')
 }
 
 export function fetchMentorResources(params: {

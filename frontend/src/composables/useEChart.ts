@@ -1,6 +1,6 @@
 import { ref, nextTick, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import * as echarts from 'echarts/core'
-import { RadarChart, ScatterChart } from 'echarts/charts'
+import { BarChart, RadarChart } from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
@@ -15,7 +15,7 @@ import type { EChartsOption } from 'echarts'
 // 注册必需的 ECharts 模块（按需引入减小包体）
 echarts.use([
   RadarChart,
-  ScatterChart,
+  BarChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,

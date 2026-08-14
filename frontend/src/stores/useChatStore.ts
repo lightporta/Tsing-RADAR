@@ -32,6 +32,13 @@ export const useChatStore = defineStore('chat', () => {
   const currentQuestion = ref<InterviewQuestion | null>(null)
   const needsConfirmation = ref(false)
   const streaming = ref(false)
+  const chatError = ref('')
+  const enhancementStatus = ref<'unknown' | 'available' | 'unavailable' | 'disabled'>('unknown')
+  const enhancementProvider = ref<string | null>(null)
+  const lastFailedRequest = ref<{
+    content: string
+    attachments: ChatAttachment[]
+  } | null>(null)
   /** 当前流式请求的 AbortController */
   let controller: AbortController | null = null
 
@@ -89,6 +96,8 @@ export const useChatStore = defineStore('chat', () => {
     currentQuestion.value = state.current_question
     needsConfirmation.value = state.needs_confirmation
     recommendReady.value = state.recommend_ready
+    enhancementStatus.value = state.enhancement_status || 'disabled'
+    enhancementProvider.value = state.enhancement_provider || null
   }
 
   /**
@@ -96,12 +105,18 @@ export const useChatStore = defineStore('chat', () => {
    * @param content 用户输入
    * @param attachments 已私有保存的附件元数据；文件内容不注入访谈。
    */
-  async function send(content: string, attachments: ChatAttachment[] = []) {
+  async function send(
+    content: string,
+    attachments: ChatAttachment[] = [],
+    retrying = false,
+  ) {
     if (!content.trim() || streaming.value) return
     if (!sessionId.value) sessionId.value = crypto.randomUUID()
+    chatError.value = ''
+    lastFailedRequest.value = null
 
     // 1) 推入用户消息
-    pushMessage({ role: 'user', content, attachments })
+    if (!retrying) pushMessage({ role: 'user', content, attachments })
 
     // 2) 推入空的 assistant 消息占位（流式填充）
     const assistantMsg = pushMessage({ role: 'assistant', content: '', streaming: true })
@@ -137,15 +152,27 @@ export const useChatStore = defineStore('chat', () => {
       },
       (state) => {
         applyInterviewState(state)
+        if (state.enhancement_status === 'unavailable') {
+          assistantMsg.content +=
+            '\n\n_提示：GLM 增强回复本轮不可用，结构化访谈仍已正常继续。_'
+        }
         assistantMsg.streaming = false
         streaming.value = false
       },
       () => {
-        assistantMsg.content += '\n\n_⚠️ 对话服务暂时不可用，已切换本地兜底模式_'
-        assistantMsg.streaming = false
+        const index = messages.value.findIndex((message) => message.id === assistantMsg.id)
+        if (index >= 0) messages.value.splice(index, 1)
+        chatError.value = '消息未送达，访谈状态没有被本地伪造。请重试本条消息。'
+        lastFailedRequest.value = { content, attachments: [...attachments] }
         streaming.value = false
       },
     )
+  }
+
+  async function retryLastSend() {
+    const failed = lastFailedRequest.value
+    if (!failed || streaming.value) return
+    await send(failed.content, [...failed.attachments], true)
   }
 
   async function updateInterviewProfile(patch: InterviewProfilePatch) {
@@ -189,6 +216,10 @@ export const useChatStore = defineStore('chat', () => {
     currentQuestion.value = null
     needsConfirmation.value = false
     recommendReady.value = false
+    chatError.value = ''
+    lastFailedRequest.value = null
+    enhancementStatus.value = 'unknown'
+    enhancementProvider.value = null
     messages.value = []
     initWelcome()
   }
@@ -202,6 +233,10 @@ export const useChatStore = defineStore('chat', () => {
     currentQuestion,
     needsConfirmation,
     streaming,
+    chatError,
+    enhancementStatus,
+    enhancementProvider,
+    lastFailedRequest,
     recommendReady,
     quickQuestions,
     messageCount,
@@ -212,6 +247,7 @@ export const useChatStore = defineStore('chat', () => {
     updateInterviewProfile,
     confirmInterviewProfile,
     send,
+    retryLastSend,
     abort,
     newConversation,
   }

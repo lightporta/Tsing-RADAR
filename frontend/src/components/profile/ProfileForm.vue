@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/useUserStore'
-import { DEPARTMENTS } from '@/utils/depts'
+import { fetchDepartments } from '@/api/advisor'
 import { TRAITS } from '@/types/advisor'
 import type { StudentCategory } from '@/types/user'
+import type { StudentProfile } from '@/types/user'
 
 // =====================================================================
 // 个人信息表单（文档 §5.2 / 原 index.html studentPanel 升级）
@@ -12,6 +13,7 @@ import type { StudentCategory } from '@/types/user'
 // =====================================================================
 
 const userStore = useUserStore()
+const departments = ref<string[]>([])
 
 const categories: StudentCategory[] = [
   '本科大一', '本科大二', '本科大三', '本科大四',
@@ -21,8 +23,17 @@ const categories: StudentCategory[] = [
 
 const grades = Array.from({ length: 8 }, (_, i) => `${2026 - i}级`)
 
-// 本地表单副本（编辑时不直接改 store，保存时才提交）
-const form = reactive({ ...userStore.profile })
+function cloneProfile(profile: StudentProfile): StudentProfile {
+  return {
+    ...profile,
+    interest_tags: [...profile.interest_tags],
+    weights: { ...profile.weights },
+  }
+}
+
+// 深拷贝隔离标签和六维权重，取消编辑时不会污染 store。
+const form = reactive<StudentProfile>(cloneProfile(userStore.profile))
+const lastSaved = ref<StudentProfile>(cloneProfile(userStore.profile))
 const newTag = ref<string>('')
 const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarInitial = computed(() => {
@@ -36,7 +47,11 @@ const AVATAR_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 // 同步 store → form
 watch(
   () => userStore.profile,
-  (p) => Object.assign(form, p),
+  (p) => {
+    const snapshot = cloneProfile(p)
+    lastSaved.value = snapshot
+    Object.assign(form, cloneProfile(snapshot))
+  },
   { deep: true },
 )
 
@@ -87,13 +102,24 @@ function removeAvatar() {
 }
 
 function save() {
-  userStore.updateProfile({ ...form })
+  const snapshot = cloneProfile(form)
+  userStore.updateProfile(snapshot)
+  lastSaved.value = cloneProfile(snapshot)
   ElMessage.success('信息仅保留在当前页面内存，刷新后清除')
 }
 
 function reset() {
-  Object.assign(form, userStore.profile)
+  Object.assign(form, cloneProfile(lastSaved.value))
 }
+
+onMounted(async () => {
+  try {
+    const response = await fetchDepartments()
+    departments.value = response.data.map((item) => item.name)
+  } catch {
+    departments.value = form.dept ? [form.dept] : []
+  }
+})
 </script>
 
 <template>
@@ -133,8 +159,8 @@ function reset() {
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item label="院系">
-              <el-select v-model="form.dept" filterable placeholder="选择院系">
-                <el-option v-for="d in DEPARTMENTS" :key="d" :label="d" :value="d" />
+              <el-select v-model="form.dept" filterable clearable placeholder="选择院系">
+                <el-option v-for="d in departments" :key="d" :label="d" :value="d" />
               </el-select>
             </el-form-item>
           </el-col>

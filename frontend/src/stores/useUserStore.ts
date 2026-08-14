@@ -12,15 +12,7 @@ import { TRAITS } from '@/types/advisor'
 const DEFAULT_WEIGHTS = (): Record<TraitKey, number> =>
   TRAITS.reduce(
     (acc, t) => {
-      const defaults: Record<TraitKey, number> = {
-        acumen: 85,
-        network: 60,
-        mentorship: 90,
-        tolerance: 70,
-        funding: 50,
-        efficiency: 75,
-      }
-      acc[t.key] = defaults[t.key]
+      acc[t.key] = 50
       return acc
     },
     {} as Record<TraitKey, number>,
@@ -31,14 +23,14 @@ export const useUserStore = defineStore('user', () => {
     name: '',
     avatarUrl: '',
     email: '',
-    dept: '自动化系',
-    category: '本科大三',
-    grade: '2023级',
+    dept: '',
+    category: '',
+    grade: '',
     phone: '',
     gpa: '',
     research_experience: '',
     research_interest: '',
-    interest_tags: ['自然语言处理', '机器学习'],
+    interest_tags: [],
     weights: DEFAULT_WEIGHTS(),
   })
 

@@ -1,7 +1,6 @@
 import advisorsRaw from './mentors.json'
-import type { Advisor, MatchedAdvisor, ScatterPoint } from '@/types/advisor'
+import type { Advisor, MatchedAdvisor } from '@/types/advisor'
 import type { RecruitmentItem } from '@/types/api'
-import { deptColor } from '@/utils/format'
 
 // =====================================================================
 // 前端 Mock 数据服务（文档 §7.3）
@@ -12,17 +11,6 @@ import { deptColor } from '@/utils/format'
 // 历史 JSON 只保留作视觉开发资产，运行时 Mock 不把它冒充已审核数据。
 void advisorsRaw
 export const mockAdvisors: Advisor[] = []
-
-/** 散点数据：x=popularity, y=sector(0=国/1=私) */
-export const mockScatterPoints: ScatterPoint[] = mockAdvisors.map((m) => ({
-  name: m.name,
-  x: m.popularity,
-  y: m.sector === '国' ? 0 : 1,
-  color: deptColor(m.dept),
-  dept: m.dept,
-  value: m.score,
-  advisor: m,
-}))
 
 /** Mock 不得制造导师推荐，只保留空数据 UX。 */
 export function mockMatch(_interest: string): MatchedAdvisor[] {

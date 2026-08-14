@@ -124,14 +124,11 @@ async function giveFeedback(rating: 1 | -1) {
       <!-- 右：迷你雷达 -->
       <div class="card-right">
         <MiniRadar
-          v-if="advisor.radar_traits"
           :advisor-traits="advisor.radar_traits"
           :student-weights="userStore.profile.weights"
           :size="80"
         />
-        <span v-else class="evidence-mini">
-          证据 {{ ((advisor.evidence_coverage ?? 0) * 100).toFixed(0) }}%
-        </span>
+        <span v-if="!advisor.radar_traits" class="evidence-mini">仅学生需求</span>
         <button class="expand-btn" :class="{ open: expanded }" aria-label="展开详情" @click="toggleExpand">
           <el-icon><ArrowDown /></el-icon>
         </button>

@@ -279,6 +279,13 @@ onMounted(loadList)
 }
 
 .empty {
+  grid-column: 1 / -1;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: $spacing-sm;
   text-align: center;
   padding: 60px 20px;
   color: $text-placeholder;

@@ -17,29 +17,32 @@ import type { TraitKey } from '@/types/advisor'
 // =====================================================================
 
 const props = defineProps<{
-  advisor: MatchedAdvisor
+  advisor?: MatchedAdvisor
   studentWeights: Record<TraitKey, number>
 }>()
 
 const el = ref<HTMLElement | null>(null)
 
-const option = computed(() =>
-  buildRadarOption(
-    [
+const option = computed(() => {
+  const series = [
       {
         name: STUDENT_SERIES_NAME,
         values: traitToArray(props.studentWeights),
         ...STUDENT_RADAR,
       },
-      {
+  ]
+  if (props.advisor?.radar_traits) {
+    series.push({
         name: ADVISOR_SERIES_NAME,
         values: traitToArray(props.advisor.radar_traits),
         ...ADVISOR_RADAR,
-      },
-    ],
+    })
+  }
+  return buildRadarOption(
+    series,
     { showAxisLabel: true, showLegend: true, radius: '60%' },
-  ),
-)
+  )
+})
 
 const { refresh } = useEChart(el, () => option.value)
 watch(option, () => refresh(), { deep: true })

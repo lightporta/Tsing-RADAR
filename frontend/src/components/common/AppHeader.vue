@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useUserStore } from '@/stores/useUserStore'
 import AppLogo from './AppLogo.vue'
 
 // =====================================================================
@@ -18,6 +20,12 @@ withDefaults(defineProps<{ showBack?: boolean; title?: string }>(), {
 const emit = defineEmits<{ (e: 'menu-click'): void }>()
 
 const router = useRouter()
+const userStore = useUserStore()
+const avatarUrl = computed(() => userStore.profile.avatarUrl?.trim() || '')
+const avatarInitial = computed(() => {
+  const name = userStore.profile.name.trim()
+  return name ? Array.from(name)[0].toUpperCase() : '我'
+})
 
 function goProfile() {
   router.push('/profile')
@@ -65,17 +73,21 @@ function handleProfileClick() {
     <!-- 中部标题（二级页） -->
     <h1 v-if="title" class="header-title">{{ title }}</h1>
 
-    <!-- 右侧：学生信息 + 信息平台 -->
+    <!-- 右侧：清晰的文字入口 + 当前用户头像 -->
     <div class="header-right">
       <slot name="right" />
-      <button class="icon-btn" aria-label="导师资源库" @click="goMentors">
-        <el-icon aria-hidden="true">师</el-icon>
+      <button class="nav-btn mentors" aria-label="导师数据" @click="goMentors">
+        导师数据
       </button>
-      <button class="icon-btn" aria-label="个人信息" @click="handleProfileClick">
-        <el-icon aria-hidden="true">人</el-icon>
+      <button class="nav-btn profile" aria-label="个人信息" @click="handleProfileClick">
+        个人信息
       </button>
-      <button class="icon-btn" aria-label="信息平台" @click="goRecruitment">
-        <el-icon aria-hidden="true">讯</el-icon>
+      <button class="nav-btn recruitment" aria-label="招募信息" @click="goRecruitment">
+        招募信息
+      </button>
+      <button class="user-avatar" aria-label="进入个人信息" @click="handleProfileClick">
+        <img v-if="avatarUrl" :src="avatarUrl" alt="当前用户头像" />
+        <span v-else>{{ avatarInitial }}</span>
       </button>
     </div>
   </header>
@@ -145,6 +157,62 @@ function handleProfileClick() {
   }
 }
 
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: $transition-fast;
+
+  &.mentors {
+    color: #1769aa;
+    background: #eaf4ff;
+  }
+
+  &.profile {
+    color: #287a4d;
+    background: #edf8f1;
+  }
+
+  &.recruitment {
+    color: #9a5b13;
+    background: #fff5e6;
+  }
+
+  &:hover {
+    filter: brightness(0.97);
+    box-shadow: 0 2px 8px rgba(32, 70, 120, 0.12);
+  }
+
+  &:active {
+    transform: scale(0.97);
+  }
+}
+
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: $color-accent;
+  font-size: 14px;
+  font-weight: 600;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
 .back-btn {
   width: auto;
   padding: 0 12px;
@@ -166,6 +234,19 @@ function handleProfileClick() {
   .back-btn {
     width: 36px;
     padding: 0;
+  }
+  .app-header {
+    padding: 0 $spacing-md;
+  }
+  .header-right {
+    gap: 4px;
+  }
+  .nav-btn {
+    display: none;
+  }
+  .user-avatar {
+    width: 32px;
+    height: 32px;
   }
 }
 </style>

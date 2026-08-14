@@ -14,7 +14,7 @@ const traitRows = computed(() =>
   TRAITS.map((t) => ({
     label: t.label,
     desc: t.description,
-    score: props.advisor.radar_traits[t.key] ?? 0,
+    score: props.advisor.radar_traits?.[t.key] ?? 0,
   })),
 )
 
