@@ -1217,7 +1217,11 @@ def run_checks(
             and "web-api.caddy" in edge_compose
             and "qxd.caddy" not in edge_compose
             and "media.caddy" not in edge_compose
-            and "path /api/*" not in web_routes
+            and not any(
+                line.strip() == "path /api/*"
+                for line in web_routes.splitlines()
+            )
+            and "not path /api/* /v1/* /health/*" in web_routes
             and (DEPLOY / "edge" / "public-route-allowlist.json").is_file(),
             "default edge route allowlist differs",
         )
@@ -1267,7 +1271,11 @@ def run_checks(
             )
             and ("POST", "/api/v1/llm/embeddings") not in public_routes
             and approved_private_routes <= public_routes
-            and "path /api/*" not in web_routes,
+            and not any(
+                line.strip() == "path /api/*"
+                for line in web_routes.splitlines()
+            )
+            and "not path /api/* /v1/* /health/*" in web_routes,
             "public route manifest is broad or contains a protected route",
         )
     )

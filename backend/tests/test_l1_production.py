@@ -317,7 +317,7 @@ def test_default_artifacts_do_not_mount_or_route_qxd_or_media():
     assert "qxd.caddy" not in edge
     assert "media.caddy" not in edge
     assert "admin off" in base
-    assert "path /api/*" not in web
+    assert not any(line.strip() == "path /api/*" for line in web.splitlines())
     assert "attachments and /v1 are absent" in web
     assert "QXD1-Trial" not in qxd
     assert "qxd1-single-user-trial" not in qxd
@@ -422,7 +422,11 @@ def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
         encoding="utf-8"
     )
     assert "path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat" in caddy
-    assert "path /api/*" not in caddy
+    assert not any(line.strip() == "path /api/*" for line in caddy.splitlines())
+    assert "not path /api/* /v1/* /health/*" in caddy
+    assert caddy.index("not path /api/* /v1/* /health/*") < caddy.index(
+        'respond "Route or method not available" 404'
+    )
     nginx = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
     assert "proxy_pass http://backend:8000" not in nginx
     assert "location /api/" not in nginx

@@ -120,7 +120,10 @@
         import backend_proxy
     }
 
-    @static method GET HEAD
+    @static {
+        method GET HEAD
+        not path /api/* /v1/* /health/*
+    }
     handle @static {
         reverse_proxy frontend:80 {
             header_up -Forwarded
