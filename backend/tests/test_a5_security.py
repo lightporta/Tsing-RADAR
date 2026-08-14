@@ -351,6 +351,20 @@ def test_private_upload_size_limit_fails_before_parsing(monkeypatch):
     assert response.status_code == 413
 
 
+def test_declared_oversized_upload_is_rejected_before_multipart_parsing(
+    monkeypatch,
+):
+    client, headers = _web_client()
+    monkeypatch.setattr(settings, "PRIVATE_UPLOAD_MAX_BYTES", 16)
+    response = client.post(
+        "/api/documents",
+        headers={**headers, "Content-Length": str(64 * 1024 + 17)},
+        content=b"not-a-multipart-body",
+    )
+    assert response.status_code == 413
+    assert response.json() == {"detail": "文件超过大小限制"}
+
+
 def test_application_is_in_app_only_and_all_operations_are_owner_scoped():
     owner, owner_headers = _web_client()
     other, other_headers = _web_client()
