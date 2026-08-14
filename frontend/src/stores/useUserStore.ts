@@ -29,6 +29,7 @@ const DEFAULT_WEIGHTS = (): Record<TraitKey, number> =>
 export const useUserStore = defineStore('user', () => {
   const profile = ref<StudentProfile>({
     name: '',
+    avatarUrl: '',
     email: '',
     dept: '自动化系',
     category: '本科大三',

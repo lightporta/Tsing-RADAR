@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/useUserStore'
 import { DEPARTMENTS } from '@/utils/depts'
@@ -24,6 +24,14 @@ const grades = Array.from({ length: 8 }, (_, i) => `${2026 - i}级`)
 // 本地表单副本（编辑时不直接改 store，保存时才提交）
 const form = reactive({ ...userStore.profile })
 const newTag = ref<string>('')
+const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarInitial = computed(() => {
+  const name = form.name.trim()
+  return name ? Array.from(name)[0].toUpperCase() : '我'
+})
+
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const AVATAR_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
 // 同步 store → form
 watch(
@@ -47,6 +55,37 @@ function removeTag(idx: number) {
   form.interest_tags.splice(idx, 1)
 }
 
+function chooseAvatar() {
+  avatarInput.value?.click()
+}
+
+function handleAvatarChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  if (!AVATAR_TYPES.has(file.type)) {
+    ElMessage.error('头像仅支持 JPG、PNG 或 WebP 图片')
+    return
+  }
+  if (file.size > AVATAR_MAX_BYTES) {
+    ElMessage.error('头像图片不能超过 2 MB')
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    if (typeof reader.result === 'string') form.avatarUrl = reader.result
+  }
+  reader.onerror = () => ElMessage.error('头像读取失败，请重新选择')
+  reader.readAsDataURL(file)
+}
+
+function removeAvatar() {
+  form.avatarUrl = ''
+}
+
 function save() {
   userStore.updateProfile({ ...form })
   ElMessage.success('信息仅保留在当前页面内存，刷新后清除')
@@ -61,6 +100,28 @@ function reset() {
   <div class="profile-form">
     <div class="form-section">
       <h3 class="section-title">基本信息</h3>
+      <div class="avatar-editor">
+        <div class="profile-avatar" aria-hidden="true">
+          <img v-if="form.avatarUrl" :src="form.avatarUrl" alt="" />
+          <span v-else>{{ avatarInitial }}</span>
+        </div>
+        <div class="avatar-actions">
+          <div>
+            <el-button @click="chooseAvatar">
+              {{ form.avatarUrl ? '更换头像' : '上传头像' }}
+            </el-button>
+            <el-button v-if="form.avatarUrl" @click="removeAvatar">移除头像</el-button>
+          </div>
+          <p>支持 JPG、PNG、WebP，不超过 2 MB；仅当前会话使用</p>
+        </div>
+        <input
+          ref="avatarInput"
+          class="avatar-input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          @change="handleAvatarChange"
+        />
+      </div>
       <el-form :model="form" label-width="80px" label-position="left">
         <el-row :gutter="16">
           <el-col :span="24">
@@ -196,6 +257,56 @@ function reset() {
   padding: $spacing-xl;
   margin-bottom: $spacing-lg;
   box-shadow: $shadow-card;
+}
+
+.avatar-editor {
+  display: flex;
+  align-items: center;
+  gap: $spacing-lg;
+  margin-bottom: $spacing-xl;
+}
+
+.profile-avatar {
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: $color-accent;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 600;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.avatar-actions {
+  display: grid;
+  gap: $spacing-sm;
+
+  p {
+    color: $text-placeholder;
+    font-size: 12px;
+  }
+}
+
+.avatar-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .section-title {

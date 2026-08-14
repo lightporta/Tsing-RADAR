@@ -19,6 +19,8 @@ export type StudentCategory =
 /** 学生信息（对应后端 students 表） */
 export interface StudentProfile {
   name: string
+  /** 当前浏览器会话内使用的头像图片（Data URL） */
+  avatarUrl?: string
   email: string
   dept: string // 院系
   category: StudentCategory // 类别
