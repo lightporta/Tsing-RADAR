@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElDrawer as Drawer } from 'element-plus'
 import AppHeader from '@/components/common/AppHeader.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import AdvisorListPanel from '@/components/advisor/AdvisorListPanel.vue'
@@ -57,19 +56,27 @@ function goRecruitment() {
     </section>
 
     <!-- 汉堡菜单抽屉 -->
-    <Drawer v-model="drawerVisible" direction="ltr" size="70%" :with-header="false">
+    <el-drawer
+      v-model="drawerVisible"
+      direction="ltr"
+      size="min(80vw, 320px)"
+      :with-header="false"
+      append-to-body
+      body-class="mobile-drawer-body"
+      title="主菜单"
+    >
       <div class="drawer-menu">
         <h3 class="drawer-title">Tsing-RADAR</h3>
-        <button class="drawer-item" @click="goProfile">
+        <button type="button" class="drawer-item" @click="goProfile">
           <el-icon aria-hidden="true">人</el-icon>
           <span>个人信息</span>
         </button>
-        <button class="drawer-item" @click="goRecruitment">
+        <button type="button" class="drawer-item" @click="goRecruitment">
           <el-icon aria-hidden="true">讯</el-icon>
           <span>信息平台</span>
         </button>
       </div>
-    </Drawer>
+    </el-drawer>
   </div>
 </template>
 
@@ -178,6 +185,10 @@ function goRecruitment() {
       color: $color-primary;
     }
   }
+}
+
+:global(.mobile-drawer-body) {
+  padding: 0;
 }
 
 </style>
