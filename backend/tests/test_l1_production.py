@@ -400,10 +400,14 @@ def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
         )
     }
     assert protected
-    assert protected.isdisjoint(allowed)
+    public_dialogue_route = ("POST", "/api/v1/llm/chat")
+    assert public_dialogue_route in allowed
+    assert (protected - {public_dialogue_route}).isdisjoint(allowed)
+    assert ("POST", "/api/v1/llm/embeddings") not in allowed
     caddy = (DEPLOY / "edge" / "routes" / "web-api.caddy").read_text(
         encoding="utf-8"
     )
+    assert "path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat" in caddy
     assert "path /api/*" not in caddy
     assert ("GET", "/api/new-route-added-later") not in allowed
 

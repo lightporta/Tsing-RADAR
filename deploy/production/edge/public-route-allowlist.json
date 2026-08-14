@@ -11,6 +11,7 @@
   {"method": "GET", "path": "/api/scatter"},
   {"method": "POST", "path": "/api/feedback"},
   {"method": "POST", "path": "/api/match"},
+  {"method": "POST", "path": "/api/v1/llm/chat"},
   {"method": "POST", "path": "/api/interviews"},
   {"method": "GET", "path": "/api/interviews/{session_id}"},
   {"method": "POST", "path": "/api/interviews/{session_id}/answers"},

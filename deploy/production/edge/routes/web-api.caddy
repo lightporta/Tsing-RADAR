@@ -40,7 +40,7 @@
 
     @public_post {
         method POST
-        path /api/feedback /api/interviews /api/match /api/recruitments /api/applications
+        path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat
     }
     handle @public_post {
         import backend_proxy
@@ -80,7 +80,7 @@
 
     @cors_preflight {
         method OPTIONS
-        path_regexp cors_paths ^/(health/(live|ready)|api/(session|mentors(/sort)?|recruitments(/mine)?|scatter|feedback|match|interviews(/[A-Za-z0-9_-]+(/(answers|confirm|profile))?)?|applications(/[A-Za-z0-9_-]+)?))$
+        path_regexp cors_paths ^/(health/(live|ready)|api/(session|mentors(/sort)?|recruitments(/mine)?|scatter|feedback|match|v1/llm/chat|interviews(/[A-Za-z0-9_-]+(/(answers|confirm|profile))?)?|applications(/[A-Za-z0-9_-]+)?))$
     }
     handle @cors_preflight {
         import backend_proxy
@@ -103,7 +103,7 @@
     }
 
     # Every backend route not explicitly matched above is denied. In
-    # particular docs, OpenAPI, LLM proxy, training/admin, scraper, documents,
+    # particular docs, OpenAPI, LLM embeddings, training/admin, scraper, documents,
     # uploads, resume generation, downloads, attachments and /v1 are absent.
     respond "Route or method not available" 404
 }

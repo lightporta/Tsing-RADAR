@@ -1242,14 +1242,18 @@ def run_checks(
         "/docs",
         "/openapi",
     )
+    public_dialogue_route = ("POST", "/api/v1/llm/chat")
     checks.append(
         _check(
             "edge.public_route_manifest_deny_by_default",
             len(public_routes) == len(allowlist)
+            and public_dialogue_route in public_routes
             and all(
-                not path.startswith(dangerous_prefixes)
-                for _method, path in public_routes
+                route == public_dialogue_route
+                or not route[1].startswith(dangerous_prefixes)
+                for route in public_routes
             )
+            and ("POST", "/api/v1/llm/embeddings") not in public_routes
             and "path /api/*" not in web_routes,
             "public route manifest is broad or contains a protected route",
         )
