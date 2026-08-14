@@ -734,6 +734,26 @@ def run_checks(
                 "edge overlay unexpectedly enables another public surface",
             )
         )
+        edge_ports = {
+            int(port.get("target")): (
+                str(port.get("published")),
+                port.get("host_ip"),
+                port.get("protocol"),
+            )
+            for port in edge_services["edge"].get("ports", [])
+            if isinstance(port, dict) and port.get("target") in {80, 443}
+        }
+        checks.append(
+            _check(
+                "edge.explicit_public_http_https_bindings",
+                edge_ports
+                == {
+                    80: ("80", "0.0.0.0", "tcp"),
+                    443: ("443", "0.0.0.0", "tcp"),
+                },
+                "edge must explicitly publish only TCP 80/443 on IPv4",
+            )
+        )
 
         qxd = _compose(
             [INFRA, PROD, EDGE, QXD],

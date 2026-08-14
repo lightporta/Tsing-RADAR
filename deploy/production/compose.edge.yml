@@ -5,8 +5,14 @@ services:
     environment:
       WEB_HOST: ${WEB_HOST:?Set the approved Web host}
     ports:
-      - "80:80"
-      - "443:443"
+      - target: 80
+        published: "80"
+        host_ip: 0.0.0.0
+        protocol: tcp
+      - target: 443
+        published: "443"
+        host_ip: 0.0.0.0
+        protocol: tcp
     volumes:
       - ./edge/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./edge/routes/web-api.caddy:/etc/caddy/routes/10-web-api.caddy:ro
