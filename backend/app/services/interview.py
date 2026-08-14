@@ -51,7 +51,7 @@ QUESTION_BANK: dict[InterviewDimension, InterviewQuestion] = {
     InterviewDimension.RESEARCH_INTERESTS: InterviewQuestion(
         question_id="research_interests",
         dimension=InterviewDimension.RESEARCH_INTERESTS,
-        prompt="你最想投入的 1—3 个研究主题或具体问题是什么？请尽量写到子方向。",
+        prompt="先聊聊你真正好奇的事：最想投入哪 1—3 个研究主题或具体问题？写到子方向会更有帮助。",
         answer_type="text",
         information_goal="确定主题召回边界，避免只使用宽泛专业名称。",
     ),
@@ -61,49 +61,49 @@ QUESTION_BANK: dict[InterviewDimension, InterviewQuestion] = {
         prompt="面对同一研究主题，你更偏好理论与原理、工程与落地，还是两者结合？",
         answer_type="single_choice",
         options=[
-            {"value": "theory", "label": "理论与原理"},
-            {"value": "engineering", "label": "工程与落地"},
-            {"value": "mixed", "label": "两者结合"},
-            {"value": "undecided", "label": "暂不确定"},
+            {"value": "theory", "label": "更爱追根究底：理论与原理"},
+            {"value": "engineering", "label": "更爱把想法做出来：工程与落地"},
+            {"value": "mixed", "label": "理论和落地都想兼顾"},
+            {"value": "undecided", "label": "还在探索，暂不确定"},
         ],
         information_goal="区分研究方法与产出形态偏好。",
     ),
     InterviewDimension.MENTORSHIP_STYLE: InterviewQuestion(
         question_id="mentorship_style",
         dimension=InterviewDimension.MENTORSHIP_STYLE,
-        prompt="你希望导师高频具体指导、给方向后自主探索，还是在两者之间保持平衡？",
+        prompt="想象一下理想的合作节奏：你希望导师高频具体指导、给方向后放手探索，还是两者平衡？",
         answer_type="single_choice",
         options=[
-            {"value": "high_guidance", "label": "高频具体指导"},
-            {"value": "balanced", "label": "平衡"},
-            {"value": "autonomous", "label": "自主探索"},
-            {"value": "undecided", "label": "暂不确定"},
+            {"value": "high_guidance", "label": "希望多交流、多给具体反馈"},
+            {"value": "balanced", "label": "关键节点指导，平时自主推进"},
+            {"value": "autonomous", "label": "给我方向，我喜欢自主探索"},
+            {"value": "undecided", "label": "还没想好，可以边做边看"},
         ],
         information_goal="识别指导密度与自主性需求。",
     ),
     InterviewDimension.CAREER_ORIENTATION: InterviewQuestion(
         question_id="career_orientation",
         dimension=InterviewDimension.CAREER_ORIENTATION,
-        prompt="未来三到五年，你更倾向学术深造、产业就业、国家任务方向，还是希望保持混合选择？",
+        prompt="把时间拨到未来三到五年，你更想走向学术深造、产业就业、国家任务，还是保留混合选择？",
         answer_type="single_choice",
         options=[
-            {"value": "academic", "label": "学术深造"},
-            {"value": "industry", "label": "产业就业"},
-            {"value": "national_mission", "label": "国家任务"},
-            {"value": "mixed", "label": "混合选择"},
-            {"value": "undecided", "label": "暂不确定"},
+            {"value": "academic", "label": "继续深挖，走学术道路"},
+            {"value": "industry", "label": "进入产业，解决真实问题"},
+            {"value": "national_mission", "label": "参与国家任务与重大工程"},
+            {"value": "mixed", "label": "先保留多种可能"},
+            {"value": "undecided", "label": "暂不确定，想继续了解"},
         ],
         information_goal="确定长期目标，避免把使命或市场倾向强加给学生。",
     ),
     InterviewDimension.INNOVATION_RISK: InterviewQuestion(
         question_id="innovation_risk",
         dimension=InterviewDimension.INNOVATION_RISK,
-        prompt="选择课题时，你更愿意探索少有人做的高风险新方向、选择成熟路径，还是两者平衡？",
+        prompt="选课题像选路线：你更愿意闯少有人走的高风险新方向、沿成熟路径稳步推进，还是两者平衡？",
         answer_type="single_choice",
         options=[
-            {"value": "pioneering", "label": "高风险新方向"},
-            {"value": "balanced", "label": "平衡"},
-            {"value": "mature", "label": "成熟路径"},
+            {"value": "pioneering", "label": "愿意冒险，探索新方向"},
+            {"value": "balanced", "label": "新意与可行性都要"},
+            {"value": "mature", "label": "偏好成熟路径和清晰回报"},
             {"value": "undecided", "label": "暂不确定"},
         ],
         information_goal="识别原始创新偏好与可承受的不确定性。",
@@ -111,7 +111,7 @@ QUESTION_BANK: dict[InterviewDimension, InterviewQuestion] = {
     InterviewDimension.HARD_CONSTRAINTS: InterviewQuestion(
         question_id="hard_constraints",
         dimension=InterviewDimension.HARD_CONSTRAINTS,
-        prompt="在地点、时间投入、学历阶段、语言、保密资格或毕业安排方面，有哪些必须满足的条件？没有请回答“无”。",
+        prompt="最后划一下不可妥协的边界：地点、时间投入、学历阶段、语言、保密资格或毕业安排，有必须满足的条件吗？没有就回答“无”。",
         answer_type="text",
         information_goal="提前发现不可妥协条件，供后续硬约束使用。",
     ),
@@ -745,14 +745,14 @@ def _summary(profile: StudentPortrait) -> str:
         for constraint in profile.hard_constraints or []
     ) or "无已确认的结构化条件"
     return (
-        "我已整理出一版可编辑画像：\n"
+        "好，我们已经把选择线索拼成了一版可编辑画像：\n"
         f"- 研究兴趣：{'、'.join(profile.research_interests)}\n"
         f"- 研究方式：{_VALUE_LABELS.get(profile.research_mode or '', '暂不确定')}\n"
         f"- 指导偏好：{_VALUE_LABELS.get(profile.mentorship_style or '', '暂不确定')}\n"
         f"- 生涯方向：{_VALUE_LABELS.get(profile.career_orientation or '', '暂不确定')}\n"
         f"- 创新风险：{_VALUE_LABELS.get(profile.innovation_risk or '', '暂不确定')}\n"
         f"- 已确认硬性条件：{constraints}\n\n"
-        "以上画像是否准确？如需修改可直接说明；确认无误请回复“确认画像”。"
+        "看看是否像你？需要调整就直接说；确认无误请回复“确认画像”，我们再开始匹配。"
     )
 
 
@@ -849,7 +849,7 @@ def answer_session(
         session.status == InterviewStatus.CONFIRMED.value
         and cleaned_answer in _CONFIRM_SIGNALS
     ):
-        reply = "画像已经确认，无需重复确认。"
+        reply = "这版画像已经确认啦，不需要重复操作。"
         messages.extend([_message("user", cleaned_answer), _message("assistant", reply)])
         session.messages = messages
         session.updated_at = _now()
@@ -879,7 +879,7 @@ def answer_session(
             db.commit()
             db.refresh(session)
             return session
-        reply = "画像已确认。匹配接口现在可以读取这份确认画像。"
+        reply = "画像已确认，接下来会基于这份信息开始匹配。"
         messages.extend([_message("user", cleaned_answer), _message("assistant", reply)])
         session.status = InterviewStatus.CONFIRMED.value
         session.current_question_id = None
@@ -993,7 +993,7 @@ def confirm_profile(
         raise InterviewConflictError(
             f"画像尚未完成：{', '.join(item.value for item in missing)}"
         )
-    reply = "画像已确认。匹配接口现在可以读取这份确认画像。"
+    reply = "画像已确认，接下来会基于这份信息开始匹配。"
     session.status = InterviewStatus.CONFIRMED.value
     session.current_question_id = None
     session.confirmed_at = _now()

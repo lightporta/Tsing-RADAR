@@ -5,9 +5,12 @@
   {"method": "DELETE", "path": "/api/session"},
   {"method": "GET", "path": "/api/mentors"},
   {"method": "GET", "path": "/api/mentors/sort"},
+  {"method": "GET", "path": "/api/departments"},
+  {"method": "GET", "path": "/api/mentor-distribution"},
   {"method": "GET", "path": "/api/recruitments"},
   {"method": "GET", "path": "/api/recruitments/mine"},
   {"method": "POST", "path": "/api/recruitments"},
+  {"method": "DELETE", "path": "/api/recruitments/{recruit_id}"},
   {"method": "GET", "path": "/api/scatter"},
   {"method": "POST", "path": "/api/feedback"},
   {"method": "POST", "path": "/api/match"},
@@ -21,5 +24,14 @@
   {"method": "GET", "path": "/api/applications"},
   {"method": "GET", "path": "/api/applications/{app_id}"},
   {"method": "PATCH", "path": "/api/applications/{app_id}"},
-  {"method": "DELETE", "path": "/api/applications/{app_id}"}
+  {"method": "DELETE", "path": "/api/applications/{app_id}"},
+  {"method": "POST", "path": "/api/documents"},
+  {"method": "GET", "path": "/api/documents"},
+  {"method": "GET", "path": "/api/documents/{document_id}"},
+  {"method": "DELETE", "path": "/api/documents/{document_id}"},
+  {"method": "POST", "path": "/api/resume/generate"},
+  {"method": "POST", "path": "/api/resume/submit"},
+  {"method": "POST", "path": "/api/artifacts/match-report"},
+  {"method": "POST", "path": "/api/artifacts/{document_id}/download-grant"},
+  {"method": "POST", "path": "/api/artifacts/download/{token}"}
 ]

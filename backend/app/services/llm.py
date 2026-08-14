@@ -6,12 +6,18 @@ A3 访谈题序、画像状态与确认门不由 LLM 决定。
 """
 
 import json
+import logging
+import re
+import time
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
 
 from app.core.config import settings
 from app.schemas.advisor import LLMMessage
+
+logger = logging.getLogger(__name__)
 
 # 通用文本提示词；严禁模型自行发出访谈控制标记。
 LLM_SYSTEM_PROMPT = (
@@ -26,11 +32,25 @@ def _build_payload_messages(messages: list[LLMMessage]) -> list[dict[str, str]]:
     ]
 
 
-async def llm_complete(messages: list[LLMMessage]) -> Optional[str]:
-    """调用 LLM 获取完整回复文本。
+@dataclass(frozen=True)
+class LLMCompletionResult:
+    text: str
+    provider: str
+    model: str
 
-    开发环境保持 GLM 优先、失败后回退 DeepSeek；生产只有显式 provider。
-    """
+
+@dataclass(frozen=True)
+class InterviewEnhancement:
+    text: str | None
+    provider: str | None
+    status: str
+
+
+async def _llm_complete_result(
+    messages: list[LLMMessage],
+    *,
+    timeout_seconds: float | None = None,
+) -> LLMCompletionResult | None:
     payload_messages = _build_payload_messages(messages)
     provider_config = {
         "glm": (settings.GLM_BASE_URL, settings.GLM_CHAT_MODEL),
@@ -41,8 +61,11 @@ async def llm_complete(messages: list[LLMMessage]) -> Optional[str]:
     }
     for provider, api_key in settings.llm_credentials:
         base_url, model = provider_config[provider]
+        started = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                timeout=timeout_seconds or settings.LLM_TIMEOUT
+            ) as client:
                 resp = await client.post(
                     f"{base_url}/chat/completions",
                     headers={
@@ -56,11 +79,89 @@ async def llm_complete(messages: list[LLMMessage]) -> Optional[str]:
                     },
                 )
                 resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
-        except Exception:
-            pass
+                text = str(resp.json()["choices"][0]["message"]["content"])
+                logger.info(
+                    "llm_completion provider=%s model=%s status=success latency_ms=%d",
+                    provider,
+                    model,
+                    round((time.monotonic() - started) * 1000),
+                )
+                return LLMCompletionResult(
+                    text=text,
+                    provider=provider,
+                    model=model,
+                )
+        except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            logger.warning(
+                "llm_completion provider=%s model=%s status=failed error_type=%s http_status=%s latency_ms=%d",
+                provider,
+                model,
+                type(exc).__name__,
+                status_code if status_code is not None else "none",
+                round((time.monotonic() - started) * 1000),
+            )
 
     return None
+
+
+async def llm_complete(messages: list[LLMMessage]) -> Optional[str]:
+    """调用已明确配置的 LLM；生产环境只会有一个 provider。"""
+    result = await _llm_complete_result(messages)
+    return result.text if result else None
+
+
+async def enhance_interview_reply(
+    *,
+    user_message: str,
+    fixed_reply: str,
+) -> InterviewEnhancement:
+    """Add a short acknowledgement without changing the fixed state machine."""
+    if not settings.llm_credentials:
+        return InterviewEnhancement(text=None, provider=None, status="disabled")
+    result = await _llm_complete_result(
+        [
+            LLMMessage(
+                role="user",
+                content=(
+                    "请只写一句自然、温暖的中文承接语（最多50个汉字），回应用户刚才的表达。"
+                    "不要提问，不要给建议，不要引入新事实，不要宣布画像已确认或匹配完成。\n"
+                    f"用户表达：{user_message[:800]}\n"
+                    f"服务端接下来固定展示：{fixed_reply[:1200]}"
+                ),
+            )
+        ],
+        timeout_seconds=min(float(settings.LLM_TIMEOUT), 8.0),
+    )
+    if result is None:
+        provider = settings.configured_llm_providers[0]
+        return InterviewEnhancement(
+            text=None,
+            provider=provider,
+            status="unavailable",
+        )
+    candidate = re.sub(r"\s+", " ", result.text).strip(" \"'“”")
+    forbidden = ("?", "？", "画像已确认", "匹配完成", "确认画像")
+    if (
+        not candidate
+        or len(candidate) > 60
+        or any(token in candidate for token in forbidden)
+    ):
+        logger.warning(
+            "llm_interview_enhancement provider=%s model=%s status=rejected_output",
+            result.provider,
+            result.model,
+        )
+        return InterviewEnhancement(
+            text=None,
+            provider=result.provider,
+            status="unavailable",
+        )
+    return InterviewEnhancement(
+        text=candidate,
+        provider=result.provider,
+        status="available",
+    )
 
 
 async def embed_text(text: str) -> list[float]:
@@ -90,8 +191,12 @@ async def embed_text(text: str) -> list[float]:
                 )
                 resp.raise_for_status()
                 return resp.json()["data"][0]["embedding"]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "llm_embedding provider=glm model=%s status=failed error_type=%s",
+                settings.GLM_EMBED_MODEL,
+                type(exc).__name__,
+            )
     from app.services.matching import hash_embedding
 
     return hash_embedding(text, 128)

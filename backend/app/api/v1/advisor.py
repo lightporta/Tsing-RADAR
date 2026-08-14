@@ -9,6 +9,11 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.data_loader import load_mentors, mentor_data_summary
+from app.services.mentor_resources import (
+    department_options,
+    grouped_mentor_resources,
+    mentor_distribution,
+)
 
 router = APIRouter()
 
@@ -39,12 +44,15 @@ def get_all_mentors(
     page_size: int = Query(default=20, ge=1, le=100),
 ):
     """Search published resources with bounded, deterministic pagination."""
-    records = load_mentors()
+    raw_records = load_mentors()
+    records = grouped_mentor_resources(raw_records)
     query = _search_text(q).strip() if q else ""
     department = _search_text(dept).strip() if dept else ""
 
     def selected(record: dict) -> bool:
-        if resource_type and record.get("resource_type") != resource_type:
+        if resource_type and resource_type not in (
+            record.get("resource_types") or [record.get("resource_type")]
+        ):
             return False
         if entity_type and record.get("entity_type") != entity_type:
             return False
@@ -77,12 +85,31 @@ def get_all_mentors(
     offset = (page - 1) * page_size
     meta = {
         **mentor_data_summary(),
+        "grouped_records": len(records),
         "filtered_records": len(filtered),
+        "filtered_resource_records": sum(
+            int(item.get("resource_record_count") or 1) for item in filtered
+        ),
         "page": page,
         "page_size": page_size,
         "total_pages": math.ceil(len(filtered) / page_size) if filtered else 0,
     }
     return {"data": filtered[offset : offset + page_size], "meta": meta}
+
+
+@router.get("/departments")
+def get_departments():
+    """Return the official list plus departments present in published data."""
+    return {
+        "data": department_options(load_mentors()),
+        "meta": {"basis": "official_list_union_published_resources"},
+    }
+
+
+@router.get("/mentor-distribution")
+def get_mentor_distribution():
+    """Return honest aggregate counts; no inferred popularity/sector axes."""
+    return mentor_distribution(load_mentors())
 
 
 @router.get("/mentors/sort")

@@ -31,6 +31,7 @@ from app.services.data_loader import (
     mentor_data_summary,
 )
 from app.services import data_loader
+from app.services.mentor_resources import group_mentor_resources
 from scripts.audit_evidence_data import audit
 from scripts.migrate_mentor_evidence import migrate_payload
 
@@ -306,6 +307,78 @@ def test_formal_mentor_search_filters_and_paginates(monkeypatch):
         "prof_a",
         "cat_a",
     }
+
+
+def test_mentor_resources_group_duplicate_profile_and_catalog(monkeypatch):
+    records = [
+        {
+            "advisor_id": "prof_john",
+            "name": "JI JOHN S",
+            "dept": "万科公共卫生与健康学院",
+            "title": "副教授",
+            "official_homepage": "https://example.edu/john",
+            "resource_type": "verified_mentor_profile",
+            "entity_type": "person",
+            "research_keywords": ["公共卫生"],
+            "provenance": {},
+        },
+        {
+            "advisor_id": "catalog_john",
+            "name": "JI JOHN S",
+            "dept": "万科公共卫生与健康学院",
+            "resource_type": "mentor_catalog_entry",
+            "entity_type": "person",
+            "programs": ["公共卫生与健康"],
+            "provenance": {},
+        },
+    ]
+    grouped = group_mentor_resources(records)
+    assert len(grouped) == 1
+    assert grouped[0]["name"] == "John S. Ji"
+    assert grouped[0]["resource_types"] == [
+        "verified_mentor_profile",
+        "mentor_catalog_entry",
+    ]
+    assert grouped[0]["linked_resource_ids"] == [
+        "prof_john",
+        "catalog_john",
+    ]
+    assert grouped[0]["programs"] == ["公共卫生与健康"]
+
+    monkeypatch.setattr(advisor_api, "load_mentors", lambda: records)
+    monkeypatch.setattr(
+        advisor_api,
+        "mentor_data_summary",
+        lambda: {
+            "total_records": 2,
+            "published_records": 2,
+            "withheld_records": 0,
+            "catalog_records": 1,
+            "verified_profile_records": 1,
+            "match_candidate_records": 1,
+            "policy": "formal_verified_profiles_only",
+        },
+    )
+    response = client.get(
+        "/api/mentors",
+        params={"q": "John S. Ji", "resource_type": "verified_mentor_profile"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["data"]) == 1
+    assert response.json()["meta"]["filtered_resource_records"] == 2
+
+    distribution = client.get("/api/mentor-distribution").json()
+    assert distribution["meta"] == {
+        "grouped_advisors": 1,
+        "raw_resource_records": 2,
+        "basis": "published_resources_only",
+    }
+    departments = client.get("/api/departments").json()["data"]
+    target = next(
+        item for item in departments
+        if item["name"] == "万科公共卫生与健康学院"
+    )
+    assert target["advisor_count"] == 1
 
 
 def test_verified_record_can_publish_but_expired_record_cannot():

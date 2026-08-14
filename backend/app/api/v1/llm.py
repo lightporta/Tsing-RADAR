@@ -18,7 +18,7 @@ from app.services.interview import (
     state_response,
     sync_user_transcript,
 )
-from app.services.llm import embed_text
+from app.services.llm import embed_text, enhance_interview_reply
 
 router = APIRouter()
 
@@ -55,13 +55,28 @@ async def llm_chat(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     interview_state = state_response(session)
+    enhancement = await enhance_interview_reply(
+        user_message=user_messages[-1],
+        fixed_reply=interview_state.assistant_message,
+    )
     visible = interview_state.assistant_message
+    if enhancement.text:
+        visible = f"{enhancement.text}\n\n{visible}"
+    enhancement_meta = {
+        "assistant_mode": "fixed_interview_with_optional_llm_enhancement",
+        "enhancement_provider": enhancement.provider,
+        "enhancement_status": enhancement.status,
+    }
     finish_meta = interview_state.model_dump(
         mode="json",
         exclude={"assistant_message", "messages"},
     )
+    finish_meta.update(enhancement_meta)
     if not stream:
-        return interview_state.model_dump(mode="json")
+        payload = interview_state.model_dump(mode="json")
+        payload["assistant_message"] = visible
+        payload.update(enhancement_meta)
+        return payload
 
     async def sse_stream():
         chunks = [visible[i : i + 8] for i in range(0, len(visible), 8)] or [""]

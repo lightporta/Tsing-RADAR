@@ -1,6 +1,9 @@
 services:
   edge:
     image: ${CADDY_IMAGE:?Set an immutable Caddy image digest}
+    labels:
+      com.tsingradar.source-commit: ${SOURCE_COMMIT:-unset}
+      com.tsingradar.release-id: ${RELEASE_ID:-unset}
     restart: unless-stopped
     environment:
       WEB_HOST: ${WEB_HOST:?Set the approved Web host}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -18,6 +18,14 @@ from app.services.identity import Principal
 
 router = APIRouter()
 PROJECT_TIMEZONE = ZoneInfo("Asia/Shanghai")
+
+
+def _deadline_is_past(value: object, *, today: date) -> bool:
+    try:
+        deadline = value if isinstance(value, date) else date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return False
+    return deadline < today
 
 
 def _public_record(record: Recruitment) -> dict:
@@ -44,8 +52,11 @@ def list_recruitments(
     db: Session = Depends(get_db),
 ):
     result = []
+    now = datetime.now(PROJECT_TIMEZONE)
     for mentor in load_mentors():
         for recruitment in mentor.get("recruitments", []) or []:
+            if _deadline_is_past(recruitment.get("deadline"), today=now.date()):
+                continue
             if urgent is True and not recruitment.get("is_urgent", False):
                 continue
             result.append(recruitment)
@@ -59,6 +70,8 @@ def list_recruitments(
         .all()
     )
     for record in published_db:
+        if _deadline_is_past(record.deadline, today=now.date()):
+            continue
         if urgent is True and not record.is_urgent:
             continue
         result.append(_public_record(record))
@@ -109,6 +122,8 @@ def publish_recruitment(
     principal: Principal = Depends(get_mutating_principal),
 ):
     now = datetime.now(PROJECT_TIMEZONE)
+    if request.deadline < now.date():
+        raise HTTPException(status_code=422, detail="截止日期不能早于今天")
     record = Recruitment(
         publisher_id=principal.subject_id,
         publisher_type="student_submission",

@@ -1,6 +1,9 @@
 services:
   backend:
     image: ${BACKEND_IMAGE:?Set an immutable backend image digest}
+    labels:
+      com.tsingradar.source-commit: ${SOURCE_COMMIT:-unset}
+      com.tsingradar.release-id: ${RELEASE_ID:-unset}
     user: "10001:10001"
     restart: unless-stopped
     init: true
@@ -147,6 +150,9 @@ services:
 
   frontend:
     image: ${FRONTEND_IMAGE:?Set an immutable frontend image digest}
+    labels:
+      com.tsingradar.source-commit: ${SOURCE_COMMIT:-unset}
+      com.tsingradar.release-id: ${RELEASE_ID:-unset}
     restart: unless-stopped
     networks:
       - prod-app

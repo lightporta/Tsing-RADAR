@@ -196,6 +196,8 @@ async def test_llm_service_uses_only_resolved_selected_provider(monkeypatch):
 
     monkeypatch.setattr(llm_service, "settings", configured)
     monkeypatch.setattr(llm_service.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(llm_service.logger, "disabled", False)
+    monkeypatch.setattr(llm_service.logger, "propagate", True)
     reply = await llm_service.llm_complete(
         [LLMMessage(role="user", content="synthetic prompt")]
     )
@@ -207,6 +209,68 @@ async def test_llm_service_uses_only_resolved_selected_provider(monkeypatch):
         "Content-Type": "application/json",
     }
     assert captured["payload"]["model"] == "deepseek-chat"
+
+
+@pytest.mark.asyncio
+async def test_interview_enhancement_rejects_questions(monkeypatch):
+    configured = Settings(
+        _env_file=None,
+        LLM_PROVIDER="glm",
+        GLM_API_KEY=SYNTHETIC_KEY,
+    )
+
+    async def fake_result(_messages, **_kwargs):
+        return llm_service.LLMCompletionResult(
+            text="听起来很棒，要不要继续聊聊？",
+            provider="glm",
+            model="glm-4-flash",
+        )
+
+    monkeypatch.setattr(llm_service, "settings", configured)
+    monkeypatch.setattr(llm_service, "_llm_complete_result", fake_result)
+    result = await llm_service.enhance_interview_reply(
+        user_message="我喜欢机器人",
+        fixed_reply="你更偏好理论还是工程？",
+    )
+    assert result.status == "unavailable"
+    assert result.text is None
+    assert result.provider == "glm"
+
+
+@pytest.mark.asyncio
+async def test_llm_failure_logs_safe_provider_metadata(monkeypatch, caplog):
+    configured = Settings(
+        _env_file=None,
+        LLM_PROVIDER="glm",
+        GLM_API_KEY=SYNTHETIC_KEY,
+    )
+
+    class Client:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic provider failure without secret")
+
+    monkeypatch.setattr(llm_service, "settings", configured)
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(llm_service.logger, "disabled", False)
+    monkeypatch.setattr(llm_service.logger, "propagate", True)
+    with caplog.at_level(logging.WARNING, logger="app.services.llm"):
+        reply = await llm_service.llm_complete(
+            [LLMMessage(role="user", content="synthetic prompt")]
+        )
+    assert reply is None
+    assert "provider=glm" in caplog.text
+    assert "model=glm-4-flash" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert SYNTHETIC_KEY not in caplog.text
 
 
 @pytest.mark.asyncio

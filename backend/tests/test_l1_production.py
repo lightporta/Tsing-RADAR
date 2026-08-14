@@ -401,14 +401,32 @@ def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
     }
     assert protected
     public_dialogue_route = ("POST", "/api/v1/llm/chat")
+    approved_private_routes = {
+        ("POST", "/api/documents"),
+        ("GET", "/api/documents"),
+        ("GET", "/api/documents/{document_id}"),
+        ("DELETE", "/api/documents/{document_id}"),
+        ("POST", "/api/resume/generate"),
+        ("POST", "/api/resume/submit"),
+        ("POST", "/api/artifacts/match-report"),
+        ("POST", "/api/artifacts/{document_id}/download-grant"),
+        ("POST", "/api/artifacts/download/{token}"),
+    }
     assert public_dialogue_route in allowed
-    assert (protected - {public_dialogue_route}).isdisjoint(allowed)
+    assert approved_private_routes <= allowed
+    assert (
+        protected - {public_dialogue_route} - approved_private_routes
+    ).isdisjoint(allowed)
     assert ("POST", "/api/v1/llm/embeddings") not in allowed
     caddy = (DEPLOY / "edge" / "routes" / "web-api.caddy").read_text(
         encoding="utf-8"
     )
     assert "path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat" in caddy
     assert "path /api/*" not in caddy
+    nginx = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
+    assert "proxy_pass http://backend:8000" not in nginx
+    assert "location /api/" not in nginx
+    assert "location /v1/" not in nginx
     assert ("GET", "/api/new-route-added-later") not in allowed
 
 

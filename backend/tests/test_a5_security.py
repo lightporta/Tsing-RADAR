@@ -21,6 +21,7 @@ from app.main import app, startup_event
 from app.models.identity import ExternalIdentity, IdentitySession
 from app.models.questionnaire_session import QuestionnaireSession
 from app.models.recruitment import Recruitment
+from app.services.recruitment_review import review_recruitment
 
 QXD_BEARER = "test-qxd-key"
 QXD_CLAIM_SECRET = "test-qxd-end-user-secret"
@@ -194,6 +195,12 @@ def test_web_interview_json_surface_persists_and_returns_a_complete_state():
     ]
     assert state["current_question"]["dimension"] == "research_mode"
     assert state["assistant_message"]
+    assert state["assistant_mode"] == "fixed_interview_with_optional_llm_enhancement"
+    assert state["enhancement_status"] in {
+        "available",
+        "unavailable",
+        "disabled",
+    }
     assert client.get(f"/api/interviews/{session_id}").json()["profile"] == state["profile"]
 
 
@@ -414,6 +421,55 @@ def test_application_is_in_app_only_and_all_operations_are_owner_scoped():
             db.commit()
 
 
+def test_recruitment_submission_mine_withdraw_and_internal_review():
+    owner, owner_headers = _web_client()
+    other, other_headers = _web_client()
+    payload = {
+        "type": "科研助理",
+        "title": "内部审核流程测试",
+        "req": "验证待审核、撤回和批准链路",
+        "major": "测试",
+        "deadline": "2027-01-01",
+        "is_urgent": False,
+    }
+    first = owner.post("/api/recruitments", headers=owner_headers, json=payload)
+    assert first.status_code == 200
+    first_id = first.json()["recruit_id"]
+    assert owner.get("/api/recruitments/mine").json()["data"][0][
+        "review_status"
+    ] == "pending_review"
+    assert other.delete(
+        f"/api/recruitments/{first_id}", headers=other_headers
+    ).status_code == 403
+    assert owner.delete(
+        f"/api/recruitments/{first_id}", headers=owner_headers
+    ).status_code == 200
+
+    second = owner.post(
+        "/api/recruitments",
+        headers=owner_headers,
+        json={**payload, "title": "审核批准流程测试"},
+    )
+    second_id = second.json()["recruit_id"]
+    with SessionLocal() as db:
+        reviewed = review_recruitment(
+            db,
+            recruit_id=second_id,
+            action="approve",
+            reviewer="test-reviewer",
+            reason="fixture verified",
+        )
+        assert reviewed.authorization_basis == "publisher_submission_reviewed"
+        assert reviewed.governance["review_history"][0]["reviewer"] == "test-reviewer"
+    public_ids = {
+        item["recruit_id"] for item in owner.get("/api/recruitments").json()["data"]
+    }
+    assert second_id in public_ids
+    assert owner.delete(
+        f"/api/recruitments/{second_id}", headers=owner_headers
+    ).status_code == 409
+
+
 def test_client_supplied_identity_fields_are_rejected():
     client, headers = _web_client()
     recruitment = client.post(
@@ -454,7 +510,8 @@ def test_match_result_limit_is_hard_capped_and_home_does_not_fetch_all_mentors()
         "async function match", 1
     )[0]
     assert "fetchAdvisors" not in load_all_body
-    assert "fetchScatter" in load_all_body
+    assert "fetchMentorDistribution" in load_all_body
+    assert "fetchScatter" not in load_all_body
 
 
 def test_frontend_runtime_has_no_legacy_identity_or_external_contact_paths():
