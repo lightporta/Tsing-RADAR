@@ -311,5 +311,7 @@ onMounted(async () => {
   .summary-grid { grid-template-columns: repeat(3, 1fr); }
   .search-panel { grid-template-columns: 1fr; }
   .fact-row { grid-template-columns: 1fr; gap: 4px; }
+  .card-heading h3 { display: block; margin: 8px 0 0; }
+  .homepage-link { flex-shrink: 0; }
 }
 </style>
