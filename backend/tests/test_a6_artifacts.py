@@ -36,6 +36,7 @@ from app.services.artifact_delivery import (
     issue_delivery_grant,
     redeem_delivery_token,
 )
+from app.services.artifact_generation import _find_cjk_font
 from app.services.identity import Principal
 from app.services.object_storage import ObjectStorageError
 from app.services.private_documents import (
@@ -46,6 +47,18 @@ from app.services.private_documents import (
 
 QXD_BEARER = "test-qxd-key"
 QXD_CLAIM_SECRET = "test-qxd-end-user-secret"
+
+
+def test_linux_auto_font_prefers_reportlab_compatible_wqy(monkeypatch):
+    wqy = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+    noto = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    monkeypatch.setattr(settings, "DOCUMENT_CJK_FONT_PATH", None)
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda path: str(path) in {wqy, noto},
+    )
+    assert _find_cjk_font() == Path(wqy)
 
 
 def _web_client() -> tuple[TestClient, dict[str, str]]:

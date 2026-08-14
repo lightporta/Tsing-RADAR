@@ -148,9 +148,12 @@ def _find_cjk_font() -> Path:
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/msyh.ttf",
         "C:/Windows/Fonts/simhei.ttf",
+        # ReportLab can register the packaged WQY TrueType collection directly.
+        # Some Noto CJK collections use outlines unsupported by the installed
+        # ReportLab/fontTools combination, so keep them as later fallbacks.
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     ]
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
