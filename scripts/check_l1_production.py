@@ -7,6 +7,7 @@ reads real deployment secret directories and never prints values or hashes.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -25,6 +26,10 @@ MEDIA = DEPLOY / "compose.media.yml"
 STAGE = DEPLOY / "compose.stage.yml"
 JOBS = DEPLOY / "compose.jobs.yml"
 EMPTY_MENTOR_SEED = DEPLOY / "data" / "empty-mentor-governance.json"
+EMPTY_MENTOR_SCORE_SEED = DEPLOY / "data" / "empty-mentor-score-governance.json"
+EMPTY_MENTOR_SCORE_SHA256 = (
+    "9cbb62b7a9d7aa04ae30ba9d84073ddd115a6a4988ed9ac28911491339d41780"
+)
 
 HOST_MEMORY_MIB = 7578
 DEFAULT_RESOLVED_LIMIT_MIB = 5184
@@ -284,6 +289,46 @@ def _empty_mentor_seed_contract(service: dict[str, Any]) -> bool:
     )
 
 
+def _empty_mentor_score_seed_contract(service: dict[str, Any]) -> bool:
+    """Require the independent score release to stay closed on the empty seed."""
+
+    try:
+        raw = EMPTY_MENTOR_SCORE_SEED.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    if (
+        hashlib.sha256(raw).hexdigest() != EMPTY_MENTOR_SCORE_SHA256
+        or not isinstance(payload, dict)
+        or set(payload) != {"schema_version", "generated_at", "releases"}
+        or payload.get("schema_version") != "1.0"
+        or payload.get("releases") != []
+    ):
+        return False
+    mounts = [
+        item
+        for item in service.get("volumes", [])
+        if isinstance(item, dict)
+        and item.get("target") == "/app/data/mentor-scores.evidence.json"
+    ]
+    if len(mounts) != 1:
+        return False
+    mount = mounts[0]
+    environment = _environment(service)
+    return (
+        mount.get("type") == "bind"
+        and mount.get("read_only") is True
+        and mount.get("bind", {}).get("create_host_path") is False
+        and Path(str(mount.get("source", ""))).resolve(strict=False)
+        == EMPTY_MENTOR_SCORE_SEED.resolve(strict=False)
+        and environment.get("MENTOR_SCORE_DATA_FILE")
+        == "/app/data/mentor-scores.evidence.json"
+        and environment.get("MENTOR_SCORE_DATA_EXPECTED_SHA256")
+        == EMPTY_MENTOR_SCORE_SHA256
+        and environment.get("MENTOR_SCORE_COVERAGE_THRESHOLD") == "0.80"
+    )
+
+
 def _post_migration_verification_contract(service: dict[str, Any]) -> bool:
     mounts = {
         str(item.get("target")): item
@@ -433,6 +478,8 @@ def run_checks(
                 "MILVUS_BUCKET": "tsing-radar-milvus",
                 "PROD_COS_BUCKET": "tsing-radar-prod-1250000000",
                 "PROD_CORS_ORIGINS": "https://radar.invalid",
+                "MENTOR_SCORE_DATA_EXPECTED_SHA256": EMPTY_MENTOR_SCORE_SHA256,
+                "MENTOR_SCORE_COVERAGE_THRESHOLD": "0.80",
                 "STAGE_DATABASE_NAME": "tsing_radar_stage",
                 "STAGE_DATABASE_USER": "tsing_radar_stage",
                 "STAGE_COS_BUCKET": "tsing-radar-stage-1250000000",
@@ -531,6 +578,13 @@ def run_checks(
                 "mentor.empty_governance_seed_mounted_fail_closed",
                 _empty_mentor_seed_contract(default_services["backend"]),
                 "backend lacks the exact tracked zero-record governance seed bind",
+            )
+        )
+        checks.append(
+            _check(
+                "mentor_scores.empty_release_seed_mounted_fail_closed",
+                _empty_mentor_score_seed_contract(default_services["backend"]),
+                "backend lacks the exact tracked zero-release score evidence bind",
             )
         )
         resolved_memory = sum(
@@ -1253,6 +1307,8 @@ def run_checks(
         ("GET", "/api/documents"),
         ("GET", "/api/documents/{document_id}"),
         ("DELETE", "/api/documents/{document_id}"),
+        ("POST", "/api/documents/{document_id}/analysis"),
+        ("POST", "/api/documents/{document_id}/interpretation"),
         ("POST", "/api/resume/generate"),
         ("POST", "/api/resume/submit"),
         ("POST", "/api/artifacts/match-report"),
