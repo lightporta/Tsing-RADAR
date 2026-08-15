@@ -1,16 +1,14 @@
-import { get, post, remove } from './request'
+import { get, patch, post, remove } from './request'
 import type { RecruitmentItem } from '@/types/api'
 
-// =====================================================================
-// 招募信息平台 API
-// =====================================================================
-
-/** 获取招募列表，urgent=true 仅返回急需榜 */
 export function fetchRecruitments(urgent?: boolean) {
-  return get<{ data: RecruitmentItem[] }>('/api/recruitments', urgent === undefined ? {} : { urgent })
+  return get<{ data: RecruitmentItem[] }>(
+    '/api/recruitments',
+    urgent === undefined ? {} : { urgent },
+  )
 }
 
-export interface RecruitmentCreateRequest {
+export interface RecruitmentFormData {
   type: string
   title: string
   req: string
@@ -19,23 +17,53 @@ export interface RecruitmentCreateRequest {
   is_urgent: boolean
 }
 
-/** 发布招募 */
-export function publishRecruitment(req: RecruitmentCreateRequest) {
-  return post<{ recruit_id: string; status: string }>('/api/recruitments', req)
+export interface RecruitmentMutationResult {
+  recruit_id: string
+  status: 'pending_review'
+  publication_status: 'restricted'
+  updated?: boolean
 }
 
-export interface MyRecruitment {
+export function publishRecruitment(
+  req: RecruitmentFormData,
+  idempotencyKey: string,
+) {
+  return post<RecruitmentMutationResult>('/api/recruitments', req, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+}
+
+export interface MyRecruitment extends RecruitmentFormData {
   recruit_id: string
-  title: string
   review_status: string
   publication_status: string
-  created_at: string
+  review_reason?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export function fetchMyRecruitments() {
   return get<{ data: MyRecruitment[] }>('/api/recruitments/mine')
 }
 
-export function withdrawRecruitment(recruitId: string) {
-  return remove<{ status: 'deleted' }>(`/api/recruitments/${recruitId}`)
+export function updateRecruitment(
+  recruitId: string,
+  req: RecruitmentFormData,
+  idempotencyKey: string,
+) {
+  return patch<RecruitmentMutationResult>(
+    `/api/recruitments/${recruitId}`,
+    { ...req, submit_for_review: true },
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  )
+}
+
+export function withdrawRecruitment(
+  recruitId: string,
+  idempotencyKey: string,
+) {
+  return remove<{ status: 'withdrawn'; recruit_id: string }>(
+    `/api/recruitments/${recruitId}`,
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  )
 }

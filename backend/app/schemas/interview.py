@@ -51,6 +51,34 @@ class HardConstraintOperator(str, Enum):
     MAXIMUM = "maximum"
 
 
+class HardConstraintCapability(BaseModel):
+    """A field is selectable only when published candidates contain evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: HardConstraintField
+    label: str
+    available: bool
+    evidence_record_count: int = Field(ge=0)
+    candidate_count: int = Field(ge=0)
+    evidence_coverage: float = Field(ge=0, le=1)
+    operators: list[HardConstraintOperator]
+    values: list[str] = Field(default_factory=list, max_length=200)
+    accepts_free_text: bool = False
+    unavailable_reason: str | None = None
+
+
+class HardConstraintCapabilitiesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["hard-constraints-v1"] = "hard-constraints-v1"
+    candidate_count: int = Field(ge=0)
+    fields: list[HardConstraintCapability]
+    basis: Literal["published_verified_candidate_fields"] = (
+        "published_verified_candidate_fields"
+    )
+
+
 class HardConstraint(BaseModel):
     """由用户在画像编辑/确认阶段确认的结构化硬约束。"""
 
@@ -75,6 +103,17 @@ class HardConstraint(BaseModel):
 
     @model_validator(mode="after")
     def validate_field_operator(self) -> "HardConstraint":
+        if self.field == HardConstraintField.RESEARCH_TOPIC and self.operator not in {
+            HardConstraintOperator.CONTAINS,
+            HardConstraintOperator.EXCLUDES,
+        }:
+            raise ValueError("research_topic 仅支持 contains/excludes")
+        if self.field == HardConstraintField.ADVISOR_ID and self.operator not in {
+            HardConstraintOperator.EQUALS,
+            HardConstraintOperator.ONE_OF,
+            HardConstraintOperator.EXCLUDES,
+        }:
+            raise ValueError("advisor_id 仅支持 equals/one_of/excludes")
         if self.operator in {
             HardConstraintOperator.MINIMUM,
             HardConstraintOperator.MAXIMUM,
@@ -261,3 +300,14 @@ class InterviewStateResponse(BaseModel):
     recommend_ready: bool
     assistant_message: str
     messages: list[InterviewMessage]
+
+
+class InterviewEnhancementRetryResponse(BaseModel):
+    """GLM wording only; retrying never mutates or advances interview state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    text: str
+    provider: Literal["glm"]
+    status: Literal["available"] = "available"

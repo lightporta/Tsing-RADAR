@@ -51,7 +51,6 @@ def _clear_direct_secret_environment(monkeypatch) -> None:
         "LLM_PROVIDER",
         "LLM_API_KEY_FILE",
         "GLM_API_KEY",
-        "DEEPSEEK_API_KEY",
         "PUBLIC_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -357,11 +356,11 @@ def test_production_uses_glm_file_secret_while_stage_stays_disabled():
     assert 'LLM_ENABLED: "true"' in prod
     assert "LLM_PROVIDER: glm" in prod
     assert "LLM_API_KEY_FILE: /run/secrets/llm_api_key" in prod
+    assert 'LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: "4.0"' in prod
     assert "source: ${SECRET_ROOT:?Set SECRET_ROOT}/llm_api_key" in prod
     assert "target: /run/secrets/llm_api_key" in prod
     assert "create_host_path: false" in prod
     assert "GLM_API_KEY:" not in prod
-    assert "DEEPSEEK_API_KEY:" not in prod
     assert 'LLM_ENABLED: "false"' in stage
     assert "LLM_API_KEY_FILE:" not in stage
     assert "https://cos.ap-hongkong.myqcloud.com" in prod
@@ -406,6 +405,8 @@ def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
         ("GET", "/api/documents"),
         ("GET", "/api/documents/{document_id}"),
         ("DELETE", "/api/documents/{document_id}"),
+        ("POST", "/api/documents/{document_id}/analysis"),
+        ("POST", "/api/documents/{document_id}/interpretation"),
         ("POST", "/api/resume/generate"),
         ("POST", "/api/resume/submit"),
         ("POST", "/api/artifacts/match-report"),
@@ -425,6 +426,8 @@ def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
     assert not any(line.strip() == "path /api/*" for line in caddy.splitlines())
     assert "not path /api/* /v1/* /health/*" in caddy
     assert "max_size 8500KB" in caddy
+    assert "documents/[A-Za-z0-9_-]+/(analysis|interpretation)" in caddy
+    assert "recruitments/[A-Za-z0-9_-]+" in caddy
     assert caddy.index("not path /api/* /v1/* /health/*") < caddy.index(
         'respond "Route or method not available" 404'
     )

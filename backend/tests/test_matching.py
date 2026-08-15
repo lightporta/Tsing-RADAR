@@ -18,6 +18,7 @@ from app.schemas.matching import (
     RankingWeights,
 )
 from app.services.matching import (
+    hard_constraint_capabilities,
     hash_embedding,
     keyword_overlap_baseline,
     lexical_concept_similarity,
@@ -213,6 +214,37 @@ def test_hard_constraints_run_before_recall_and_fail_closed():
         "最好离宿舍近一点"
     ]
     assert "具体、不可妥协条件" in unresolved.meta["clarification_questions"][0]
+
+
+def test_capabilities_follow_current_evidence_and_zero_trace_names_constraint():
+    candidates = _candidates()
+    del candidates[0]["locations"]
+    del candidates[0]["provenance"]["locations"]
+    capabilities = hard_constraint_capabilities(candidates)
+    by_field = {item["field"]: item for item in capabilities["fields"]}
+    assert by_field["location"]["available"] is True
+    assert by_field["location"]["evidence_record_count"] == 1
+    assert by_field["location"]["evidence_coverage"] == pytest.approx(0.5)
+    assert by_field["research_topic"]["operators"] == ["contains", "excludes"]
+
+    result = match_mentors(
+        candidates,
+        _portrait(
+            [
+                {
+                    "field": "department",
+                    "operator": "equals",
+                    "value": ["不存在的院系"],
+                }
+            ]
+        ),
+        as_of=AS_OF,
+    )
+    assert result.items == []
+    assert result.meta["constraint_trace"][0]["candidates_before"] == 2
+    assert result.meta["constraint_trace"][0]["candidates_after"] == 0
+    assert "院系" in result.meta["zero_result_reason"]
+    assert "不存在的院系" in result.meta["zero_result_reason"]
 
 
 def test_source_less_or_legacy_subjective_fields_cannot_enter_recall():

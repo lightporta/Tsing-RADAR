@@ -146,6 +146,25 @@ _DRAFT_REJECT_SIGNALS = {
 }
 
 
+def _is_constraint_rejection(answer: str) -> bool:
+    cleaned = answer.strip(" ，。；、,.!?！？")
+    if cleaned in _DRAFT_REJECT_SIGNALS or cleaned.lower() in _EMPTY_CONSTRAINTS:
+        return True
+    return any(
+        phrase in cleaned
+        for phrase in (
+            "不作为硬约束",
+            "只是一般偏好",
+            "只是偏好",
+            "均为一般偏好",
+            "没有不可妥协条件",
+            "没有硬性条件",
+            "无硬性条件",
+            "无硬约束",
+        )
+    )
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -300,20 +319,16 @@ def _extract_categorical_signals(
                 ("undecided", ("不确定", "都可以", "无所谓")),
             ),
         )
-    if (profile.get("innovation_risk") is None or overwrite) and _contains_any(
+    explicit_risk_signal = _contains_any(
         answer,
-        (
-            "蓝海",
-            "原始创新",
-            "少有人",
-            "高风险",
-            "探索新",
-            "成熟",
-            "稳妥",
-            "平衡",
-            "都可以",
-            "不确定",
-        ),
+        ("蓝海", "原始创新", "少有人", "高风险", "探索新", "成熟", "稳妥"),
+    )
+    contextual_risk_signal = _contains_any(
+        answer,
+        ("平衡", "兼顾", "适中", "都可以", "不确定", "无所谓"),
+    ) and _contains_any(answer, ("创新", "风险", "路线", "方向"))
+    if (profile.get("innovation_risk") is None or overwrite) and (
+        explicit_risk_signal or contextual_risk_signal
     ):
         profile["innovation_risk"] = _choice_from_answer(
             answer,
@@ -586,7 +601,7 @@ def _process_constraint_followup(
             drafts.pop(0)
             if current.source_text in unresolved:
                 unresolved.remove(current.source_text)
-        elif cleaned in _DRAFT_REJECT_SIGNALS:
+        elif _is_constraint_rejection(cleaned):
             drafts.pop(0)
             if current.source_text in unresolved:
                 unresolved.remove(current.source_text)
@@ -604,7 +619,7 @@ def _process_constraint_followup(
             if revised.proposed_constraint is None:
                 unresolved.append(revised.source_text)
     else:
-        if cleaned in _DRAFT_REJECT_SIGNALS:
+        if _is_constraint_rejection(cleaned):
             unresolved.pop(0)
         else:
             revised = _draft_constraint(cleaned)

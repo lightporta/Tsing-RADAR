@@ -1,20 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { useChatStore } from '@/stores/useChatStore'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
+import ChatHistoryPanel from './ChatHistoryPanel.vue'
 
-// =====================================================================
-// 对话栏顶部工具栏（文档 §3.3）
-// 左侧：收起按钮（双左箭头 <<）
-// 右侧：新对话+ 按钮
-// =====================================================================
-
-defineProps<{ collapsed?: boolean }>()
-const emit = defineEmits<{ (e: 'toggle'): void }>()
+withDefaults(defineProps<{ collapsed?: boolean; mobileMode?: boolean }>(), {
+  collapsed: false,
+  mobileMode: false,
+})
+const emit = defineEmits<{ (event: 'toggle'): void }>()
 
 const chatStore = useChatStore()
 const advisorStore = useAdvisorStore()
 const confirmVisible = ref(false)
+const historyVisible = ref(false)
+const cancelNewButton = ref<HTMLButtonElement | null>(null)
+const newConversationButton = ref<HTMLButtonElement | null>(null)
+const historyButton = ref<HTMLButtonElement | null>(null)
+const confirmCard = ref<HTMLElement | null>(null)
 
 function requestNewConversation() {
   if (chatStore.messageCount > 1) {
@@ -26,32 +29,92 @@ function requestNewConversation() {
 
 function startNewConversation() {
   confirmVisible.value = false
-  chatStore.newConversation()
+  chatStore.newConversation(advisorStore.createHistorySnapshot())
   advisorStore.resetResults()
 }
+
+async function closeHistory() {
+  historyVisible.value = false
+  await nextTick()
+  historyButton.value?.focus()
+}
+
+function handleConfirmKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    confirmVisible.value = false
+    return
+  }
+  if (event.key !== 'Tab' || !confirmCard.value) return
+  const focusable = Array.from(confirmCard.value.querySelectorAll<HTMLButtonElement>('button:not([disabled])'))
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+watch(confirmVisible, async (visible, wasVisible) => {
+  await nextTick()
+  if (visible) cancelNewButton.value?.focus()
+  else if (wasVisible) newConversationButton.value?.focus()
+})
 </script>
 
 <template>
   <div class="chat-toolbar">
-    <button class="tool-btn" :class="{ collapsed }" aria-label="收起对话栏" @click="emit('toggle')">
+    <button
+      v-if="!mobileMode"
+      class="tool-btn"
+      :class="{ collapsed }"
+      :aria-label="collapsed ? '展开对话栏' : '收起对话栏'"
+      :aria-expanded="!collapsed"
+      @click="emit('toggle')"
+    >
       <el-icon aria-hidden="true">«</el-icon>
-      <span class="btn-text">收起</span>
+      <span class="btn-text">{{ collapsed ? '展开' : '收起' }}</span>
     </button>
-    <button class="tool-btn primary" aria-label="开启新对话" @click="requestNewConversation">
-      <el-icon aria-hidden="true">＋</el-icon>
-      <span class="btn-text">新对话</span>
-    </button>
+    <div class="toolbar-actions">
+      <button
+        ref="historyButton"
+        class="tool-btn"
+        aria-label="查看本机会话历史"
+        aria-haspopup="dialog"
+        @click="historyVisible = true"
+      >
+        <el-icon aria-hidden="true">◷</el-icon>
+        <span class="btn-text">历史</span>
+      </button>
+      <button ref="newConversationButton" class="tool-btn primary" aria-label="开启新对话" @click="requestNewConversation">
+        <el-icon aria-hidden="true">＋</el-icon>
+        <span class="btn-text">新对话</span>
+      </button>
+    </div>
 
-    <div v-if="confirmVisible" class="confirm-layer" role="dialog" aria-modal="true" aria-labelledby="new-chat-title">
-      <div class="confirm-card">
+    <div
+      v-if="confirmVisible"
+      class="confirm-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="new-chat-title"
+      @keydown="handleConfirmKeydown"
+    >
+      <div ref="confirmCard" class="confirm-card">
         <strong id="new-chat-title">开启新对话？</strong>
-        <p>当前访谈内容和匹配结果会被清空。</p>
+        <p>当前访谈和匹配结果会先保存到本机历史，再开启空白会话。</p>
         <div class="confirm-actions">
-          <button class="confirm-btn" @click="confirmVisible = false">继续当前对话</button>
-          <button class="confirm-btn danger" @click="startNewConversation">清空并新建</button>
+          <button ref="cancelNewButton" class="confirm-btn" @click="confirmVisible = false">继续当前对话</button>
+          <button class="confirm-btn danger" @click="startNewConversation">保存并新建</button>
         </div>
       </div>
     </div>
+
+    <ChatHistoryPanel v-if="historyVisible" @close="closeHistory" />
   </div>
 </template>
 
@@ -65,6 +128,13 @@ function startNewConversation() {
   background: $color-bg;
   border-bottom: 1px solid $color-border-light;
   flex-shrink: 0;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 
 .confirm-layer {
@@ -116,6 +186,11 @@ function startNewConversation() {
     color: #fff;
     background: $color-danger;
   }
+
+  &:focus-visible {
+    outline: 2px solid $color-primary;
+    outline-offset: 2px;
+  }
 }
 
 .tool-btn {
@@ -124,25 +199,38 @@ function startNewConversation() {
   gap: 4px;
   padding: 6px 12px;
   border-radius: $card-radius;
-  font-size: 13px;
   color: $text-regular;
+  font-size: 13px;
   transition: $transition-fast;
 
   &:hover {
-    background: $color-bg-hover;
     color: $color-primary;
+    background: $color-bg-hover;
   }
+
   &:active {
     transform: scale(0.95);
   }
+
+  &:focus-visible {
+    outline: 2px solid $color-primary;
+    outline-offset: 2px;
+  }
+
   &.primary {
     color: $color-primary;
     font-weight: 500;
   }
-  &.collapsed {
-    .el-icon {
-      transform: rotate(180deg);
-    }
+
+  &.collapsed .el-icon {
+    transform: rotate(180deg);
+  }
+}
+
+@media (max-width: $bp-tablet) {
+  .chat-toolbar {
+    height: 40px;
+    padding: 0 $spacing-sm;
   }
 }
 </style>

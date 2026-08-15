@@ -29,6 +29,11 @@ body {
   box-sizing: border-box;
 }
 
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 3px solid rgba(64, 158, 255, 0.72);
+  outline-offset: 2px;
+}
+
 a {
   color: $color-primary;
   text-decoration: none;
@@ -100,6 +105,17 @@ a {
 .view-transition-leave-to {
   opacity: 0;
   transform: translateX(-20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 // —— Element Plus 主题色覆盖 ——

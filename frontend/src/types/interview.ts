@@ -34,6 +34,26 @@ export interface HardConstraint {
   source_text?: string | null
 }
 
+export interface HardConstraintCapability {
+  field: HardConstraintField
+  label: string
+  available: boolean
+  evidence_record_count: number
+  candidate_count: number
+  evidence_coverage: number
+  operators: HardConstraintOperator[]
+  values: string[]
+  accepts_free_text: boolean
+  unavailable_reason: string | null
+}
+
+export interface HardConstraintCapabilities {
+  version: 'hard-constraints-v1'
+  candidate_count: number
+  fields: HardConstraintCapability[]
+  basis: 'published_verified_candidate_fields'
+}
+
 export interface DraftHardConstraint {
   draft_id: string
   source_text: string
@@ -88,8 +108,15 @@ export interface InterviewState {
   recommend_ready: boolean
   assistant_message?: string
   assistant_mode?: 'fixed_interview_with_optional_llm_enhancement'
-  enhancement_provider?: 'glm' | 'deepseek' | null
+  enhancement_provider?: 'glm' | null
   enhancement_status?: 'available' | 'unavailable' | 'disabled'
+}
+
+export interface InterviewEnhancementRetryResult {
+  session_id: string
+  text: string
+  provider: 'glm'
+  status: 'available'
 }
 
 export type InterviewProfilePatch = Partial<InterviewPortrait>

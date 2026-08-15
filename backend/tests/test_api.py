@@ -2,6 +2,7 @@
 
 import os
 import sys
+import uuid
 
 # 确保使用测试专用 SQLite，避免污染开发库
 os.environ["DATABASE_URL"] = "sqlite:///./test_tsing_radar.db"
@@ -47,6 +48,9 @@ def test_get_mentors():
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["data"] == []
+    gate = payload["meta"].pop("score_evidence_gate")
+    assert gate["gate_open"] is False
+    assert gate["coverage"] == 0
     assert payload["meta"] == {
         "total_records": 0,
         "published_records": 0,
@@ -82,6 +86,42 @@ def test_scatter():
     assert resp.status_code == 200
     assert resp.json()["data"] == []
     assert resp.json()["meta"]["policy"] == "formal_verified_profiles_only"
+    assert resp.json()["meta"]["score_evidence_gate"]["gate_open"] is False
+
+
+def test_capabilities_departments_and_score_gate_are_explicit():
+    capabilities = client.get(
+        "/api/interviews/hard-constraint-capabilities"
+    ).json()
+    assert capabilities["basis"] == "published_verified_candidate_fields"
+    assert capabilities["candidate_count"] == 0
+    assert all(not item["available"] for item in capabilities["fields"])
+
+    students = client.get("/api/departments/students").json()
+    mentors = client.get("/api/departments/mentors").json()
+    assert students["meta"]["scope"] == "student"
+    assert students["meta"]["source"]["url"].startswith("https://www.tsinghua.edu.cn/")
+    assert mentors["meta"]["scope"] == "mentor"
+    assert students["meta"]["basis"] == "official_department_directory"
+    student_names = {item["name"] for item in students["data"]}
+    assert {
+        "苏世民书院",
+        "求真书院",
+        "至善书院",
+        "水木书院",
+        "人工智能学院",
+        "安全科学学院",
+        "核能与新能源技术研究院",
+        "深圳国际研究生院",
+        "全球创新学院",
+        "国家卓越工程师学院",
+    } <= student_names
+    mentor_names = {item["name"] for item in mentors["data"]}
+    assert {"人工智能学院", "安全科学学院", "国家卓越工程师学院"} <= mentor_names
+    assert students["meta"]["basis"] != mentors["meta"]["basis"]
+    status = client.get("/api/mentor-evidence/status").json()["meta"]
+    assert status["gate_open"] is False
+    assert status["coverage"] == 0
 
 
 def test_match():
@@ -107,7 +147,10 @@ def test_publish_recruitment():
     """提交招募后进入审核队列，不直接发布。"""
     resp = client.post(
         "/api/recruitments",
-        headers=WEB_HEADERS,
+        headers={
+            **WEB_HEADERS,
+            "Idempotency-Key": f"test:{uuid.uuid4()}",
+        },
         json={
             "type": "招生",
             "title": "测试招募",

@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from app.db.session import SessionLocal
@@ -17,6 +18,7 @@ from app.main import app
 from app.models.questionnaire_session import QuestionnaireSession
 from app.models.identity import ExternalIdentity, IdentitySession
 from app.services.interview import create_session, answer_session, state_response
+from app.api.v1 import interview as interview_api
 
 client = TestClient(app)
 STUDENT_HEADERS: dict[str, str] = {}
@@ -81,6 +83,55 @@ def _answer(session_id: str, answer: str) -> dict:
     return response.json()
 
 
+def test_glm_enhancement_retry_is_owner_bound_and_state_preserving(monkeypatch):
+    started = _start()
+    answered = _answer(started["session_id"], "我关注自然语言处理")
+    with SessionLocal() as db:
+        before = db.get(QuestionnaireSession, started["session_id"])
+        before_messages = json.loads(json.dumps(before.messages, ensure_ascii=False))
+        before_version = before.profile_version
+
+    async def available(**kwargs):
+        assert kwargs["user_message"] == "我关注自然语言处理"
+        assert kwargs["fixed_reply"]
+        return SimpleNamespace(status="available", text="收到，我们继续。", provider="glm")
+
+    monkeypatch.setattr(interview_api, "enhance_interview_reply", available)
+    response = client.post(
+        f'/api/interviews/{answered["session_id"]}/enhancement-retry',
+        headers=STUDENT_HEADERS,
+        json={},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "session_id": answered["session_id"],
+        "text": "收到，我们继续。",
+        "provider": "glm",
+        "status": "available",
+    }
+    with SessionLocal() as db:
+        after = db.get(QuestionnaireSession, started["session_id"])
+        assert after.messages == before_messages
+        assert after.profile_version == before_version
+
+    async def unavailable(**_kwargs):
+        return SimpleNamespace(status="unavailable", text=None, provider="glm")
+
+    monkeypatch.setattr(interview_api, "enhance_interview_reply", unavailable)
+    failed = client.post(
+        f'/api/interviews/{answered["session_id"]}/enhancement-retry',
+        headers=STUDENT_HEADERS,
+        json={},
+    )
+    assert failed.status_code == 503
+    assert failed.json()["detail"] == {
+        "code": "glm_unavailable",
+        "message": "GLM 暂不可用，访谈状态未改变，请稍后重试。",
+        "retryable": True,
+        "provider": "glm",
+    }
+
+
 def _complete_interview() -> dict:
     state = _start()
     session_id = state["session_id"]
@@ -138,6 +189,22 @@ def test_high_information_answer_skips_dimensions_already_learned():
     assert state["profile"]["career_orientation"] == "industry"
     assert state["profile"]["innovation_risk"] == "mature"
     assert state["current_question"]["dimension"] == "hard_constraints"
+
+
+def test_balanced_mentorship_does_not_fill_innovation_risk():
+    state = _start()
+    for answer in (
+        "自然语言处理",
+        "理论与原理",
+        "平衡指导",
+    ):
+        state = _answer(state["session_id"], answer)
+
+    assert state["profile"]["mentorship_style"] == "balanced"
+    assert state["profile"]["innovation_risk"] is None
+
+    state = _answer(state["session_id"], "计划继续学术深造")
+    assert state["current_question"]["dimension"] == "innovation_risk"
 
 
 def test_profile_persists_can_be_edited_and_requires_reconfirmation():
@@ -247,6 +314,37 @@ def test_natural_language_constraints_require_explicit_structured_confirmation()
     assert confirmed.json()["recommend_ready"] is True
 
 
+@pytest.mark.parametrize(
+    "rejection",
+    (
+        "无",
+        "以上均为一般偏好，不作为硬约束；没有不可妥协条件",
+    ),
+)
+def test_constraint_clarification_accepts_explicit_rejection(rejection: str):
+    state = _start()
+    for answer in (
+        "自然语言处理",
+        "理论与原理",
+        "平衡指导",
+        "学术深造",
+        "成熟稳妥路线",
+        "希望研究自然语言处理",
+    ):
+        state = _answer(state["session_id"], answer)
+
+    assert state["needs_clarification"] is True
+    assert state["profile"]["draft_hard_constraints"]
+
+    rejected = _answer(state["session_id"], rejection)
+
+    assert rejected["profile"]["hard_constraints"] == []
+    assert rejected["profile"]["draft_hard_constraints"] == []
+    assert rejected["profile"]["unresolved_hard_constraints"] == []
+    assert rejected["needs_clarification"] is False
+    assert rejected["status"] == "awaiting_confirmation"
+
+
 def test_chat_correction_updates_complete_profile_before_confirmation():
     state = _complete_interview()
     revised = _answer(state["session_id"], "指导偏好改为高频具体指导")
@@ -303,13 +401,14 @@ def test_match_is_blocked_until_confirmed_then_uses_server_profile():
 
 
 def test_legacy_confirmed_natural_constraints_return_needs_clarification():
+    owner_session = _start()
     session_id = str(uuid.uuid4())
     with SessionLocal() as db:
-        owner = db.query(IdentitySession).order_by(IdentitySession.created_at.desc()).first()
+        owner = db.get(QuestionnaireSession, owner_session["session_id"])
         assert owner is not None
         session = QuestionnaireSession(
             session_id=session_id,
-            student_id=owner.subject_id,
+            student_id=owner.student_id,
             messages=[],
             portrait={
                 "research_interests": ["自然语言处理"],

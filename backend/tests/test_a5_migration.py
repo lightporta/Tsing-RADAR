@@ -1,4 +1,4 @@
-"""A6 Alembic 迁移可从空库升级，并可在 0004/0006 间往返。"""
+"""私有文档迁移可从空库升级，并可在 0004/head 间往返。"""
 
 from pathlib import Path
 
@@ -88,5 +88,81 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0006"
+    assert revision == "0007"
+    engine.dispose()
+
+
+def test_0007_clears_only_redundant_extracted_text_and_downgrade_does_not_restore_it(
+    tmp_path,
+    monkeypatch,
+):
+    backend_root = Path(__file__).resolve().parents[1]
+    database = tmp_path / "private_text_cleanup.db"
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    migration_url = f"sqlite:///{database.as_posix()}"
+    config.set_main_option("sqlalchemy.url", migration_url)
+    monkeypatch.setattr(settings, "DATABASE_URL", migration_url)
+
+    command.upgrade(config, "0006")
+    engine = create_engine(migration_url)
+    immutable_fields = {
+        "document_id": "00000000-0000-0000-0000-000000000007",
+        "owner_subject_id": "migration-owner",
+        "original_name": "private.docx",
+        "stored_name": "objects/migration-private.docx",
+        "extension": ".docx",
+        "media_type": (
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+        "size_bytes": 321,
+        "sha256": "7" * 64,
+        "status": "ready",
+        "document_kind": "upload",
+        "object_backend": "s3",
+        "scan_status": "clean",
+        "scan_method": "migration-test",
+    }
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO private_documents (
+                    document_id, owner_subject_id, original_name, stored_name,
+                    extension, media_type, size_bytes, sha256, status,
+                    extracted_text, document_kind, object_backend,
+                    scan_status, scan_method, generation_context
+                ) VALUES (
+                    :document_id, :owner_subject_id, :original_name, :stored_name,
+                    :extension, :media_type, :size_bytes, :sha256, :status,
+                    :extracted_text, :document_kind, :object_backend,
+                    :scan_status, :scan_method, '{}'
+                )
+                """
+            ),
+            {**immutable_fields, "extracted_text": "必须由迁移清除的历史正文"},
+        )
+    command.upgrade(config, "0007")
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT * FROM private_documents WHERE document_id = :id"),
+            {"id": immutable_fields["document_id"]},
+        ).mappings().all()
+    assert len(rows) == 1
+    assert rows[0]["extracted_text"] == ""
+    for field, expected in immutable_fields.items():
+        assert rows[0][field] == expected
+
+    command.downgrade(config, "0006")
+    with engine.connect() as connection:
+        downgraded = connection.execute(
+            text(
+                "SELECT document_id, extracted_text FROM private_documents "
+                "WHERE document_id = :id"
+            ),
+            {"id": immutable_fields["document_id"]},
+        ).mappings().one()
+    assert downgraded["document_id"] == immutable_fields["document_id"]
+    assert downgraded["extracted_text"] == ""
     engine.dispose()

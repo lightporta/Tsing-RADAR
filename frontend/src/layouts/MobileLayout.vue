@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '@/components/common/AppHeader.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import AdvisorListPanel from '@/components/advisor/AdvisorListPanel.vue'
@@ -18,6 +18,7 @@ const INITIAL_CHAT_RATIO = 0.25
 const DRAG_THRESHOLD = 6
 
 const router = useRouter()
+const route = useRoute()
 const drawerVisible = ref(false)
 const chatHeight = ref(0)
 const maxChatHeight = ref(CHAT_HANDLE_HEIGHT)
@@ -152,13 +153,9 @@ onBeforeUnmount(() => {
   removeDragListeners()
 })
 
-function goProfile() {
+function navigate(path: '/mentors' | '/profile' | '/recruitment') {
   drawerVisible.value = false
-  router.push('/profile')
-}
-function goRecruitment() {
-  drawerVisible.value = false
-  router.push('/recruitment')
+  router.push(path)
 }
 </script>
 
@@ -204,7 +201,7 @@ function goRecruitment() {
       >
         <span class="handle-bar" />
       </button>
-      <ChatPanel :mobile-mode="true" :hide-toolbar="true" />
+      <ChatPanel :mobile-mode="true" />
     </section>
 
     <!-- 汉堡菜单抽屉 -->
@@ -217,17 +214,36 @@ function goRecruitment() {
       body-class="mobile-drawer-body"
       title="主菜单"
     >
-      <div class="drawer-menu">
+      <nav class="drawer-menu" aria-label="移动端业务导航">
         <h3 class="drawer-title">Tsing-RADAR</h3>
-        <button type="button" class="drawer-item" @click="goProfile">
+        <button
+          type="button"
+          class="drawer-item"
+          :aria-current="route.path === '/mentors' ? 'page' : undefined"
+          @click="navigate('/mentors')"
+        >
+          <el-icon aria-hidden="true">师</el-icon>
+          <span>导师数据</span>
+        </button>
+        <button
+          type="button"
+          class="drawer-item"
+          :aria-current="route.path === '/profile' ? 'page' : undefined"
+          @click="navigate('/profile')"
+        >
           <el-icon aria-hidden="true">人</el-icon>
           <span>个人信息</span>
         </button>
-        <button type="button" class="drawer-item" @click="goRecruitment">
+        <button
+          type="button"
+          class="drawer-item"
+          :aria-current="route.path === '/recruitment' ? 'page' : undefined"
+          @click="navigate('/recruitment')"
+        >
           <el-icon aria-hidden="true">讯</el-icon>
           <span>信息平台</span>
         </button>
-      </div>
+      </nav>
     </el-drawer>
   </div>
 </template>
@@ -348,6 +364,14 @@ function goRecruitment() {
 
     &:hover {
       background: $color-bg-hover;
+    }
+    &:focus-visible {
+      outline: 2px solid $color-primary;
+      outline-offset: 2px;
+    }
+    &[aria-current='page'] {
+      color: $color-primary;
+      background: rgba(64, 158, 255, 0.1);
     }
     .el-icon {
       font-size: 18px;

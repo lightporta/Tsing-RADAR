@@ -1,4 +1,6 @@
+import { ref } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { beginRoute, finishRoute } from '@/utils/performance'
 
 // =====================================================================
 // 路由设计（文档 §5.1）
@@ -46,11 +48,25 @@ const router = createRouter({
   },
 })
 
+export const routePending = ref(false)
+
 // 全局前置守卫只设置标题；主体由服务端 opaque 会话管理。
 router.beforeEach((to, _from, next) => {
+  routePending.value = true
+  beginRoute(to.fullPath)
   const title = (to.meta.title as string) || 'Tsing-RADAR'
   document.title = title
   next()
+})
+
+router.afterEach((_to, _from, failure) => {
+  routePending.value = false
+  finishRoute(failure ? 'failed' : 'complete')
+})
+
+router.onError(() => {
+  routePending.value = false
+  finishRoute('error')
 })
 
 export default router

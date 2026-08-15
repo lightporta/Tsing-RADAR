@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { fetchDepartments, fetchMentorResources } from '@/api/advisor'
+import { fetchMentorDepartments, fetchMentorResources } from '@/api/advisor'
 import SubPageLayout from '@/layouts/SubPageLayout.vue'
 import type {
   MentorResource,
@@ -118,7 +118,7 @@ function catalogLabel(value: string) {
 onMounted(async () => {
   await loadResources()
   try {
-    const departmentResponse = await fetchDepartments()
+    const departmentResponse = await fetchMentorDepartments()
     departments.value = departmentResponse.data.map((item) => item.name)
   } catch {
     departments.value = Array.from(

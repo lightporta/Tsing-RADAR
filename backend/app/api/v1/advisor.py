@@ -10,9 +10,14 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.services.data_loader import load_mentors, mentor_data_summary
 from app.services.mentor_resources import (
-    department_options,
     grouped_mentor_resources,
     mentor_distribution,
+    mentor_department_catalog,
+    student_department_catalog,
+)
+from app.services.mentor_score_governance import (
+    score_coverage_status,
+    score_enriched_resources,
 )
 
 router = APIRouter()
@@ -45,7 +50,9 @@ def get_all_mentors(
 ):
     """Search published resources with bounded, deterministic pagination."""
     raw_records = load_mentors()
-    records = grouped_mentor_resources(raw_records)
+    records, score_status = score_enriched_resources(
+        grouped_mentor_resources(raw_records)
+    )
     query = _search_text(q).strip() if q else ""
     department = _search_text(dept).strip() if dept else ""
 
@@ -93,17 +100,33 @@ def get_all_mentors(
         "page": page,
         "page_size": page_size,
         "total_pages": math.ceil(len(filtered) / page_size) if filtered else 0,
+        "score_evidence_gate": score_status,
     }
     return {"data": filtered[offset : offset + page_size], "meta": meta}
 
 
 @router.get("/departments")
 def get_departments():
-    """Return the official list plus departments present in published data."""
-    return {
-        "data": department_options(load_mentors()),
-        "meta": {"basis": "official_list_union_published_resources"},
-    }
+    """Compatibility alias for the historical mentor department catalogue."""
+    payload = mentor_department_catalog(load_mentors())
+    payload["meta"]["compatibility_alias"] = True
+    return payload
+
+
+@router.get("/departments/mentors")
+def get_mentor_departments():
+    return mentor_department_catalog(load_mentors())
+
+
+@router.get("/departments/students")
+def get_student_departments():
+    return student_department_catalog()
+
+
+@router.get("/mentor-evidence/status")
+def get_mentor_evidence_status():
+    """Aggregate-only state used to keep score UI honest while the gate is shut."""
+    return {"data": None, "meta": score_coverage_status()}
 
 
 @router.get("/mentor-distribution")

@@ -13,11 +13,24 @@ import type { MatchRequest } from '@/types/api'
 // 导师 / 匹配 / 散点图 API
 // =====================================================================
 
-export function fetchDepartments() {
+export function fetchStudentDepartments() {
+  return get<{
+    data: Array<{ name: string }>
+    meta: DepartmentCatalogMeta
+  }>('/api/departments/students')
+}
+
+export interface DepartmentCatalogMeta {
+  scope: 'mentor' | 'student'
+  basis: string
+  source: { name: string; url: string; version: string; as_of: string }
+}
+
+export function fetchMentorDepartments() {
   return get<{
     data: DepartmentOption[]
-    meta: { basis: 'official_list_union_published_resources' }
-  }>('/api/departments')
+    meta: DepartmentCatalogMeta
+  }>('/api/departments/mentors')
 }
 
 export function fetchMentorDistribution() {

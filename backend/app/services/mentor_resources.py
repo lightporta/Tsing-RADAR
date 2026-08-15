@@ -63,7 +63,119 @@ OFFICIAL_DEPARTMENTS = (
     "致理书院",
     "日新书院",
     "苏世民书院",
+    "机械工程学院",
+    "信息科学技术学院",
+    "人工智能学院",
+    "核能与新能源技术研究院",
+    "安全科学学院",
+    "理学院",
+    "地球系统科学系",
+    "天文系",
+    "心理与认知科学系",
+    "统计与数据科学系",
+    "基础医学院",
+    "生物医学工程学院",
+    "医疗管理学院",
+    "高等研究院",
+    "航空发动机研究院",
+    "低碳能源实验室",
+    "数学科学中心",
+    "生物医学交叉研究院",
+    "未来实验室",
+    "智能产业研究院",
+    "碳中和研究院",
+    "国际与地区研究院",
+    "外国语言文学系",
+    "求真书院",
+    "为先书院",
+    "秀钟书院",
+    "笃实书院",
+    "至善书院",
+    "无穹书院",
+    "紫荆书院",
+    "自强书院",
+    "水木书院",
+    "全球创新学院",
+    "国家卓越工程师学院",
+    "体育部",
+    "艺术教育中心",
+    "语言教学中心",
+    "数学基础教学中心",
+    "出土文献研究与保护中心",
 )
+
+# Student choices are a separate, versioned catalogue based on the university's
+# 2026 undergraduate programme table.  It is intentionally not expanded with
+# mentor-only institutes from the published advisor dataset.
+STUDENT_DEPARTMENTS = (
+    "建筑学院",
+    "土木水利学院",
+    "环境学院",
+    "机械工程学院",
+    "航天航空学院",
+    "电子工程系",
+    "计算机科学与技术系",
+    "自动化系",
+    "集成电路学院",
+    "网络科学与网络空间研究院",
+    "软件学院",
+    "人工智能学院",
+    "材料学院",
+    "电机工程与应用电子技术系",
+    "工程物理系",
+    "化学工程系",
+    "数学科学系",
+    "物理系",
+    "化学系",
+    "地球系统科学系",
+    "天文系",
+    "心理与认知科学系",
+    "统计与数据科学系",
+    "生命科学学院",
+    "医学院",
+    "药学院",
+    "生物医学工程学院",
+    "经济管理学院",
+    "公共管理学院",
+    "人文学院",
+    "社会科学学院",
+    "法学院",
+    "新闻与传播学院",
+    "美术学院",
+    "教育学院",
+    "新雅书院",
+    "未央书院",
+    "探微书院",
+    "行健书院",
+    "日新书院",
+    "无穹书院",
+    "为先书院",
+    "秀钟书院",
+    "紫荆书院",
+    "水木书院",
+    "笃实书院",
+    "自强书院",
+)
+
+# Both catalogues use the same current official directory baseline, but remain
+# separate API/read-model contracts. Mentor choices additionally union current
+# published advisor affiliations; student choices never do that union.
+STUDENT_DEPARTMENTS = tuple(
+    dict.fromkeys((*OFFICIAL_DEPARTMENTS, *STUDENT_DEPARTMENTS))
+)
+
+MENTOR_DEPARTMENT_SOURCE = {
+    "name": "清华大学院系设置及已发布研究生导师资源",
+    "url": "https://www.tsinghua.edu.cn/yxsz.htm",
+    "version": "mentor-departments-v1",
+    "as_of": "2026-08-15",
+}
+STUDENT_DEPARTMENT_SOURCE = {
+    "name": "清华大学院系设置",
+    "url": "https://www.tsinghua.edu.cn/yxsz.htm",
+    "version": "official-department-directory-2026-08-15",
+    "as_of": "2026-08-15",
+}
 
 _RESOURCE_PRIORITY = {
     "verified_mentor_profile": 0,
@@ -217,9 +329,33 @@ def department_options(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for item in grouped
         if str(item.get("dept") or "").strip()
     )
-    ordered = list(OFFICIAL_DEPARTMENTS)
+    ordered = list(dict.fromkeys(OFFICIAL_DEPARTMENTS))
     ordered.extend(sorted(name for name in counts if name not in set(ordered)))
     return [{"name": name, "advisor_count": counts.get(name, 0)} for name in ordered]
+
+
+def mentor_department_catalog(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Mentor filter choices: official units plus names in published resources."""
+    return {
+        "data": department_options(records),
+        "meta": {
+            "scope": "mentor",
+            "basis": "official_units_union_published_mentor_resources",
+            "source": MENTOR_DEPARTMENT_SOURCE,
+        },
+    }
+
+
+def student_department_catalog() -> dict[str, Any]:
+    """Student profile choices from the official undergraduate programme table."""
+    return {
+        "data": [{"name": name} for name in STUDENT_DEPARTMENTS],
+        "meta": {
+            "scope": "student",
+            "basis": "official_department_directory",
+            "source": STUDENT_DEPARTMENT_SOURCE,
+        },
+    }
 
 
 def mentor_distribution(records: list[dict[str, Any]]) -> dict[str, Any]:

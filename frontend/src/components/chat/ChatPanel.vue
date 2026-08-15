@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import ChatToolbar from './ChatToolbar.vue'
 import ChatMessage from './ChatMessage.vue'
 import InterviewProfileCard from './InterviewProfileCard.vue'
@@ -25,6 +25,8 @@ const chatStore = useChatStore()
 const advisorStore = useAdvisorStore()
 const messagesRef = ref<HTMLElement | null>(null)
 const matchedProfile = ref<string | null>(null)
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+let handledRestoreToken = 0
 
 // 自动滚动到底部（消息变化 / 流式追加）
 watch(
@@ -39,9 +41,19 @@ watch(
 )
 
 watch(
-  () => [chatStore.recommendReady, chatStore.sessionId, chatStore.profileVersion] as const,
-  async ([ready, sessionId, profileVersion]) => {
+  () => [
+    chatStore.recommendReady,
+    chatStore.sessionId,
+    chatStore.profileVersion,
+    chatStore.historyRestoreToken,
+  ] as const,
+  async ([ready, sessionId, profileVersion, restoreToken]) => {
     const matchKey = `${sessionId}:${profileVersion}`
+    if (restoreToken !== handledRestoreToken) {
+      handledRestoreToken = restoreToken
+      matchedProfile.value = matchKey
+      return
+    }
     if (!ready || !sessionId || matchedProfile.value === matchKey) return
     matchedProfile.value = matchKey
     try {
@@ -55,14 +67,58 @@ watch(
     }
   },
 )
+
+// 在状态稳定后写入本机历史；流式片段期间只重置定时器，避免长对话频繁序列化。
+watch(
+  () => ({
+    messages: chatStore.messages,
+    streaming: chatStore.streaming,
+    profile: chatStore.profile,
+    profileVersion: chatStore.profileVersion,
+    status: chatStore.interviewStatus,
+    question: chatStore.currentQuestion,
+    recommendReady: chatStore.recommendReady,
+    advisors: advisorStore.matchedAdvisors,
+    selectedName: advisorStore.selectedName,
+    resultStatus: advisorStore.resultStatus,
+    resultMeta: advisorStore.resultMeta,
+    comparisonIds: advisorStore.comparisonIds,
+  }),
+  () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      if (!chatStore.streaming) {
+        chatStore.saveCurrentSession(advisorStore.createHistorySnapshot())
+      }
+    }, 400)
+  },
+  { deep: true },
+)
+
+onBeforeUnmount(() => {
+  if (saveTimer) clearTimeout(saveTimer)
+  if (!chatStore.streaming) chatStore.saveCurrentSession(advisorStore.createHistorySnapshot())
+})
 </script>
 
 <template>
   <div class="chat-panel" :class="{ mobile: mobileMode }">
-    <ChatToolbar v-if="!hideToolbar" :collapsed="collapsed" @toggle="emit('toggle')" />
+    <ChatToolbar
+      v-if="!hideToolbar"
+      :collapsed="collapsed"
+      :mobile-mode="mobileMode"
+      @toggle="emit('toggle')"
+    />
 
     <!-- 消息区 -->
-    <div ref="messagesRef" class="messages-area">
+    <div
+      ref="messagesRef"
+      class="messages-area"
+      role="log"
+      aria-label="访谈消息"
+      aria-live="polite"
+      aria-relevant="additions text"
+    >
       <ChatMessage
         v-for="msg in chatStore.messages"
         :key="msg.id"

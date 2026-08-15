@@ -14,9 +14,16 @@ import {
   type PrivateDocument,
 } from '@/api/actions'
 import { generateResume } from '@/api/resume'
+import {
+  analyzePrivateDocument,
+  interpretSelectedDocumentText,
+  type DocumentFactField,
+  type ParsedDocumentFact,
+} from '@/api/documentAnalysis'
 import { newIdempotencyKey } from '@/api/request'
 import { useChatStore } from '@/stores/useChatStore'
 import { useUserStore } from '@/stores/useUserStore'
+import type { StudentProfile } from '@/types/user'
 
 const chatStore = useChatStore()
 const userStore = useUserStore()
@@ -34,6 +41,15 @@ const positionsText = ref('')
 const targetAdvisor = ref('')
 const downloadingDocumentId = ref<string | null>(null)
 const deletingDocumentId = ref<string | null>(null)
+const analyzingDocumentId = ref<string | null>(null)
+const analysisDocument = ref<PrivateDocument | null>(null)
+const analysisFacts = ref<ParsedDocumentFact[]>([])
+const selectedDiffFields = ref<DocumentFactField[]>([])
+const selectedGlmFields = ref<DocumentFactField[]>([])
+const glmDrafts = ref<Partial<Record<DocumentFactField, string>>>({})
+const glmConsent = ref(false)
+const interpreting = ref(false)
+const glmInterpretation = ref('')
 const MAX_PRIVATE_FILE_BYTES = 8 * 1024 * 1024
 type PendingIntent = { fingerprint: string; key: string }
 const resumeIntent = ref<PendingIntent | null>(null)
@@ -66,6 +82,24 @@ function formatBytes(value: number) {
   return value < 1024 * 1024
     ? `${Math.ceil(value / 1024)} KB`
     : `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function displayFactValue(value: string | string[]) {
+  return Array.isArray(value) ? value.join('、') : value
+}
+
+function currentProfileValue(field: DocumentFactField) {
+  if (field === 'awards') return splitLines(awardsText.value).join('、')
+  if (field === 'positions') return splitLines(positionsText.value).join('、')
+  if (field === 'research_experience') {
+    return projectDetail.value.trim() || userStore.profile.research_experience || ''
+  }
+  const value = userStore.profile[field]
+  return Array.isArray(value) ? value.join('、') : String(value || '')
+}
+
+function factChanged(fact: ParsedDocumentFact) {
+  return currentProfileValue(fact.field).trim() !== displayFactValue(fact.value).trim()
 }
 
 async function loadPrivateData() {
@@ -107,6 +141,118 @@ async function onFileSelected(event: Event) {
   }
 }
 
+async function analyzeDocument(item: PrivateDocument) {
+  if (analyzingDocumentId.value) return
+  analyzingDocumentId.value = item.document_id
+  try {
+    const result = await analyzePrivateDocument(item.document_id)
+    analysisDocument.value = item
+    analysisFacts.value = result.facts
+    selectedDiffFields.value = []
+    selectedGlmFields.value = []
+    glmConsent.value = false
+    glmInterpretation.value = ''
+    glmDrafts.value = Object.fromEntries(
+      result.facts.map((fact) => [
+        fact.field,
+        fact.source_excerpt,
+      ]),
+    ) as Partial<Record<DocumentFactField, string>>
+    if (!result.facts.length) {
+      ElMessage.info('未识别到带明确标签的个人事实，系统不会猜测或补写')
+    }
+  } finally {
+    analyzingDocumentId.value = null
+  }
+}
+
+function assignProfileFact(
+  patch: Partial<StudentProfile>,
+  fact: ParsedDocumentFact,
+) {
+  if (fact.field === 'interest_tags') {
+    patch.interest_tags = Array.isArray(fact.value) ? fact.value : [fact.value]
+    return
+  }
+  const value = Array.isArray(fact.value) ? fact.value.join('、') : fact.value
+  if (fact.field === 'awards') {
+    awardsText.value = Array.isArray(fact.value) ? fact.value.join('\n') : fact.value
+    return
+  }
+  if (fact.field === 'positions') {
+    positionsText.value = Array.isArray(fact.value) ? fact.value.join('\n') : fact.value
+    return
+  }
+  if (fact.field === 'name') patch.name = value
+  if (fact.field === 'email') patch.email = value
+  if (fact.field === 'phone') patch.phone = value
+  if (fact.field === 'dept') patch.dept = value
+  if (fact.field === 'grade') patch.grade = value
+  if (fact.field === 'gpa') patch.gpa = value
+  if (fact.field === 'research_interest') patch.research_interest = value
+  if (fact.field === 'research_experience') {
+    patch.research_experience = value
+    projectDetail.value = value
+  }
+}
+
+async function applySelectedFacts() {
+  const facts = analysisFacts.value.filter((fact) =>
+    selectedDiffFields.value.includes(fact.field),
+  )
+  if (!facts.length) {
+    ElMessage.warning('请逐项勾选需要回填的事实')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `仅将你勾选的 ${facts.length} 项事实写入个人信息？`,
+      '确认逐项回填',
+      { confirmButtonText: '确认回填', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  const patch: Partial<StudentProfile> = {}
+  facts.forEach((fact) => assignProfileFact(patch, fact))
+  userStore.updateProfile(patch)
+  selectedDiffFields.value = []
+  ElMessage.success('已回填所选事实；未勾选项保持不变')
+}
+
+async function interpretSelection() {
+  if (interpreting.value) return
+  if (!analysisDocument.value || !selectedGlmFields.value.length) {
+    ElMessage.warning('请先选择要发送给 GLM 的文本')
+    return
+  }
+  if (!glmConsent.value) {
+    ElMessage.warning('请明确授权本次 GLM 解读')
+    return
+  }
+  const selections = selectedGlmFields.value.map((field) => ({
+    field,
+    selected_text: (glmDrafts.value[field] || '').trim(),
+  }))
+  if (selections.some((item) => !item.selected_text)) {
+    ElMessage.warning('选定文本不能为空')
+    return
+  }
+  interpreting.value = true
+  try {
+    const result = await interpretSelectedDocumentText(
+      analysisDocument.value.document_id,
+      selections,
+    )
+    glmInterpretation.value = result.interpretation
+    ElMessage.success('GLM 已完成本次解读；上下文未保存')
+  } finally {
+    // 授权仅限单次调用；成功或失败后的重试都必须再次确认。
+    glmConsent.value = false
+    interpreting.value = false
+  }
+}
+
 async function removeFile(item: PrivateDocument) {
   if (deletingDocumentId.value) return
   deletingDocumentId.value = item.document_id
@@ -124,6 +270,11 @@ async function removeFile(item: PrivateDocument) {
     deleteIntents.set(item.document_id, intent)
     await deleteDocument(item.document_id, intent.key)
     deleteIntents.delete(item.document_id)
+    if (analysisDocument.value?.document_id === item.document_id) {
+      analysisDocument.value = null
+      analysisFacts.value = []
+      glmInterpretation.value = ''
+    }
     ElMessage.success('私有对象、交付授权与元数据已同步清理')
   } finally {
     deletingDocumentId.value = null
@@ -173,7 +324,7 @@ function splitLines(value: string) {
 async function createResume() {
   if (generating.value) return
   if (!userStore.profile.name.trim()) {
-    ElMessage.warning('请先在上方填写姓名并保存到当前页面内存')
+    ElMessage.warning('请先在上方填写姓名并保存基本信息')
     return
   }
   if (!confirmGeneration.value) {
@@ -335,7 +486,7 @@ onMounted(loadPrivateData)
         </label>
       </div>
       <el-checkbox v-model="confirmGeneration" aria-label="确认信息并同意生成私有文件">
-        我确认以上内容及当前页面个人信息由我提供，并同意在当前私有会话生成文件
+        我确认以上内容及本机个人信息由我提供，并同意在当前私有会话生成文件
       </el-checkbox>
       <div class="builder-actions">
         <el-button
@@ -379,6 +530,15 @@ onMounted(loadPrivateData)
         </div>
         <div class="card-actions">
           <el-button
+            v-if="item.document_kind === 'upload' && item.status === 'ready' && item.scan_status === 'clean'"
+            size="small"
+            plain
+            :loading="analyzingDocumentId === item.document_id"
+            @click="analyzeDocument(item)"
+          >
+            解析并对比
+          </el-button>
+          <el-button
             v-if="item.status === 'ready' && item.scan_status === 'clean'"
             size="small"
             :loading="downloadingDocumentId === item.document_id"
@@ -401,6 +561,91 @@ onMounted(loadPrivateData)
         尚未上传私有简历。上传后可在已审核招募下创建站内投递记录。
       </p>
     </div>
+
+    <section
+      v-if="analysisDocument"
+      class="analysis-panel"
+      aria-labelledby="document-analysis-title"
+    >
+      <div>
+        <h3 id="document-analysis-title" class="section-title">事实对比与确认回填</h3>
+        <p class="privacy-note">
+          {{ analysisDocument.original_name }} 仅在私有环境按需解析；抽取正文与本次分析结果不写入数据库，也未调用外部模型。
+        </p>
+      </div>
+      <el-alert
+        title="系统只提取带明确标签的事实，不会猜测缺失信息。请逐项勾选后再回填。"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-checkbox-group v-model="selectedDiffFields" class="diff-list" aria-label="选择要回填的事实">
+        <article v-for="fact in analysisFacts" :key="fact.field" class="diff-item">
+          <el-checkbox :value="fact.field" :aria-label="`确认回填${fact.label}`">
+            {{ fact.label }}
+          </el-checkbox>
+          <dl>
+            <div><dt>当前值</dt><dd>{{ currentProfileValue(fact.field) || '未填写' }}</dd></div>
+            <div>
+              <dt>解析值</dt>
+              <dd :class="{ changed: factChanged(fact) }">{{ displayFactValue(fact.value) }}</dd>
+            </div>
+            <div class="source-row"><dt>来源片段</dt><dd>{{ fact.source_excerpt }}</dd></div>
+          </dl>
+        </article>
+      </el-checkbox-group>
+      <p v-if="!analysisFacts.length" class="empty">未识别到可安全回填的明确事实。</p>
+      <div class="builder-actions">
+        <el-button
+          type="primary"
+          :disabled="!selectedDiffFields.length"
+          @click="applySelectedFacts"
+        >
+          确认所选并回填
+        </el-button>
+        <span class="inline-hint">未勾选字段不会更改。</span>
+      </div>
+
+      <div v-if="analysisFacts.length" class="glm-panel" aria-labelledby="glm-analysis-title">
+        <h3 id="glm-analysis-title" class="section-title">可选：GLM 单次解读</h3>
+        <p class="privacy-note">
+          默认不发送文件。只有下面勾选且可编辑的文本会在本次授权后发送给 GLM；不会切换到其他模型，也不保存模型上下文。
+        </p>
+        <el-checkbox-group v-model="selectedGlmFields" class="glm-selections" aria-label="选择发送给 GLM 的文本">
+          <div v-for="fact in analysisFacts" :key="`glm-${fact.field}`" class="glm-selection">
+            <el-checkbox :value="fact.field">{{ fact.label }}</el-checkbox>
+            <el-input
+              v-if="selectedGlmFields.includes(fact.field)"
+              v-model="glmDrafts[fact.field]"
+              type="textarea"
+              :rows="2"
+              maxlength="1200"
+              show-word-limit
+              :aria-label="`本次发送给 GLM 的${fact.label}文本`"
+            />
+          </div>
+        </el-checkbox-group>
+        <el-checkbox v-model="glmConsent" aria-label="明确授权本次选定文本发送给 GLM">
+          我明确授权仅将上方勾选并确认的文本发送给 GLM 进行一次解读
+        </el-checkbox>
+        <div class="builder-actions">
+          <el-button
+            type="primary"
+            plain
+            :loading="interpreting"
+            :disabled="!selectedGlmFields.length || !glmConsent"
+            @click="interpretSelection"
+          >
+            授权本次 GLM 解读
+          </el-button>
+          <span class="inline-hint">失败时会明确提示；重试必须重新勾选授权，不会切换模型。</span>
+        </div>
+        <div v-if="glmInterpretation" class="glm-result" role="status" aria-live="polite">
+          <strong>GLM 本次解读</strong>
+          <p>{{ glmInterpretation }}</p>
+        </div>
+      </div>
+    </section>
 
     <h3 class="section-title records-title">站内投递状态</h3>
     <div class="record-list">
@@ -460,6 +705,67 @@ onMounted(loadPrivateData)
   gap: $spacing-sm;
   margin-top: $spacing-lg;
 }
+
+.analysis-panel {
+  display: grid;
+  gap: $spacing-md;
+  margin-top: $spacing-xl;
+  padding: $spacing-lg;
+  border: 1px solid rgba(64, 158, 255, 0.28);
+  border-radius: 10px;
+  background: rgba(64, 158, 255, 0.035);
+}
+
+.diff-list,
+.glm-selections {
+  display: grid;
+  gap: $spacing-sm;
+}
+
+.diff-item {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: $spacing-sm;
+  padding: $spacing-md;
+  border: 1px solid $color-border-light;
+  border-radius: 8px;
+  background: $color-bg-card;
+}
+
+.diff-item dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px $spacing-md;
+}
+
+.diff-item .source-row { grid-column: 1 / -1; }
+.diff-item dt { color: $text-placeholder; font-size: 10px; }
+.diff-item dd { margin-top: 2px; color: $text-regular; font-size: 12px; overflow-wrap: anywhere; }
+.diff-item dd.changed { color: $color-primary; font-weight: 600; }
+
+.glm-panel {
+  display: grid;
+  gap: $spacing-md;
+  margin-top: $spacing-md;
+  padding-top: $spacing-lg;
+  border-top: 1px solid $color-border-light;
+}
+
+.glm-selection {
+  display: grid;
+  gap: 6px;
+}
+
+.glm-result {
+  padding: $spacing-md;
+  border-radius: 8px;
+  color: $text-regular;
+  background: $color-bg-card;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.glm-result p { margin-top: 4px; white-space: pre-wrap; }
 
 .artifact-builder {
   display: grid;
@@ -552,5 +858,9 @@ onMounted(loadPrivateData)
   .builder-grid {
     grid-template-columns: 1fr;
   }
+  .analysis-panel { padding: $spacing-md; }
+  .diff-item { grid-template-columns: 1fr; }
+  .diff-item dl { grid-template-columns: 1fr; }
+  .diff-item .source-row { grid-column: auto; }
 }
 </style>

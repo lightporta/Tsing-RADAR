@@ -75,15 +75,18 @@ def run_confirmed_match(
             questions=[],
         )
     if not result.items:
+        zero_reason = result.meta.get("zero_result_reason")
         return MatchApplicationOutcome(
             status="no_match",
             items=[],
             meta=meta,
-            message=(
+            message=zero_reason or (
                 "已有发布数据，但当前没有同时通过硬约束和召回阈值的候选。"
             ),
             questions=[
-                "是否要检查已确认的硬约束或调整召回阈值？"
+                "请检查导致归零的硬约束；如该条件可以放宽，可编辑画像后重新确认。"
+                if zero_reason
+                else "是否要检查已确认的硬约束或调整召回阈值？"
             ],
         )
     return MatchApplicationOutcome(

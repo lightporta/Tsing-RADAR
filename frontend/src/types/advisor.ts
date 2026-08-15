@@ -181,6 +181,17 @@ export type SortMetric =
   | 'evidence_coverage'
   | 'evidence_confidence'
 
+/** 仅保存在当前浏览器中的匹配结果快照。 */
+export interface AdvisorHistorySnapshot {
+  matchedAdvisors: MatchedAdvisor[]
+  selectedName: string | null
+  sortMetric: SortMetric
+  resultStatus: 'idle' | 'matched' | 'no_published_data' | 'no_match' | 'error'
+  resultMessage: string
+  resultMeta: Record<string, unknown>
+  comparisonIds: string[]
+}
+
 /** 六维度元数据（中文标签 + 英文键），用于雷达图与表单 */
 export interface TraitMeta {
   key: TraitKey

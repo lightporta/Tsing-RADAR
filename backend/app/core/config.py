@@ -68,19 +68,32 @@ class Settings(BaseSettings):
     MILVUS_HOST: Optional[str] = None
     MILVUS_PORT: int = 19530
 
+    # Optional score evidence is a separate, fail-closed release from mentor
+    # directory facts.  No file means the visualisation coverage gate is shut.
+    MENTOR_SCORE_DATA_FILE: Optional[str] = None
+    MENTOR_SCORE_DATA_EXPECTED_SHA256: Optional[str] = None
+    MENTOR_SCORE_COVERAGE_THRESHOLD: float = Field(default=0.8, gt=0, le=1)
+
     # —— 大模型 ——
     # 生产只接受 provider + 文件型密钥；开发继续兼容既有直接变量。
     LLM_ENABLED: bool = True
-    LLM_PROVIDER: Optional[Literal["glm", "deepseek"]] = None
+    # GLM is the only supported provider.  A different LLM_PROVIDER is rejected
+    # by Pydantic before startup; provider-specific fallback channels do not
+    # exist in the application settings anymore.
+    LLM_PROVIDER: Optional[Literal["glm"]] = None
     LLM_API_KEY_FILE: Optional[str] = None
     GLM_API_KEY: Optional[str] = None
-    DEEPSEEK_API_KEY: Optional[str] = None
     GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4"
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     GLM_CHAT_MODEL: str = "glm-4-flash"
-    DEEPSEEK_CHAT_MODEL: str = "deepseek-chat"
     GLM_EMBED_MODEL: str = "embedding-3"
     LLM_TIMEOUT: int = 30
+    # Optional interview wording must never hold the fixed state-machine reply
+    # for the full generic document/analysis timeout.
+    LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: float = Field(
+        default=4.0,
+        ge=0.5,
+        le=8.0,
+    )
     _llm_credentials: tuple[tuple[str, str], ...] = PrivateAttr(default=())
 
     # —— 邮件（清华 SMTP，OAuth 2.0 占位）——
@@ -269,14 +282,7 @@ class Settings(BaseSettings):
             )
             object.__setattr__(self, "REDIS_URL", redis_url)
 
-        direct_credentials = tuple(
-            (provider, key)
-            for provider, key in (
-                ("glm", self.GLM_API_KEY),
-                ("deepseek", self.DEEPSEEK_API_KEY),
-            )
-            if key
-        )
+        direct_credentials = (("glm", self.GLM_API_KEY),) if self.GLM_API_KEY else ()
         if not self.LLM_ENABLED:
             if self.LLM_API_KEY_FILE or self.LLM_PROVIDER or direct_credentials:
                 raise ValueError(
@@ -317,7 +323,6 @@ class Settings(BaseSettings):
                 )
             credentials = selected
         else:
-            # Preserve the existing development order: GLM first, then DeepSeek.
             credentials = direct_credentials
         object.__setattr__(self, "_llm_credentials", credentials)
         return self

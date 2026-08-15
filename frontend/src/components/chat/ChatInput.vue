@@ -35,7 +35,7 @@ function send() {
     ElMessage.warning('请输入内容')
     return
   }
-  if (chatStore.streaming) return
+  if (chatStore.streaming || chatStore.enhancementRetrying) return
 
   chatStore.send(content, [...attachments.value])
   text.value = ''
@@ -107,6 +107,10 @@ function stopStream() {
 function retry() {
   chatStore.retryLastSend()
 }
+
+function retryGlmEnhancement() {
+  chatStore.retryEnhancement()
+}
 </script>
 
 <template>
@@ -119,6 +123,26 @@ function retry() {
     <div v-if="chatStore.chatError" class="chat-error" role="alert">
       <span>{{ chatStore.chatError }}</span>
       <button type="button" :disabled="chatStore.streaming" @click="retry">重试</button>
+    </div>
+
+    <div
+      v-if="chatStore.enhancementStatus === 'unavailable'"
+      class="enhancement-warning"
+      role="status"
+      aria-live="polite"
+      :aria-busy="chatStore.enhancementRetrying"
+    >
+      <span>
+        {{ chatStore.enhancementRetryError || '固定结构化回复已保留，但 GLM 措辞增强暂不可用。' }}
+      </span>
+      <button
+        type="button"
+        :disabled="chatStore.enhancementRetrying || chatStore.streaming"
+        aria-label="仅重试本轮 GLM 措辞增强，不重发回答"
+        @click="retryGlmEnhancement"
+      >
+        {{ chatStore.enhancementRetrying ? '正在重试 GLM…' : '重试 GLM' }}
+      </button>
     </div>
 
     <!-- 引导问题快捷按钮（仅在消息少时显示） -->
@@ -150,14 +174,18 @@ function retry() {
     </div>
 
     <div class="input-row">
-      <label class="input-btn" :class="{ disabled: uploading }" aria-label="私有上传 PDF 或 DOCX">
+      <label
+        class="input-btn"
+        :class="{ disabled: uploading || chatStore.enhancementRetrying }"
+        aria-label="私有上传 PDF 或 DOCX"
+      >
         <el-icon aria-hidden="true">📎</el-icon>
         <input
           type="file"
           multiple
           accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           hidden
-          :disabled="uploading"
+          :disabled="uploading || chatStore.enhancementRetrying"
           @change="onFileChange"
         />
       </label>
@@ -168,6 +196,7 @@ function retry() {
         class="chat-textarea"
         rows="1"
         placeholder="输入你的研究兴趣或问题，Enter 发送，Shift+Enter 换行…"
+        :disabled="chatStore.enhancementRetrying"
         @input="autoResize"
         @keydown="onKeydown"
       />
@@ -184,7 +213,7 @@ function retry() {
         v-else
         class="send-btn"
         aria-label="发送"
-        :disabled="!text.trim() || uploading"
+        :disabled="!text.trim() || uploading || chatStore.enhancementRetrying"
         @click="send"
       >
         <el-icon aria-hidden="true">➤</el-icon>
@@ -246,6 +275,40 @@ function retry() {
     flex-shrink: 0;
     color: $color-primary;
     font-weight: 600;
+  }
+}
+
+.enhancement-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  margin-bottom: $spacing-sm;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #8a5a12;
+  background: rgba(230, 162, 60, 0.12);
+  font-size: 11px;
+  line-height: 1.5;
+
+  button {
+    flex-shrink: 0;
+    padding: 5px 9px;
+    border: 1px solid rgba(230, 162, 60, 0.45);
+    border-radius: 6px;
+    color: #8a5a12;
+    background: $color-bg-card;
+    font-weight: 600;
+
+    &:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+
+    &:focus-visible {
+      outline: 2px solid $color-primary;
+      outline-offset: 2px;
+    }
   }
 }
 

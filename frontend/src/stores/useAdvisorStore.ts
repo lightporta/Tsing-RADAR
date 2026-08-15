@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { MatchedAdvisor, MentorDistribution, SortMetric } from '@/types/advisor'
+import type {
+  AdvisorHistorySnapshot,
+  MatchedAdvisor,
+  MentorDistribution,
+  SortMetric,
+} from '@/types/advisor'
 import * as advisorApi from '@/api/advisor'
 import * as mockApi from '@/mock'
 
@@ -145,6 +150,31 @@ export const useAdvisorStore = defineStore('advisor', () => {
     resultMeta.value = {}
   }
 
+  /** 导出本机会话所需的匹配结果，不触发网络请求。 */
+  function createHistorySnapshot(): AdvisorHistorySnapshot {
+    return JSON.parse(JSON.stringify({
+      matchedAdvisors: matchedAdvisors.value,
+      selectedName: selectedName.value,
+      sortMetric: sortMetric.value,
+      resultStatus: resultStatus.value,
+      resultMessage: resultMessage.value,
+      resultMeta: resultMeta.value,
+      comparisonIds: comparisonIds.value,
+    })) as AdvisorHistorySnapshot
+  }
+
+  /** 恢复本机保存的匹配结果，不会重新请求或上传历史会话。 */
+  function restoreHistorySnapshot(snapshot: AdvisorHistorySnapshot) {
+    const restored = JSON.parse(JSON.stringify(snapshot)) as AdvisorHistorySnapshot
+    matchedAdvisors.value = restored.matchedAdvisors
+    selectedName.value = restored.selectedName
+    sortMetric.value = restored.sortMetric
+    resultStatus.value = restored.resultStatus
+    resultMessage.value = restored.resultMessage
+    resultMeta.value = restored.resultMeta
+    comparisonIds.value = restored.comparisonIds
+  }
+
   return {
     matchedAdvisors,
     distribution,
@@ -164,5 +194,7 @@ export const useAdvisorStore = defineStore('advisor', () => {
     selectAdvisor,
     toggleComparison,
     resetResults,
+    createHistorySnapshot,
+    restoreHistorySnapshot,
   }
 })

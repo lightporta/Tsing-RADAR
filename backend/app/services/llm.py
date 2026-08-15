@@ -1,6 +1,6 @@
 """通用 LLM 与向量服务。
 
-开发环境可配置 GLM_API_KEY 或 DEEPSEEK_API_KEY；生产环境只接受
+开发环境可配置 GLM_API_KEY；生产环境只接受 GLM provider 的
 LLM_PROVIDER + LLM_API_KEY_FILE，并在 Settings 构造时一次性解析。
 A3 访谈题序、画像状态与确认门不由 LLM 决定。
 """
@@ -51,62 +51,55 @@ async def _llm_complete_result(
     *,
     timeout_seconds: float | None = None,
 ) -> LLMCompletionResult | None:
+    if not settings.llm_credentials:
+        return None
+    provider, api_key = settings.llm_credentials[0]
+    # Settings guarantees this invariant.  Keep the service fail-closed if a
+    # test or future refactor attempts to inject another provider directly.
+    if provider != "glm":
+        logger.error("llm_completion status=rejected_unsupported_provider")
+        return None
     payload_messages = _build_payload_messages(messages)
-    provider_config = {
-        "glm": (settings.GLM_BASE_URL, settings.GLM_CHAT_MODEL),
-        "deepseek": (
-            settings.DEEPSEEK_BASE_URL,
-            settings.DEEPSEEK_CHAT_MODEL,
-        ),
-    }
-    for provider, api_key in settings.llm_credentials:
-        base_url, model = provider_config[provider]
-        started = time.monotonic()
-        try:
-            async with httpx.AsyncClient(
-                timeout=timeout_seconds or settings.LLM_TIMEOUT
-            ) as client:
-                resp = await client.post(
-                    f"{base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": payload_messages,
-                        "stream": False,
-                    },
-                )
-                resp.raise_for_status()
-                text = str(resp.json()["choices"][0]["message"]["content"])
-                logger.info(
-                    "llm_completion provider=%s model=%s status=success latency_ms=%d",
-                    provider,
-                    model,
-                    round((time.monotonic() - started) * 1000),
-                )
-                return LLMCompletionResult(
-                    text=text,
-                    provider=provider,
-                    model=model,
-                )
-        except Exception as exc:
-            status_code = getattr(getattr(exc, "response", None), "status_code", None)
-            logger.warning(
-                "llm_completion provider=%s model=%s status=failed error_type=%s http_status=%s latency_ms=%d",
-                provider,
+    model = settings.GLM_CHAT_MODEL
+    started = time.monotonic()
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout_seconds or settings.LLM_TIMEOUT
+        ) as client:
+            resp = await client.post(
+                f"{settings.GLM_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": payload_messages,
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            text = str(resp.json()["choices"][0]["message"]["content"])
+            logger.info(
+                "llm_completion provider=glm model=%s status=success latency_ms=%d",
                 model,
-                type(exc).__name__,
-                status_code if status_code is not None else "none",
                 round((time.monotonic() - started) * 1000),
             )
-
-    return None
+            return LLMCompletionResult(text=text, provider="glm", model=model)
+    except Exception as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        logger.warning(
+            "llm_completion provider=glm model=%s status=failed error_type=%s http_status=%s latency_ms=%d",
+            model,
+            type(exc).__name__,
+            status_code if status_code is not None else "none",
+            round((time.monotonic() - started) * 1000),
+        )
+        return None
 
 
 async def llm_complete(messages: list[LLMMessage]) -> Optional[str]:
-    """调用已明确配置的 LLM；生产环境只会有一个 provider。"""
+    """调用唯一支持的 GLM；失败时返回 None，由客户端明确提示并重试。"""
     result = await _llm_complete_result(messages)
     return result.text if result else None
 
@@ -131,7 +124,7 @@ async def enhance_interview_reply(
                 ),
             )
         ],
-        timeout_seconds=min(float(settings.LLM_TIMEOUT), 8.0),
+        timeout_seconds=settings.LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS,
     )
     if result is None:
         provider = settings.configured_llm_providers[0]
