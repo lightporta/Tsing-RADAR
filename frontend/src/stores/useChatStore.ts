@@ -5,7 +5,6 @@ import type {
   ChatAttachment,
   ChatMessage,
   LocalChatSession,
-  QuickQuestion,
 } from '@/types/chat'
 import type {
   InterviewProfilePatch,
@@ -257,14 +256,6 @@ export const useChatStore = defineStore('chat', () => {
   /** 是否可以触发推荐（问卷已收集足够信息） */
   const recommendReady = ref(false)
 
-  /** 引导问题快捷按钮 */
-  const quickQuestions = ref<QuickQuestion[]>([
-    { label: '我对 NLP 感兴趣', prompt: '我对自然语言处理和对话系统很感兴趣' },
-    { label: '想做计算机视觉', prompt: '我想做计算机视觉方向的研究' },
-    { label: '倾向机器人控制', prompt: '我对机器人和强化学习感兴趣' },
-    { label: '想读博发论文', prompt: '我希望读博并发表顶会论文，看重学术指导' },
-  ])
-
   const messageCount = computed(() => messages.value.length)
   const userTurns = computed(() => messages.value.filter((m) => m.role === 'user').length)
 
@@ -278,7 +269,7 @@ export const useChatStore = defineStore('chat', () => {
           content:
             '👋 你好！我是 **Tsing-RADAR 清研寻师雷达**，你的学术合伙人匹配助手。\n\n' +
             '告诉我你的**专业背景、研究兴趣、职业规划**，我会通过多轮对话为你精准匹配合适的导师。\n\n' +
-            '你可以直接输入关键词（如「自然语言处理」「机器人」），或点击下方引导问题开始 👇',
+            '不必一次说完整，可以先从你的专业、正在关注的问题，或未来想去的方向开始。',
           createdAt: Date.now(),
         },
       ]
@@ -606,7 +597,6 @@ export const useChatStore = defineStore('chat', () => {
     historyStorageError,
     historyRestoreToken,
     recommendReady,
-    quickQuestions,
     messageCount,
     userTurns,
     initWelcome,

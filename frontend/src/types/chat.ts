@@ -44,12 +44,6 @@ export interface SSEChunk {
   session_id?: string
 }
 
-/** 引导问题快捷按钮 */
-export interface QuickQuestion {
-  label: string
-  prompt: string
-}
-
 /** 最近会话的完整本机快照；不会由保存动作上传服务器。 */
 export interface LocalChatSession {
   id: string

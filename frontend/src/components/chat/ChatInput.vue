@@ -91,15 +91,6 @@ function removeAttachment(idx: number) {
   attachments.value.splice(idx, 1)
 }
 
-// 快捷引导问题
-function useQuickQuestion(prompt: string) {
-  text.value = prompt
-  nextTick(() => {
-    autoResize()
-    send()
-  })
-}
-
 function stopStream() {
   chatStore.abort()
 }
@@ -115,11 +106,6 @@ function retryGlmEnhancement() {
 
 <template>
   <div class="chat-input-area">
-    <div class="assistant-mode">
-      <span class="mode-dot" :class="chatStore.enhancementStatus" />
-      结构化访谈 · GLM 措辞增强
-    </div>
-
     <div v-if="chatStore.chatError" class="chat-error" role="alert">
       <span>{{ chatStore.chatError }}</span>
       <button type="button" :disabled="chatStore.streaming" @click="retry">重试</button>
@@ -142,18 +128,6 @@ function retryGlmEnhancement() {
         @click="retryGlmEnhancement"
       >
         {{ chatStore.enhancementRetrying ? '正在重试 GLM…' : '重试 GLM' }}
-      </button>
-    </div>
-
-    <!-- 引导问题快捷按钮（仅在消息少时显示） -->
-    <div v-if="chatStore.messageCount <= 2" class="quick-questions">
-      <button
-        v-for="q in chatStore.quickQuestions"
-        :key="q.label"
-        class="quick-btn"
-        @click="useQuickQuestion(q.prompt)"
-      >
-        {{ q.label }}
       </button>
     </div>
 
@@ -195,7 +169,7 @@ function retryGlmEnhancement() {
         v-model="text"
         class="chat-textarea"
         rows="1"
-        placeholder="输入你的研究兴趣或问题，Enter 发送，Shift+Enter 换行…"
+        placeholder="输入你的专业背景、研究兴趣或职业想法，Enter 发送…"
         :disabled="chatStore.enhancementRetrying"
         @input="autoResize"
         @keydown="onKeydown"
@@ -238,25 +212,6 @@ function retryGlmEnhancement() {
   background: $color-bg-card;
   border-top: 1px solid $color-border-light;
   flex-shrink: 0;
-}
-
-.assistant-mode {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 6px;
-  color: $text-placeholder;
-  font-size: 10px;
-}
-
-.mode-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: $color-border;
-
-  &.available { background: $color-success; }
-  &.unavailable { background: $color-warning; }
 }
 
 .chat-error {
@@ -309,27 +264,6 @@ function retryGlmEnhancement() {
       outline: 2px solid $color-primary;
       outline-offset: 2px;
     }
-  }
-}
-
-.quick-questions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $spacing-sm;
-  margin-bottom: $spacing-md;
-}
-.quick-btn {
-  padding: 5px 12px;
-  font-size: 12px;
-  border: 1px solid $color-border;
-  border-radius: 16px;
-  color: $color-primary;
-  background: $color-bg-card;
-  transition: $transition-fast;
-
-  &:hover {
-    background: $color-bg-hover;
-    border-color: $color-primary;
   }
 }
 
