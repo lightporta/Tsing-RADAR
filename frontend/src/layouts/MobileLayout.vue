@@ -153,7 +153,7 @@ onBeforeUnmount(() => {
   removeDragListeners()
 })
 
-function navigate(path: '/mentors' | '/profile' | '/recruitment') {
+function navigate(path: '/mentors' | '/profile' | '/recruitment' | '/mentor/dashboard') {
   drawerVisible.value = false
   router.push(path)
 }
@@ -242,6 +242,15 @@ function navigate(path: '/mentors' | '/profile' | '/recruitment') {
         >
           <el-icon aria-hidden="true">讯</el-icon>
           <span>信息平台</span>
+        </button>
+        <button
+          type="button"
+          class="drawer-item"
+          :aria-current="route.path.startsWith('/mentor/') ? 'page' : undefined"
+          @click="navigate('/mentor/dashboard')"
+        >
+          <el-icon aria-hidden="true">门</el-icon>
+          <span>导师门户</span>
         </button>
       </nav>
     </el-drawer>

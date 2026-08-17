@@ -36,6 +36,9 @@ function goMentors() {
 function goRecruitment() {
   router.push('/recruitment')
 }
+function goMentorPortal() {
+  router.push('/mentor/dashboard')
+}
 function goBack() {
   // 保留首页会话状态
   router.push('/')
@@ -84,6 +87,9 @@ function handleProfileClick() {
       </button>
       <button class="nav-btn recruitment" aria-label="招募信息" @click="goRecruitment">
         招募信息
+      </button>
+      <button class="nav-btn mentor" aria-label="导师门户" @click="goMentorPortal">
+        导师门户
       </button>
       <button class="user-avatar" aria-label="进入个人信息" @click="handleProfileClick">
         <img v-if="avatarUrl" :src="avatarUrl" alt="当前用户头像" />
@@ -181,6 +187,11 @@ function handleProfileClick() {
   &.recruitment {
     color: #9a5b13;
     background: #fff5e6;
+  }
+
+  &.mentor {
+    color: #6a3d9a;
+    background: #f3edfb;
   }
 
   &:hover {

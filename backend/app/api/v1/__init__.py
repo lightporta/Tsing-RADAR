@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    admin_reviews,
     advisor,
     applications,
     artifacts,
@@ -11,6 +12,12 @@ from app.api.v1 import (
     interview,
     llm,
     match,
+    mentor_auth,
+    mentor_claim,
+    mentor_inbox,
+    mentor_privacy,
+    mentor_profile,
+    mentor_recruitment,
     recruitment,
     resume,
     scatter,
@@ -34,3 +41,10 @@ api_router.include_router(resume.router, tags=["简历"])
 api_router.include_router(scatter.router, tags=["散点图"])
 api_router.include_router(train.router, tags=["训练"])
 api_router.include_router(tsinghua.router, tags=["校内接口"])
+api_router.include_router(mentor_auth.router, tags=["导师服务-登录"])
+api_router.include_router(mentor_claim.router, tags=["导师服务-认领"])
+api_router.include_router(mentor_profile.router, tags=["导师服务-档案"])
+api_router.include_router(mentor_inbox.router, tags=["导师服务-意向中心"])
+api_router.include_router(mentor_recruitment.router, tags=["导师服务-招募"])
+api_router.include_router(mentor_privacy.router, tags=["导师服务-隐私"])
+api_router.include_router(admin_reviews.router, tags=["管理员-导师审批"])

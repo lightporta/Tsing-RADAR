@@ -44,7 +44,7 @@
 
     @public_get {
         method GET
-        path /health/live /health/ready /api/session /api/mentors /api/mentors/sort /api/departments /api/departments/mentors /api/departments/students /api/mentor-evidence/status /api/mentor-distribution /api/recruitments /api/recruitments/mine /api/scatter /api/applications /api/documents /api/interviews/hard-constraint-capabilities
+        path /health/live /health/ready /api/session /api/mentors /api/mentors/sort /api/departments /api/departments/mentors /api/departments/students /api/mentor-evidence/status /api/mentor-distribution /api/recruitments /api/recruitments/mine /api/scatter /api/applications /api/documents /api/interviews/hard-constraint-capabilities /api/mentor/auth/status /api/mentor/claim/eligible /api/mentor/claim/history /api/mentor /api/mentor/profile/edits /api/mentor/inbound/matches /api/mentor/inbound/applications /api/mentor/inbound/feedback /api/mentor/recruitments /api/mentor/privacy /api/mentor/privacy/takedowns
     }
     handle @public_get {
         import backend_proxy
@@ -60,7 +60,7 @@
 
     @public_post {
         method POST
-        path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat /api/resume/generate /api/resume/submit /api/artifacts/match-report
+        path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat /api/resume/generate /api/resume/submit /api/artifacts/match-report /api/mentor/auth/email-code /api/mentor/auth/login /api/mentor/auth/logout /api/mentor/claim /api/mentor/profile/edits /api/mentor/recruitments /api/mentor/privacy/takedowns
     }
     handle @public_post {
         import backend_proxy
@@ -100,7 +100,7 @@
 
     @profile_or_application_patch {
         method PATCH
-        path_regexp patch_paths ^/api/(interviews/[A-Za-z0-9_-]+/profile|applications/[A-Za-z0-9_-]+|recruitments/[A-Za-z0-9_-]+)$
+        path_regexp patch_paths ^/api/(interviews/[A-Za-z0-9_-]+/profile|applications/[A-Za-z0-9_-]+|recruitments/[A-Za-z0-9_-]+|mentor/recruitments/[A-Za-z0-9_-]+|mentor/privacy/visibility)$
     }
     handle @profile_or_application_patch {
         import backend_proxy
@@ -116,7 +116,7 @@
 
     @owned_resource_delete {
         method DELETE
-        path_regexp owned_resource_delete ^/api/(applications|documents|recruitments)/[A-Za-z0-9_-]+$
+        path_regexp owned_resource_delete ^/api/(applications|documents|recruitments|mentor/recruitments)/[A-Za-z0-9_-]+$
     }
     handle @owned_resource_delete {
         import backend_proxy
@@ -124,7 +124,7 @@
 
     @cors_preflight {
         method OPTIONS
-        path_regexp cors_paths ^/(health/(live|ready)|api/(session|mentors(/sort)?|departments(/(mentors|students))?|mentor-evidence/status|mentor-distribution|recruitments(/mine|/[A-Za-z0-9_-]+)?|scatter|feedback|match|v1/llm/chat|resume/(generate|submit)|interviews(/[A-Za-z0-9_-]+(/(answers|confirm|profile|enhancement-retry))?)?|applications(/[A-Za-z0-9_-]+)?|documents(/[A-Za-z0-9_-]+(/(analysis|interpretation))?)?|artifacts/(match-report|[A-Za-z0-9_-]+/download-grant|download/[A-Za-z0-9._~-]+)))$
+        path_regexp cors_paths ^/(health/(live|ready)|api/(session|mentors(/sort)?|departments(/(mentors|students))?|mentor-evidence/status|mentor-distribution|recruitments(/mine|/[A-Za-z0-9_-]+)?|scatter|feedback|match|v1/llm/chat|resume/(generate|submit)|interviews(/[A-Za-z0-9_-]+(/(answers|confirm|profile|enhancement-retry))?)?|applications(/[A-Za-z0-9_-]+)?|documents(/[A-Za-z0-9_-]+(/(analysis|interpretation))?)?|artifacts/(match-report|[A-Za-z0-9_-]+/download-grant|download/[A-Za-z0-9._~-]+)|mentor(/(auth/(status|email-code|login|logout)|claim(/eligible|/history)?|profile/edits|inbound/(matches|applications|feedback)|recruitments(/[A-Za-z0-9_-]+)?|privacy(/visibility|/takedowns)?))?))$
     }
     handle @cors_preflight {
         import backend_proxy

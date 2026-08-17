@@ -36,6 +36,12 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
         "artifact_audit_events",
         "questionnaire_sessions",
         "applications",
+        "mentor_accounts",
+        "email_verification_codes",
+        "mentor_claims",
+        "mentor_profile_edits",
+        "takedown_requests",
+        "mentor_profiles",
     }.issubset(inspector.get_table_names())
     assert {
         item["name"]
@@ -88,7 +94,7 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0007"
+    assert revision == "0008"
     engine.dispose()
 
 

@@ -1,5 +1,6 @@
 """pytest 配置：将 backend 加入 sys.path，并在 import 前设置测试数据库。"""
 
+import logging
 import os
 import sys
 import tempfile
@@ -77,3 +78,44 @@ def isolate_recruitment_records():
         db.query(Application).delete(synchronize_session=False)
         db.query(Recruitment).delete(synchronize_session=False)
         db.commit()
+
+
+@pytest.fixture(autouse=True)
+def isolate_mentor_service_records():
+    """导师服务表按 FK 顺序清理，防止跨测试泄漏。"""
+
+    yield
+    from app.db.session import SessionLocal
+    from app.models.artifact_audit import ArtifactAuditEvent
+    from app.models.email_verification_code import EmailVerificationCode
+    from app.models.mentor_account import MentorAccount
+    from app.models.mentor_claim import MentorClaim
+    from app.models.mentor_profile import MentorProfile
+    from app.models.mentor_profile_edit import MentorProfileEdit
+    from app.models.takedown_request import TakedownRequest
+
+    with SessionLocal() as db:
+        db.query(MentorProfileEdit).delete(synchronize_session=False)
+        db.query(TakedownRequest).delete(synchronize_session=False)
+        db.query(MentorClaim).delete(synchronize_session=False)
+        db.query(MentorProfile).delete(synchronize_session=False)
+        db.query(EmailVerificationCode).delete(synchronize_session=False)
+        db.query(MentorAccount).delete(synchronize_session=False)
+        # 仅清理导师服务审计事件，不影响 A6 私有文件审计断言
+        db.query(ArtifactAuditEvent).filter(
+            ArtifactAuditEvent.event_type.like("mentor_%")
+        ).delete(synchronize_session=False)
+        db.commit()
+
+
+@pytest.fixture(autouse=True)
+def restore_loggers_disabled_by_alembic():
+    """test_a5_migration 跑迁移时 alembic env.py 的 fileConfig 默认
+    disable_existing_loggers=True，会把既有 logger 置为 disabled，导致其后
+    caplog 断言（如导师验证码日志）捕获失效。每个测试后统一恢复。
+    """
+
+    yield
+    for name, logger in logging.Logger.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger) and logger.disabled:
+            logger.disabled = False

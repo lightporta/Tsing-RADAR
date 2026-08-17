@@ -96,10 +96,21 @@ class Settings(BaseSettings):
     )
     _llm_credentials: tuple[tuple[str, str], ...] = PrivateAttr(default=())
 
-    # —— 邮件（清华 SMTP，OAuth 2.0 占位）——
-    SMTP_HOST: Optional[str] = "smtp.tsinghua.edu.cn"
-    SMTP_USER: Optional[str] = None
-    SMTP_PASSWORD: Optional[str] = None
+    # —— 导师服务邮件（邮箱验证码登录）——
+    # MAIL_MODE=console：验证码仅打印到服务端日志（开发/测试默认，不发送）；
+    # MAIL_MODE=smtp：走 SMTP 发送（生产，须配置 MAIL_HOST/USER/PASSWORD/MAIL_FROM）。
+    MAIL_MODE: str = "console"
+    MAIL_HOST: Optional[str] = "smtp.tsinghua.edu.cn"
+    MAIL_PORT: int = Field(default=465, ge=1, le=65535)
+    MAIL_USER: Optional[str] = None
+    MAIL_PASSWORD: Optional[str] = None
+    MAIL_FROM: str = "Tsing-RADAR 导师服务 <no-reply@tsingradar.com.cn>"
+    MAIL_USE_TLS: bool = True
+    # 验证码有效期 / 重发限频 / 日上限 / 校验失败次数上限
+    MENTOR_CODE_TTL_SECONDS: int = Field(default=600, ge=60, le=3600)
+    MENTOR_CODE_RESEND_SECONDS: int = Field(default=60, ge=30, le=600)
+    MENTOR_CODE_DAILY_LIMIT: int = Field(default=10, ge=3, le=50)
+    MENTOR_CODE_MAX_ATTEMPTS: int = Field(default=5, ge=3, le=20)
 
     # —— CORS ——
     CORS_ORIGINS: str = (
