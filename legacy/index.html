@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>清研寻师雷达 · Tsing-RADAR</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js">
+    </script>
+    <style>
+        /* ===== 全部样式保持不变 ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Times New Roman', 'PingFang SC', '宋体', serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 24px 20px;
+        }
+
+        .app {
+            max-width: 1500px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+            padding: 36px 36px 44px;
+            transition: all 0.2s;
+        }
+
+        .header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            margin-bottom: 28px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #dce3ed;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: baseline;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .header-left h1 {
+            font-size: 38px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .header-left h1 .gradient {
+            background: linear-gradient(135deg, #1a2a4a, #2c3e6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-left .sub {
+            font-size: 22px;
+            font-weight: 400;
+            color: #3a4f6a;
+            background: #eef2f8;
+            padding: 2px 20px;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
+        }
+
+        .header-right {
+            font-size: 16px;
+            color: #5a6f88;
+            background: #f0f3f8;
+            padding: 4px 20px;
+            border-radius: 4px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .search-section {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+            margin-bottom: 34px;
+            background: #f8faff;
+            padding: 14px 24px;
+            border: 1px solid #dce3ed;
+            border-radius: 8px;
+            transition: border 0.2s, box-shadow 0.2s;
+        }
+
+        .search-section:focus-within {
+            border-color: #2c3e6b;
+            box-shadow: 0 0 0 3px rgba(44, 62, 107, 0.08);
+        }
+
+        .search-section input {
+            flex: 1;
+            min-width: 260px;
+            padding: 16px 20px;
+            border: none;
+            background: transparent;
+            font-size: 18px;
+            outline: none;
+            color: #1a2a3a;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .search-section input::placeholder {
+            color: #aab8c9;
+            font-weight: 300;
+        }
+
+        .search-section .hint-tags {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .search-section .hint-tags span {
+            font-size: 15px;
+            color: #2c3e6b;
+            background: #eef2f8;
+            padding: 6px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: 0.15s;
+            border: 1px solid transparent;
+        }
+
+        .search-section .hint-tags span:hover {
+            background: #dce3ed;
+            border-color: #b0c0d4;
+        }
+
+        .search-section button {
+            background: #1a2a4a;
+            border: none;
+            padding: 14px 44px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 600;
+            font-size: 18px;
+            cursor: pointer;
+            transition: 0.2s;
+            box-shadow: 0 4px 12px rgba(26, 42, 74, 0.2);
+            white-space: nowrap;
+            letter-spacing: 0.6px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .search-section button:hover {
+            background: #0e1a30;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(26, 42, 74, 0.25);
+        }
+
+        .search-section button:active {
+            transform: scale(0.97);
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 36px;
+            margin-top: 6px;
+        }
+
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .collapse-panel {
+            background: #ffffff;
+            border: 1px solid #e4e9f0;
+            border-radius: 6px;
+            overflow: hidden;
+            transition: border 0.2s;
+        }
+
+        .collapse-panel:hover {
+            border-color: #c8d2e0;
+        }
+
+        .collapse-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 24px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+            background: #fafcff;
+            border-bottom: 1px solid transparent;
+        }
+
+        .collapse-header:hover {
+            background: #f2f6fc;
+        }
+
+        .collapse-header .title {
+            font-weight: 600;
+            font-size: 20px;
+            color: #1a2a4a;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .collapse-header .title .badge {
+            font-size: 14px;
+            font-weight: 400;
+            background: #eef2f8;
+            color: #3a4f6a;
+            padding: 0 16px;
+            border-radius: 4px;
+            line-height: 26px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .collapse-header .title .academic-label {
+            font-size: 13px;
+            font-weight: 400;
+            color: #6a7f9a;
+            background: #eef2f8;
+            padding: 0 14px;
+            border-radius: 4px;
+            line-height: 24px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .collapse-header .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .collapse-header .header-actions .edit-btn {
+            font-size: 15px;
+            color: #1a2a4a;
+            background: #eef2f8;
+            border: 1px solid #d0dae6;
+            padding: 2px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: 0.15s;
+            font-weight: 500;
+            line-height: 28px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .collapse-header .header-actions .edit-btn:hover {
+            background: #dce3ed;
+            border-color: #b0c0d4;
+        }
+
+        .collapse-header .arrow {
+            font-size: 24px;
+            color: #3a4f6a;
+            transition: transform 0.3s ease;
+            line-height: 1;
+            margin-left: 8px;
+        }
+
+        .collapse-header .arrow.open {
+            transform: rotate(90deg);
+        }
+
+        .collapse-body {
+            padding: 0 24px 24px 24px;
+            display: none;
+        }
+
+        .collapse-body.open {
+            display: block;
+        }
+
+        .mentor-list-container {
+            padding-bottom: 4px;
+        }
+
+        .mentor-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0 16px 0;
+            border-bottom: 1px solid #e4e9f0;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .mentor-toolbar .info-text {
+            font-size: 16px;
+            color: #3a4f6a;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .mentor-toolbar .refresh-btn {
+            background: #eef2f8;
+            border: 1px solid #d0dae6;
+            padding: 8px 26px;
+            border-radius: 4px;
+            font-size: 16px;
+            color: #1a2a4a;
+            cursor: pointer;
+            transition: 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .mentor-toolbar .refresh-btn:hover {
+            background: #dce3ed;
+            border-color: #b0c0d4;
+        }
+
+        .student-avatar-row {
+            display: flex;
+            align-items: center;
+            gap: 22px;
+            margin-bottom: 18px;
+        }
+
+        .student-avatar-row .avatar-lg {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #d1c4e9, #b39ddb);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #1a2a4a;
+            font-weight: 700;
+            font-size: 34px;
+            flex-shrink: 0;
+        }
+
+        .student-avatar-row .info h4 {
+            font-size: 22px;
+            font-weight: 700;
+            color: #0a1e2f;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .student-avatar-row .info .meta {
+            font-size: 16px;
+            color: #5a6f88;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+
+        .student-avatar-row .info .meta span {
+            background: #eef2f8;
+            padding: 0 16px;
+            border-radius: 4px;
+            line-height: 30px;
+        }
+
+        .student-detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px 28px;
+            margin-top: 8px;
+        }
+
+        .student-detail-grid .item {
+            font-size: 16px;
+            color: #1a2a3a;
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px dashed #e4e9f0;
+            padding: 8px 0;
+            align-items: center;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .student-detail-grid .item .label {
+            color: #6a7f9a;
+            flex-shrink: 0;
+        }
+        .student-detail-grid .item .value {
+            font-weight: 500;
+            color: #1a2a3a;
+            text-align: right;
+        }
+        .student-detail-grid .item .edit-mode {
+            display: none;
+            width: 100%;
+            max-width: 200px;
+            padding: 4px 12px;
+            border: 1px solid #d0dae6;
+            border-radius: 4px;
+            font-size: 16px;
+            background: #fff;
+            text-align: right;
+            font-family: 'Times New Roman', serif;
+        }
+        .student-detail-grid .item .edit-mode:focus {
+            outline: 2px solid #1a2a4a;
+            border-color: transparent;
+        }
+        .student-detail-grid .item.editing .view-mode {
+            display: none;
+        }
+        .student-detail-grid .item.editing .edit-mode {
+            display: block;
+        }
+
+        .student-tags {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .student-tags span {
+            font-size: 15px;
+            background: #f0ebf6;
+            color: #1a2a4a;
+            padding: 4px 20px;
+            border-radius: 4px;
+            border: 1px solid #d5c8e0;
+        }
+
+        .student-tags span .del {
+            margin-left: 8px;
+            cursor: pointer;
+            opacity: 0.5;
+            font-weight: 700;
+            display: inline-block;
+        }
+        .student-tags span .del:hover {
+            opacity: 1;
+        }
+        .student-tags span .del.hidden-in-view {
+            display: none;
+        }
+        .student-tags .add-tag-btn.hidden-in-view {
+            display: none;
+        }
+
+        .weight-sliders {
+            margin-top: 18px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px 28px;
+        }
+
+        .weight-sliders .slider-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 15px;
+            color: #1a2a4a;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .weight-sliders .slider-item input[type="range"] {
+            flex: 1;
+            accent-color: #1a2a4a;
+            height: 5px;
+            cursor: pointer;
+        }
+        .weight-sliders .slider-item input[type="range"]:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .weight-sliders .slider-item .val {
+            min-width: 34px;
+            font-weight: 600;
+            color: #1a2a4a;
+            font-size: 15px;
+        }
+
+        .mentor-card {
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 20px 26px;
+            border: 1px solid #e4e9f0;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .mentor-card:last-child {
+            margin-bottom: 0;
+        }
+
+        .mentor-card:hover {
+            border-color: #b0c0d4;
+            box-shadow: 0 8px 20px rgba(26, 42, 74, 0.06);
+            transform: translateY(-2px);
+        }
+
+        .mentor-card.active {
+            border-color: #1a2a4a;
+            background: #f8faff;
+            box-shadow: 0 8px 20px rgba(26, 42, 74, 0.08);
+        }
+
+        .mentor-card .row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .mentor-card .name-area {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .mentor-card .avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #d1c4e9, #b39ddb);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #1a2a4a;
+            font-weight: 700;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+
+        .mentor-card .name {
+            font-weight: 700;
+            font-size: 22px;
+            color: #0a1e2f;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .mentor-card .dept {
+            font-size: 16px;
+            color: #6a7f9a;
+            margin-left: 6px;
+            font-weight: 400;
+        }
+
+        .mentor-card .score-badge {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f0f4fe;
+            padding: 6px 20px 6px 22px;
+            border-radius: 40px;
+        }
+
+        .mentor-card .score-badge .num {
+            font-weight: 700;
+            font-size: 30px;
+            color: #1a2a4a;
+        }
+
+        .mentor-card .score-badge .label {
+            font-size: 15px;
+            color: #5a6f88;
+        }
+
+        .mentor-card .tags {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 2px;
+        }
+
+        .mentor-card .tags span {
+            font-size: 15px;
+            background: #eef3fa;
+            color: #2d4a6a;
+            padding: 2px 18px;
+            border-radius: 4px;
+        }
+
+        .mentor-card .reason {
+            font-size: 16px;
+            color: #3a4f6a;
+            background: #f7faff;
+            padding: 10px 18px;
+            border-radius: 4px;
+            border-left: 4px solid #8a7a9a;
+            margin-top: 4px;
+            line-height: 1.6;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .match-bar {
+            width: 100%;
+            height: 4px;
+            background: #eaeef5;
+            border-radius: 4px;
+            margin-top: 4px;
+            overflow: hidden;
+        }
+
+        .match-bar .fill {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, #3a4f6a, #6a7f9a);
+            transition: width 0.4s ease;
+        }
+
+        .radar-container {
+            background: #fafcff;
+            border-radius: 8px;
+            padding: 18px 14px 10px 14px;
+            border: 1px solid #e4e9f0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .radar-container .radar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 10px 12px 10px;
+            border-bottom: 1px solid #e4e9f0;
+        }
+
+        .radar-container .radar-header .title {
+            font-weight: 600;
+            font-size: 19px;
+            color: #1a2a4a;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .radar-container .radar-header .current-mentor {
+            font-size: 17px;
+            color: #3a4f6a;
+            background: #eef2f8;
+            padding: 2px 22px;
+            border-radius: 4px;
+        }
+
+        #radarChart {
+            width: 100%;
+            height: 380px;
+            min-height: 320px;
+        }
+
+        .chart-footnote {
+            padding: 12px 14px 8px 14px;
+            font-size: 14px;
+            color: #7a8fa8;
+            border-top: 1px solid #e4e9f0;
+            margin-top: 6px;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 6px;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .empty-state {
+            background: #f9fcff;
+            border-radius: 8px;
+            padding: 32px 20px;
+            text-align: center;
+            color: #7a8fa8;
+            font-size: 17px;
+            border: 1px dashed #d5e0ed;
+        }
+
+        .btn-loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .loading-dot {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid #d0deec;
+            border-top: 2px solid #1a2a4a;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .footer {
+            margin-top: 36px;
+            padding-top: 22px;
+            border-top: 1px solid #e4e9f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+            font-size: 15px;
+            color: #8a9bb0;
+            font-family: 'Times New Roman', serif;
+        }
+
+        .footer .motto {
+            color: #3a4f6a;
+            letter-spacing: 2px;
+        }
+
+        @media (max-width: 1200px) {
+            .dashboard {
+                grid-template-columns: 1.2fr 1fr;
+                gap: 28px;
+            }
+            .app {
+                padding: 28px 24px 36px;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+                gap: 28px;
+            }
+            .app {
+                padding: 24px 18px 32px;
+            }
+            .search-section {
+                padding: 14px 18px;
+            }
+            .header-left h1 {
+                font-size: 30px;
+            }
+            .search-section .hint-tags span {
+                font-size: 14px;
+                padding: 4px 16px;
+            }
+            .student-detail-grid {
+                grid-template-columns: 1fr;
+            }
+            .weight-sliders {
+                grid-template-columns: 1fr;
+            }
+            .mentor-card {
+                padding: 18px 20px;
+            }
+            .mentor-card .name {
+                font-size: 20px;
+            }
+            .mentor-card .score-badge .num {
+                font-size: 26px;
+            }
+            .mentor-card .avatar {
+                width: 42px;
+                height: 42px;
+                font-size: 20px;
+            }
+            #radarChart {
+                height: 320px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header-left h1 {
+                font-size: 24px;
+            }
+            .header-left .sub {
+                font-size: 16px;
+                padding: 0 14px;
+            }
+            .mentor-card .name {
+                font-size: 18px;
+            }
+            .mentor-card .score-badge .num {
+                font-size: 22px;
+            }
+            .search-section button {
+                padding: 12px 30px;
+                font-size: 16px;
+                width: 100%;
+            }
+            .search-section input {
+                font-size: 16px;
+                padding: 12px 16px;
+            }
+            .student-avatar-row .avatar-lg {
+                width: 56px;
+                height: 56px;
+                font-size: 28px;
+            }
+            .student-avatar-row .info h4 {
+                font-size: 20px;
+            }
+            .student-detail-grid .item .edit-mode {
+                max-width: 120px;
+            }
+            .mentor-toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .mentor-toolbar .refresh-btn {
+                justify-content: center;
+            }
+            .mentor-card .row {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            .radar-container .radar-header {
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+            #radarChart {
+                height: 260px;
+            }
+            .collapse-header {
+                padding: 16px 18px;
+            }
+            .collapse-header .title {
+                font-size: 18px;
+            }
+            .collapse-body {
+                padding: 0 18px 18px 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="app">
+        <header class="header">
+            <div class="header-left">
+                <h1>
+                    <span class="gradient">Tsing-RADAR</span>
+                    <span style="font-weight:400;color:#2a3f5a;font-size:28px;">清研寻师雷达</span>
+                </h1>
+                <span class="sub">AI 导师匹配</span>
+            </div>
+            <div class="header-right">
+                🎯 清华 · 智能体广场
+            </div>
+        </header>
+
+        <div class="search-section">
+            <input type="text" id="interestInput" placeholder="输入你的研究兴趣，例如：我喜欢自然语言处理" />
+            <div class="hint-tags">
+                <span data-hint="我喜欢自然语言处理">NLP</span>
+                <span data-hint="我对计算机视觉和图像生成感兴趣">CV</span>
+                <span data-hint="想做深度学习理论方向">DL</span>
+                <span data-hint="我对机器人控制感兴趣">机器人</span>
+            </div>
+            <button id="sendBtn">🔍 匹配导师</button>
+        </div>
+
+        <div class="dashboard">
+            <div class="left-panel">
+                <!-- 学生信息面板 -->
+                <div class="collapse-panel" id="studentPanel">
+                    <div class="collapse-header" data-target="studentBody">
+                        <span class="title">
+                            👤 我的学术画像
+                            <span class="badge" id="editStatusBadge">查看模式</span>
+                        </span>
+                        <div class="header-actions">
+                            <button class="edit-btn" id="toggleEditBtn">✎ 编辑</button>
+                            <span class="arrow open" id="studentArrow">▸</span>
+                        </div>
+                    </div>
+                    <div class="collapse-body open" id="studentBody">
+                        <div class="student-avatar-row">
+                            <div class="avatar-lg" id="avatarText">张</div>
+                            <div class="info">
+                                <h4>
+                                    <span class="view-mode" id="displayName">张知行</span>
+                                    <input class="edit-mode" id="editName" value="张知行" style="display:none;font-size:22px;font-weight:700;border:1px solid #d0dae6;border-radius:4px;padding:2px 14px;width:180px;font-family:'Times New Roman',serif;" />
+                                    <span style="font-weight:400;font-size:16px;color:#5a6f88;margin-left:12px;">
+                                        <span class="view-mode" id="displayCategory">本科 · 大三</span>
+                                        <select class="edit-mode" id="editCategory" style="display:none;font-size:16px;border:1px solid #d0dae6;border-radius:4px;padding:2px 8px;margin-left:6px;font-family:'Times New Roman',serif;">
+                                            <option value="本科 · 大一">本科 · 大一</option>
+                                            <option value="本科 · 大二">本科 · 大二</option>
+                                            <option value="本科 · 大三" selected>本科 · 大三</option>
+                                            <option value="本科 · 大四">本科 · 大四</option>
+                                            <option value="硕士 · 研一">硕士 · 研一</option>
+                                            <option value="硕士 · 研二">硕士 · 研二</option>
+                                            <option value="博士 · 博一">博士 · 博一</option>
+                                            <option value="博士 · 博二">博士 · 博二</option>
+                                            <option value="博士 · 博三">博士 · 博三</option>
+                                        </select>
+                                    </span>
+                                </h4>
+                                <div class="meta">
+    <!-- 院系：查看模式 -->
+    <span class="view-mode" id="displayDept">计算机科学与技术系</span>
+    <!-- 院系：编辑模式（下拉菜单） -->
+    <select class="edit-mode" id="editDept" style="display:none;font-size:16px;border:1px solid #d0dae6;border-radius:4px;padding:2px 14px;width:220px;font-family:'Times New Roman',serif;">
+        <option value="建筑学院">建筑学院</option>
+        <option value="土木工程系">土木工程系</option>
+        <option value="建设管理系">建设管理系</option>
+        <option value="水利水电工程系">水利水电工程系</option>
+        <option value="环境学院">环境学院</option>
+        <option value="机械工程系">机械工程系</option>
+        <option value="精密仪器系">精密仪器系</option>
+        <option value="能源与动力工程系">能源与动力工程系</option>
+        <option value="车辆与运载学院">车辆与运载学院</option>
+        <option value="工业工程系">工业工程系</option>
+        <option value="航天航空学院">航天航空学院</option>
+        <option value="电子工程系">电子工程系</option>
+        <option value="计算机科学与技术系">计算机科学与技术系</option>
+        <option value="自动化系">自动化系</option>
+        <option value="微电子与纳电子学系">微电子与纳电子学系</option>
+        <option value="软件学院">软件学院</option>
+        <option value="数学科学系">数学科学系</option>
+        <option value="物理系">物理系</option>
+        <option value="化学系">化学系</option>
+        <option value="地球系统科学系">地球系统科学系</option>
+        <option value="生命科学学院">生命科学学院</option>
+        <option value="医学院">医学院</option>
+        <option value="药学院">药学院</option>
+        <option value="经济管理学院">经济管理学院</option>
+        <option value="公共管理学院">公共管理学院</option>
+        <option value="法学院">法学院</option>
+        <option value="新闻与传播学院">新闻与传播学院</option>
+        <option value="中国语言文学系">中国语言文学系</option>
+        <option value="外国语言文学系">外国语言文学系</option>
+        <option value="历史系">历史系</option>
+        <option value="哲学系">哲学系</option>
+        <option value="社会学系">社会学系</option>
+        <option value="政治学系">政治学系</option>
+        <option value="国际关系学系">国际关系学系</option>
+        <option value="心理学系">心理学系</option>
+        <option value="马克思主义学院">马克思主义学院</option>
+        <option value="美术学院">美术学院</option>
+        <option value="体育部">体育部</option>
+        <option value="核能与新能源技术研究院">核能与新能源技术研究院</option>
+        <option value="教育研究院">教育研究院</option>
+        <option value="深圳国际研究生院">深圳国际研究生院</option>
+        <option value="交叉信息研究院">交叉信息研究院</option>
+        <option value="高等研究院">高等研究院</option>
+        <option value="材料学院">材料学院</option>
+        <option value="电机工程与应用电子技术系">电机工程与应用电子技术系</option>
+        <option value="工程物理系">工程物理系</option>
+        <option value="化学工程系">化学工程系</option>
+    </select>
+
+    <!-- 年级：查看模式 -->
+    <span class="view-mode" id="displayGrade">2023级</span>
+    <!-- 年级：编辑模式（下拉菜单，近8年） -->
+    <select class="edit-mode" id="editGrade" style="display:none;font-size:16px;border:1px solid #d0dae6;border-radius:4px;padding:2px 14px;width:120px;font-family:'Times New Roman',serif;">
+        <option value="2019级">2019级</option>
+        <option value="2020级">2020级</option>
+        <option value="2021级">2021级</option>
+        <option value="2022级">2022级</option>
+        <option value="2023级" selected>2023级</option>
+        <option value="2024级">2024级</option>
+        <option value="2025级">2025级</option>
+        <option value="2026级">2026级</option>
+    </select>
+
+    <!-- 学号（保持不变） -->
+    <span class="view-mode" id="displayId">学号: 2023011xxx</span>
+    <input class="edit-mode" id="editId" value="2023011xxx" style="display:none;font-size:16px;border:1px solid #d0dae6;border-radius:4px;padding:2px 14px;width:160px;font-family:'Times New Roman',serif;" />
+</div>
+                            </div>
+                        </div>
+                        <div class="student-detail-grid">
+                            <div class="item" id="fieldEmail">
+                                <span class="label">邮箱</span>
+                                <span class="view-mode">zhangzx@mails.tsinghua.edu.cn</span>
+                                <input class="edit-mode" value="zhangzx@mails.tsinghua.edu.cn" />
+                            </div>
+                            <div class="item" id="fieldGPA">
+                                <span class="label">GPA</span>
+                                <span class="view-mode">3.72 / 4.0</span>
+                                <input class="edit-mode" value="3.72 / 4.0" />
+                            </div>
+                            <div class="item" id="fieldResearch">
+                                <span class="label">科研经历</span>
+                                <span class="view-mode">1项 SRT · 1篇在投</span>
+                                <input class="edit-mode" value="1项 SRT · 1篇在投" />
+                            </div>
+                            <div class="item" id="fieldInterest">
+                                <span class="label">研究兴趣</span>
+                                <span class="view-mode" style="font-weight:400;color:#4a6a8a;">NLP, LLM, KG</span>
+                                <input class="edit-mode" value="NLP, LLM, KG" />
+                            </div>
+                        </div>
+                        <div style="margin-top:10px;font-size:16px;color:#5a6f88;font-family:'Times New Roman',serif;">🏷️ 兴趣标签</div>
+                        <div class="student-tags" id="interestTags">
+                            <span>自然语言处理 <span class="del" data-tag="NLP">✕</span></span>
+                            <span>大语言模型 <span class="del" data-tag="LLM">✕</span></span>
+                            <span>知识图谱 <span class="del" data-tag="KG">✕</span></span>
+                            <span class="add-tag-btn" style="background:#eef2f8;color:#3a4f6a;border:1px dashed #b0c0d4;cursor:pointer;" id="addTagBtn">+ 添加</span>
+                        </div>
+                        <div style="margin-top:18px;font-size:16px;color:#5a6f88;font-family:'Times New Roman',serif;">⚙️ 维度权重偏好 <span style="font-weight:400;font-size:14px;color:#8a9bb0;">（拖动调整）</span></div>
+                        <div class="weight-sliders">
+                            <div class="slider-item"><span>学术敏锐度</span><input type="range" min="0" max="100" value="85" /><span class="val">85</span></div>
+                            <div class="slider-item"><span>人脉资源</span><input type="range" min="0" max="100" value="60" /><span class="val">60</span></div>
+                            <div class="slider-item"><span>指导意愿</span><input type="range" min="0" max="100" value="90" /><span class="val">90</span></div>
+                            <div class="slider-item"><span>性格包容度</span><input type="range" min="0" max="100" value="70" /><span class="val">70</span></div>
+                            <div class="slider-item"><span>经费实力</span><input type="range" min="0" max="100" value="50" /><span class="val">50</span></div>
+                            <div class="slider-item"><span>产出效率</span><input type="range" min="0" max="100" value="75" /><span class="val">75</span></div>
+                        </div>
+                        <div style="margin-top:14px;font-size:14px;color:#8a9bb0;text-align:right;font-family:'Times New Roman',serif;">💡 修改后点击「保存」生效</div>
+                    </div>
+                </div>
+
+                <!-- 导师推荐面板 -->
+                <div class="collapse-panel" id="mentorPanel">
+                    <div class="collapse-header" data-target="mentorBody">
+                        <span class="title">
+                            📄 推荐导师
+                            <span class="badge" id="mentorCount">5 位</span>
+                            <span class="academic-label">摘要</span>
+                        </span>
+                        <span class="arrow open" id="mentorArrow">▸</span>
+                    </div>
+                    <div class="collapse-body open" id="mentorBody" style="padding-bottom:18px;">
+                        <div class="mentor-toolbar">
+                            <span class="info-text">共 <span id="mentorTotal">5</span> 位导师推荐</span>
+                            <button class="refresh-btn" id="refreshMentorBtn">⟳ 换一批</button>
+                        </div>
+                        <div class="mentor-list-container" id="cardListContainer">
+                            <!-- JS 动态渲染 -->
+                            <div class="empty-state">⏳ 加载导师数据中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧雷达图 -->
+            <div class="radar-container">
+                <div class="radar-header">
+                    <span class="title">📡 六维导师雷达</span>
+                    <span class="current-mentor" id="currentMentorLabel">—</span>
+                </div>
+                <div id="radarChart"></div>
+                <div class="chart-footnote">
+                    <span>学术敏锐度 · 人脉资源 · 指导意愿</span>
+                    <span>性格包容度 · 经费实力 · 产出效率</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <span class="motto">自强不息 · 厚德载物</span>
+            <span>Tsing-RADAR v1.0 · 清研 · 校园导师推荐</span>
+        </div>
+    </div>
+
+    <script>
+        "use strict";
+
+        // ================================================================
+        //  1. DOM 引用
+        // ================================================================
+        const cardContainer = document.getElementById('cardListContainer');
+        const inputField = document.getElementById('interestInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const currentMentorLabel = document.getElementById('currentMentorLabel');
+        const mentorCount = document.getElementById('mentorCount');
+        const mentorTotal = document.getElementById('mentorTotal');
+        const refreshBtn = document.getElementById('refreshMentorBtn');
+
+        // ================================================================
+        //  2. 全局数据（异步加载）
+        // ================================================================
+        const DEFAULT_MENTORS = [];
+        let ALL_MENTORS = DEFAULT_MENTORS;
+        let currentMentors = [];
+        let selectedIndex = 0;
+        let currentInput = '';
+
+        // ================================================================
+        //  3. 折叠功能
+        // ================================================================
+        document.querySelectorAll('.collapse-header').forEach(header => {
+            header.addEventListener('click', function(e) {
+                if (e.target.closest('.edit-btn')) return;
+                if (e.target.closest('.header-actions')) return;
+
+                const targetId = this.dataset.target;
+                const body = document.getElementById(targetId);
+                const arrow = this.querySelector('.arrow');
+                if (!body) return;
+                body.classList.toggle('open');
+                if (arrow) arrow.classList.toggle('open');
+
+                const label = this.querySelector('.academic-label');
+                if (label) {
+                    label.textContent = body.classList.contains('open') ? '全文' : '摘要';
+                }
+
+                if (targetId === 'mentorBody') {
+                    const count = document.querySelectorAll('.mentor-card').length;
+                    if (mentorCount) mentorCount.textContent = count + ' 位';
+                    if (mentorTotal) mentorTotal.textContent = count;
+                }
+            });
+        });
+
+        // ================================================================
+        //  4. 编辑功能
+        // ================================================================
+        let isEditing = false;
+        const editBtn = document.getElementById('toggleEditBtn');
+        const editStatusBadge = document.getElementById('editStatusBadge');
+
+        function toggleEditMode() {
+            isEditing = !isEditing;
+
+            document.querySelectorAll('#studentBody .edit-mode').forEach(el => {
+                el.style.display = isEditing ? 'inline-block' : 'none';
+                if (el.tagName === 'SELECT') {
+                    el.style.display = isEditing ? 'inline-block' : 'none';
+                }
+                if (el.tagName === 'INPUT') {
+                    el.style.display = isEditing ? 'inline-block' : 'none';
+                }
+            });
+            document.querySelectorAll('#studentBody .view-mode').forEach(el => {
+                el.style.display = isEditing ? 'none' : 'inline';
+            });
+
+            document.querySelectorAll('.student-detail-grid .item').forEach(item => {
+                if (isEditing) {
+                    item.classList.add('editing');
+                } else {
+                    item.classList.remove('editing');
+                }
+            });
+
+            document.querySelectorAll('.student-tags .del').forEach(el => {
+                if (isEditing) {
+                    el.classList.remove('hidden-in-view');
+                } else {
+                    el.classList.add('hidden-in-view');
+                }
+            });
+            const addBtn = document.getElementById('addTagBtn');
+            if (addBtn) {
+                if (isEditing) {
+                    addBtn.classList.remove('hidden-in-view');
+                } else {
+                    addBtn.classList.add('hidden-in-view');
+                }
+            }
+
+            document.querySelectorAll('.weight-sliders input[type="range"]').forEach(slider => {
+                slider.disabled = !isEditing;
+            });
+
+            if (isEditing) {
+                document.getElementById('editName').value = document.getElementById('displayName').textContent.trim();
+                document.getElementById('editDept').value = document.getElementById('displayDept').textContent.trim();
+                document.getElementById('editGrade').value = document.getElementById('displayGrade').textContent.trim();
+                const idVal = document.getElementById('displayId').textContent.replace('学号: ', '').trim();
+                document.getElementById('editId').value = idVal;
+
+                const emailItem = document.getElementById('fieldEmail');
+                emailItem.querySelector('.edit-mode').value = emailItem.querySelector('.view-mode').textContent.trim();
+                const gpaItem = document.getElementById('fieldGPA');
+                gpaItem.querySelector('.edit-mode').value = gpaItem.querySelector('.view-mode').textContent.trim();
+                const resItem = document.getElementById('fieldResearch');
+                resItem.querySelector('.edit-mode').value = resItem.querySelector('.view-mode').textContent.trim();
+                const intItem = document.getElementById('fieldInterest');
+                intItem.querySelector('.edit-mode').value = intItem.querySelector('.view-mode').textContent.trim();
+
+                editBtn.textContent = '💾 保存';
+                editStatusBadge.textContent = '编辑中';
+                editStatusBadge.style.background = '#f0d4d4';
+                editStatusBadge.style.color = '#8a2a2a';
+            } else {
+                document.getElementById('displayName').textContent = document.getElementById('editName').value.trim() ||
+                    '张知行';
+                document.getElementById('displayDept').textContent = document.getElementById('editDept').value.trim() ||
+                    '计算机科学与技术系';
+                document.getElementById('displayGrade').textContent = document.getElementById('editGrade').value.trim() ||
+                    '2023级';
+                const idVal = document.getElementById('editId').value.trim() || '2023011xxx';
+                document.getElementById('displayId').textContent = '学号: ' + idVal;
+
+                const emailItem = document.getElementById('fieldEmail');
+                emailItem.querySelector('.view-mode').textContent = emailItem.querySelector('.edit-mode').value.trim() ||
+                    'zhangzx@mails.tsinghua.edu.cn';
+                const gpaItem = document.getElementById('fieldGPA');
+                gpaItem.querySelector('.view-mode').textContent = gpaItem.querySelector('.edit-mode').value.trim() ||
+                    '3.72 / 4.0';
+                const resItem = document.getElementById('fieldResearch');
+                resItem.querySelector('.view-mode').textContent = resItem.querySelector('.edit-mode').value.trim() ||
+                    '1项 SRT · 1篇在投';
+                const intItem = document.getElementById('fieldInterest');
+                intItem.querySelector('.view-mode').textContent = intItem.querySelector('.edit-mode').value.trim() ||
+                    'NLP, LLM, KG';
+
+                const name = document.getElementById('displayName').textContent.trim();
+                document.getElementById('avatarText').textContent = name.charAt(0) || '张';
+
+                editBtn.textContent = '✎ 编辑';
+                editStatusBadge.textContent = '查看模式';
+                editStatusBadge.style.background = '#eef2f8';
+                editStatusBadge.style.color = '#3a4f6a';
+            }
+        }
+
+        editBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            toggleEditMode();
+        });
+
+        // ================================================================
+        //  5. 雷达图
+        // ================================================================
+        function generateRadarScores(mentor) {
+            const base = mentor.score || 80;
+            let seed = 0;
+            for (let i = 0; i < mentor.name.length; i++) {
+                seed += mentor.name.charCodeAt(i);
+            }
+            const variation = (seed % 20) - 10;
+            return [
+                Math.min(100, Math.max(20, base + 5 + (variation % 8))),
+                Math.min(100, Math.max(20, base - 3 + (seed % 7))),
+                Math.min(100, Math.max(20, base + 2 - (variation % 6))),
+                Math.min(100, Math.max(20, base - 8 + (seed % 9))),
+                Math.min(100, Math.max(20, base + 10 - (seed % 5))),
+                Math.min(100, Math.max(20, base - 6 + (seed % 11)))
+            ];
+        }
+
+        let radarChartInstance = null;
+
+        function initRadar() {
+            const dom = document.getElementById('radarChart');
+            if (!dom) return;
+            if (!radarChartInstance) {
+                radarChartInstance = echarts.init(dom);
+            }
+            if (currentMentors.length > 0) {
+                updateRadar(0);
+            } else {
+                radarChartInstance.clear();
+                if (currentMentorLabel) currentMentorLabel.textContent = '—';
+            }
+        }
+
+function updateRadar(index) {
+    if (!radarChartInstance) return;
+    if (currentMentors.length === 0) {
+        radarChartInstance.clear();
+        if (currentMentorLabel) currentMentorLabel.textContent = '—';
+        return;
+    }
+    const mentor = currentMentors[index] || currentMentors[0];
+    if (!mentor) return;
+
+    // 1. 获取学生的六个维度权重（从滑块读取，如果没有则用默认值）
+    const sliderValues = [];
+    const sliders = document.querySelectorAll('.weight-sliders input[type="range"]');
+    if (sliders.length === 6) {
+        sliders.forEach(slider => {
+            sliderValues.push(parseInt(slider.value, 10));
+        });
+    } else {
+        // 默认值（与滑块初始值一致）
+        sliderValues.push(85, 60, 90, 70, 50, 75);
+    }
+
+    // 2. 生成导师的六维数据
+    const mentorDims = generateRadarScores(mentor);
+
+    // 3. 定义雷达指标
+    const indicator = [
+        '学术敏锐度', '人脉资源', '指导意愿',
+        '性格包容度', '经费实力', '产出效率'
+    ].map(name => ({ name, max: 100 }));
+
+    // 4. 绘制两个多边形：学生（蓝色半透明）和导师（紫色半透明）
+    const option = {
+        radar: {
+            indicator: indicator,
+            center: ['50%', '52%'],
+            radius: '70%',
+            axisName: {
+                color: '#1a2a4a',
+                fontSize: 13,
+                fontWeight: 500
+            },
+            splitArea: {
+                areaStyle: {
+                    color: ['rgba(26,42,74,0.02)', 'rgba(26,42,74,0.05)']
+                }
+            },
+            splitLine: {
+                lineStyle: {
+                    color: 'rgba(26,42,74,0.08)'
+                }
+            },
+            axisLine: {
+                lineStyle: {
+                    color: 'rgba(26,42,74,0.15)'
+                }
+            }
+        },
+        series: [
+            {
+                name: '学生需求',
+                type: 'radar',
+                data: [{
+                    value: sliderValues,
+                    name: '我的需求',
+                    areaStyle: {
+                        color: 'rgba(66, 133, 244, 0.35)'  // 蓝色半透明
+                    },
+                    lineStyle: {
+                        color: '#4285f4',
+                        width: 2
+                    },
+                    itemStyle: {
+                        color: '#4285f4'
+                    }
+                }]
+            },
+            {
+                name: '导师特质',
+                type: 'radar',
+                data: [{
+                    value: mentorDims,
+                    name: mentor.name,
+                    areaStyle: {
+                        color: 'rgba(156, 39, 176, 0.35)' // 紫色半透明
+                    },
+                    lineStyle: {
+                        color: '#9c27b0',
+                        width: 2
+                    },
+                    itemStyle: {
+                        color: '#9c27b0'
+                    }
+                }]
+            }
+        ],
+        tooltip: {
+            trigger: 'item',
+            formatter: function(params) {
+                if (params.seriesIndex === 0 || params.seriesIndex === 1) {
+                    let res = `<strong>${params.seriesName}</strong><br/>`;
+                    const values = params.value;
+                    indicator.forEach((ind, i) => {
+                        res += `${ind.name}：${values[i]}<br/>`;
+                    });
+                    return res;
+                }
+            }
+        },
+        legend: {
+            data: ['学生需求', '导师特质'],
+            bottom: 0,
+            left: 'center',
+            icon: 'roundRect',
+            itemWidth: 16,
+            itemHeight: 8,
+            textStyle: {
+                fontSize: 13,
+                color: '#1a2a4a'
+            }
+        }
+    };
+
+    radarChartInstance.setOption(option, true);
+    radarChartInstance.resize();
+    if (currentMentorLabel) {
+        currentMentorLabel.textContent = mentor.name;
+    }
+}
+
+        // ================================================================
+        //  6. 渲染卡片
+        // ================================================================
+        function renderCards(mentors) {
+            if (!mentors || mentors.length === 0) {
+                cardContainer.innerHTML =
+                    `<div class="empty-state">💡 暂无匹配的导师，试试其他关键词</div>`;
+                if (mentorCount) mentorCount.textContent = '0 位';
+                if (mentorTotal) mentorTotal.textContent = '0';
+                return;
+            }
+
+            const displayList = mentors.slice(0, 5);
+            let html = '';
+            displayList.forEach((m, idx) => {
+                const active = (idx === selectedIndex) ? 'active' : '';
+                const score = m.score || 80;
+                const tags = m.tags || ['教授'];
+                const reason = m.reason || '研究方向匹配，建议进一步了解';
+                html += `
+                        <div class="mentor-card ${active}" data-index="${idx}">
+                            <div class="row">
+                                <div class="name-area">
+                                    <div class="avatar">${m.name.charAt(0)}</div>
+                                    <div>
+                                        <span class="name">${m.name}</span>
+                                        <span class="dept">${m.dept || ''}</span>
+                                    </div>
+                                </div>
+                                <div class="score-badge">
+                                    <span class="num">${score}</span>
+                                    <span class="label">匹配度</span>
+                                </div>
+                            </div>
+                            <div class="tags">
+                                ${tags.map(t => `<span>${t}</span>`).join('')}
+                            </div>
+                            <div class="reason">💬 ${reason}</div>
+                            <div class="match-bar">
+                                <div class="fill" style="width:${score}%;"></div>
+                            </div>
+                        </div>
+                    `;
+            });
+            cardContainer.innerHTML = html;
+
+            const count = displayList.length;
+            if (mentorCount) mentorCount.textContent = count + ' 位';
+            if (mentorTotal) mentorTotal.textContent = count;
+
+            document.querySelectorAll('.mentor-card').forEach(card => {
+                card.addEventListener('click', function() {
+                    const idx = parseInt(this.dataset.index, 10);
+                    if (!isNaN(idx) && idx < currentMentors.length) {
+                        selectedIndex = idx;
+                        document.querySelectorAll('.mentor-card').forEach(c => c.classList.remove(
+                            'active'));
+                        this.classList.add('active');
+                        updateRadar(selectedIndex);
+                    }
+                });
+            });
+
+            const firstCard = document.querySelector('.mentor-card[data-index="0"]');
+            if (firstCard) {
+                firstCard.classList.add('active');
+                selectedIndex = 0;
+                updateRadar(0);
+            }
+        }
+
+        // ================================================================
+        //  7. 匹配逻辑
+        // ================================================================
+        function pickRandomMentors(mentorList, count = 5) {
+    if (!mentorList || mentorList.length === 0) return [];
+    const shuffled = [...mentorList];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const result = shuffled.slice(0, Math.min(count, shuffled.length));
+    // 按匹配度（score）降序排序，确保最高分在前
+    result.sort((a, b) => (b.score || 0) - (a.score || 0));
+    return result;
+}
+///
+
+
+        function searchMentors(userInput) {
+            const lower = userInput.toLowerCase().trim();
+            if (!lower) {
+                return pickRandomMentors(ALL_MENTORS, 5);
+            }
+
+            const keywords = lower.split(/[\s,，、]+/).filter(k => k.length > 1);
+            if (keywords.length === 0) {
+                return pickRandomMentors(ALL_MENTORS, 5);
+            }
+
+            let filtered = ALL_MENTORS.filter(mentor => {
+                const fieldLower = (mentor.field || '').toLowerCase();
+                const tagsLower = (mentor.tags || []).map(t => t.toLowerCase());
+                const fieldMatch = keywords.some(kw => fieldLower.includes(kw));
+                const tagMatch = keywords.some(kw => tagsLower.some(tag => tag.includes(kw)));
+                return fieldMatch || tagMatch;
+            });
+
+            if (filtered.length < 5 && filtered.length > 0) {
+                const excluded = new Set(filtered.map(m => m.name));
+                const pool = ALL_MENTORS.filter(m => !excluded.has(m.name));
+                const needed = Math.min(5 - filtered.length, pool.length);
+                const extra = pickRandomMentors(pool, needed);
+                filtered = filtered.concat(extra);
+            }
+
+            if (filtered.length === 0) {
+                return pickRandomMentors(ALL_MENTORS, 5);
+            }
+
+            if (filtered.length > 5) {
+                filtered = pickRandomMentors(filtered, 5);
+            }
+
+            return filtered;
+        }
+
+        function doMatch(userInput, keepSelection) {
+            if (ALL_MENTORS.length === 0) {
+                cardContainer.innerHTML = `<div class="empty-state">⏳ 数据加载中，请稍候...</div>`;
+                return;
+            }
+
+            const matched = searchMentors(userInput);
+            currentMentors = matched;
+            if (currentMentors.length > 0) {
+                if (!keepSelection || selectedIndex >= currentMentors.length) {
+                    selectedIndex = 0;
+                }
+            } else {
+                selectedIndex = 0;
+            }
+            renderCards(currentMentors);
+            if (currentMentors.length > 0) {
+                updateRadar(selectedIndex);
+            }
+        }
+
+        function handleSend() {
+            const userInput = inputField.value.trim();
+            if (!userInput) {
+                alert('请先输入你的研究兴趣！');
+                return;
+            }
+            currentInput = userInput;
+
+            sendBtn.classList.add('btn-loading');
+            sendBtn.innerHTML = '<span class="loading-dot"></span> 匹配中...';
+
+            setTimeout(() => {
+                doMatch(userInput, false);
+                sendBtn.classList.remove('btn-loading');
+                sendBtn.innerHTML = '🔍 匹配导师';
+            }, 300);
+        }
+
+        function handleRefresh() {
+            if (ALL_MENTORS.length === 0) return;
+            if (currentInput) {
+                doMatch(currentInput, false);
+            } else {
+                currentMentors = pickRandomMentors(ALL_MENTORS, 5);
+                selectedIndex = 0;
+                renderCards(currentMentors);
+                updateRadar(0);
+            }
+        }
+
+        // ================================================================
+        //  8. 加载 JSON
+        // ================================================================
+        function loadMentors() {
+            ALL_MENTORS = DEFAULT_MENTORS;
+            currentMentors = [];
+            selectedIndex = 0;
+            cardContainer.innerHTML = `
+                <div class="empty-state">
+                    &#26242;&#26080;&#21487;&#23637;&#31034;&#30340;&#23548;&#24072;&#25968;&#25454;
+                </div>
+            `;
+        }
+
+        // ================================================================
+        //  9. 滑块 & 标签
+        // ================================================================
+        document.querySelectorAll('.weight-sliders input[type="range"]').forEach(slider => {
+            const valSpan = slider.parentElement.querySelector('.val');
+            if (valSpan) {
+                slider.addEventListener('input', function() {
+                    valSpan.textContent = this.value;
+                });
+            }
+        });
+
+        document.getElementById('interestTags').addEventListener('click', function(e) {
+            const target = e.target;
+            if (target.classList.contains('del')) {
+                e.stopPropagation();
+                const parent = target.parentElement;
+                if (parent && parent.id !== 'addTagBtn') {
+                    parent.remove();
+                }
+            }
+        });
+
+        document.getElementById('addTagBtn')?.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (!isEditing) {
+                alert('请先进入编辑模式再添加标签。');
+                return;
+            }
+            const newTag = prompt('输入新的研究兴趣标签：');
+            if (newTag && newTag.trim()) {
+                const container = document.getElementById('interestTags');
+                const span = document.createElement('span');
+                const delSpan = document.createElement('span');
+                delSpan.className = 'del' + (isEditing ? '' : ' hidden-in-view');
+                delSpan.textContent = '✕';
+                span.textContent = newTag.trim() + ' ';
+                span.appendChild(delSpan);
+                container.insertBefore(span, this);
+                if (!isEditing) {
+                    delSpan.classList.add('hidden-in-view');
+                }
+            }
+        });
+
+        // ================================================================
+        //  10. 初始化
+        // ================================================================
+        function initControls() {
+            document.querySelectorAll('.student-tags .del').forEach(el => {
+                el.classList.add('hidden-in-view');
+            });
+            document.getElementById('addTagBtn')?.classList.add('hidden-in-view');
+            document.querySelectorAll('.weight-sliders input[type="range"]').forEach(slider => {
+                slider.disabled = true;
+            });
+            document.querySelectorAll('.academic-label').forEach(label => {
+                const body = label.closest('.collapse-panel').querySelector('.collapse-body');
+                if (body && body.classList.contains('open')) {
+                    label.textContent = '全文';
+                } else {
+                    label.textContent = '摘要';
+                }
+            });
+        }
+
+        function init() {
+            initControls();
+
+            sendBtn.addEventListener('click', handleSend);
+            inputField.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') handleSend();
+            });
+            refreshBtn.addEventListener('click', handleRefresh);
+
+            document.querySelectorAll('.hint-tags span').forEach(tag => {
+                tag.addEventListener('click', function() {
+                    inputField.value = this.dataset.hint;
+                    handleSend();
+                });
+            });
+
+            initRadar();
+            loadMentors();
+
+            let resizeTimer;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    if (radarChartInstance) radarChartInstance.resize();
+                }, 150);
+            });
+        }
+
+        init();
+    </script>
+
+</body>
+</html>

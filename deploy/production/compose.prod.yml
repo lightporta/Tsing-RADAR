@@ -1,0 +1,208 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?Set an immutable backend image digest}
+    labels:
+      com.tsingradar.source-commit: ${SOURCE_COMMIT:-unset}
+      com.tsingradar.release-id: ${RELEASE_ID:-unset}
+    user: "10001:10001"
+    restart: unless-stopped
+    init: true
+    environment:
+      DEBUG: "false"
+      PRODUCTION_DEPLOYMENT: "true"
+      LLM_ENABLED: "true"
+      LLM_PROVIDER: glm
+      LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: "4.0"
+      AUTO_CREATE_SCHEMA: "false"
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${PROD_DATABASE_NAME:?Set PROD_DATABASE_NAME}
+      DATABASE_USER: ${PROD_DATABASE_USER:?Set PROD_DATABASE_USER}
+      DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DATABASE: "0"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      MILVUS_HOST: milvus
+      MILVUS_PORT: "19530"
+      ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      SESSION_HMAC_SECRET_FILE: /run/secrets/session_hmac_secret
+      ARTIFACT_SIGNING_SECRET_FILE: /run/secrets/artifact_signing_secret
+      WEB_COOKIE_SECURE: "true"
+      OBJECT_STORE_BACKEND: s3
+      S3_PROVIDER: tencent_cos
+      S3_BUCKET: ${PROD_COS_BUCKET:?Set PROD_COS_BUCKET}
+      S3_ENDPOINT_URL: https://cos.ap-hongkong.myqcloud.com
+      S3_REGION: ap-hongkong
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/cos_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/cos_secret_access_key
+      S3_ADDRESSING_STYLE: virtual
+      S3_SERVER_SIDE_ENCRYPTION: AES256
+      OBJECT_STORAGE_MAX_READ_BYTES: "16777216"
+      FILE_SCAN_MODE: clamav
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      CLAMAV_TIMEOUT_SECONDS: "15"
+      DOCUMENT_CJK_FONT_PATH: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+      QXD_TRIAL_SINGLE_USER_MODE: "false"
+      QXD_REMOTE_MEDIA_FETCH_ENABLED: "false"
+      QXD_ATTACHMENTS_ENABLED: "false"
+      PUBLIC_BASE_URL: ""
+      ALLOW_TEST_PUBLIC_BASE_URL: "false"
+      CORS_ORIGINS: ${PROD_CORS_ORIGINS:?Set exact production CORS origins}
+      MENTOR_DATA_EXPECTED_FILE_SHA256: ${MENTOR_DATA_EXPECTED_FILE_SHA256:-1e7c9b83922a0a7adbcdc8f6e04c84c3a89b5bf72e4f2a6cd0455080395f99fa}
+      MENTOR_DATA_EXPECTED_PUBLISHED_COUNT: ${MENTOR_DATA_EXPECTED_PUBLISHED_COUNT:-0}
+      MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT: ${MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT:-0}
+      MENTOR_SCORE_DATA_FILE: /app/data/mentor-scores.evidence.json
+      MENTOR_SCORE_DATA_EXPECTED_SHA256: ${MENTOR_SCORE_DATA_EXPECTED_SHA256:?Set score evidence file SHA-256}
+      MENTOR_SCORE_COVERAGE_THRESHOLD: ${MENTOR_SCORE_COVERAGE_THRESHOLD:-0.80}
+    volumes:
+      - type: bind
+        source: ${MENTOR_DATA_FILE:-./data/empty-mentor-governance.json}
+        target: /app/data/mentors.evidence.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MENTOR_SCORE_DATA_FILE:-./data/empty-mentor-score-governance.json}
+        target: /app/data/mentor-scores.evidence.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/redis_password
+        target: /run/secrets/redis_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/admin_token
+        target: /run/secrets/admin_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/session_hmac_secret
+        target: /run/secrets/session_hmac_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/artifact_signing_secret
+        target: /run/secrets/artifact_signing_secret
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/llm_api_key
+        target: /run/secrets/llm_api_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_access_key_id
+        target: /run/secrets/cos_access_key_id
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_secret_access_key
+        target: /run/secrets/cos_secret_access_key
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - prod-app
+      - prod-data
+      - vector-data
+      - scanner-shared
+      - backend-egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5).read()"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1770
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1024m
+    mem_reservation: 512m
+    cpus: 1.5
+    cpu_shares: 1024
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?Set an immutable frontend image digest}
+    labels:
+      com.tsingradar.source-commit: ${SOURCE_COMMIT:-unset}
+      com.tsingradar.release-id: ${RELEASE_ID:-unset}
+    restart: unless-stopped
+    networks:
+      - prod-app
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    pids_limit: 128
+    mem_limit: 128m
+    mem_reservation: 64m
+    cpus: 0.15
+    cpu_shares: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  prod-app:
+    internal: true
+  prod-data:
+    internal: true
+  vector-data:
+    internal: true
+  scanner-shared:
+    internal: true
+  backend-egress: {}

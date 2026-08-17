@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tsing-radar.local/schemas/image-lock-v1.json",
+  "title": "Tsing-RADAR immutable production image lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "captured_at",
+    "target_platform",
+    "freshness_policy",
+    "slots"
+  ],
+  "properties": {
+    "schema_version": {"const": "l3-image-lock-v1"},
+    "captured_at": {"type": "string", "format": "date-time"},
+    "target_platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": {"const": "linux"},
+        "architecture": {"const": "amd64"}
+      }
+    },
+    "freshness_policy": {
+      "const": "source-tag-drift-is-recorded-separately-from-content-integrity"
+    },
+    "slots": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "prefixItems": [
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/postgresSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/redisSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/etcdSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/minioSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/milvusSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/clamavSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/backendSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/frontendSlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/caddySlot"}]},
+        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/nginxUnprivilegedSlot"}]}
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["media_type", "digest", "size"],
+      "properties": {
+        "media_type": {"type": "string", "minLength": 1},
+        "digest": {"$ref": "#/$defs/digest"},
+        "size": {"type": "integer", "minimum": 0}
+      }
+    },
+    "imageSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "role",
+        "kind",
+        "registry",
+        "repository",
+        "source_tag",
+        "source_reference",
+        "import_repository",
+        "import_tag",
+        "delivery_mode",
+        "compose_reference",
+        "index",
+        "manifest",
+        "config",
+        "layers"
+      ],
+      "properties": {
+        "slot": {
+          "enum": [
+            "POSTGRES_IMAGE",
+            "REDIS_IMAGE",
+            "ETCD_IMAGE",
+            "MINIO_IMAGE",
+            "MILVUS_IMAGE",
+            "CLAMAV_IMAGE",
+            "BACKEND_IMAGE",
+            "FRONTEND_IMAGE",
+            "CADDY_IMAGE",
+            "NGINX_UNPRIVILEGED_IMAGE"
+          ]
+        },
+        "role": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["vendor", "application"]},
+        "registry": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1},
+        "source_tag": {"type": "string", "minLength": 1},
+        "source_reference": {"type": "string", "minLength": 1},
+        "import_repository": {"type": "string", "minLength": 1},
+        "import_tag": {"const": "l3-locked"},
+        "delivery_mode": {"enum": ["digest_pull", "oci_archive"]},
+        "compose_reference": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$"
+        },
+        "engine_observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image_id", "descriptor_digest", "semantic"],
+          "properties": {
+            "image_id": {"$ref": "#/$defs/digest"},
+            "descriptor_digest": {"$ref": "#/$defs/digest"},
+            "semantic": {"const": "engine-specific-informational-not-config-authority"}
+          }
+        },
+        "index": {"$ref": "#/$defs/descriptor"},
+        "manifest": {"$ref": "#/$defs/descriptor"},
+        "config": {"$ref": "#/$defs/descriptor"},
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/descriptor"}
+        }
+      }
+    },
+    "postgresSlot": {
+      "properties": {
+        "slot": {"const": "POSTGRES_IMAGE"}, "role": {"const": "postgres"},
+        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
+        "repository": {"const": "library/postgres"}, "source_tag": {"const": "16-alpine"},
+        "source_reference": {"const": "postgres:16-alpine"},
+        "import_repository": {"const": "tsing-radar-offline/postgres"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^postgres@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "redisSlot": {
+      "properties": {
+        "slot": {"const": "REDIS_IMAGE"}, "role": {"const": "redis"},
+        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
+        "repository": {"const": "library/redis"}, "source_tag": {"const": "7-alpine"},
+        "source_reference": {"const": "redis:7-alpine"},
+        "import_repository": {"const": "tsing-radar-offline/redis"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^redis@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "etcdSlot": {
+      "properties": {
+        "slot": {"const": "ETCD_IMAGE"}, "role": {"const": "etcd"},
+        "kind": {"const": "vendor"}, "registry": {"const": "quay.io"},
+        "repository": {"const": "coreos/etcd"}, "source_tag": {"const": "v3.5.18"},
+        "source_reference": {"const": "quay.io/coreos/etcd:v3.5.18"},
+        "import_repository": {"const": "tsing-radar-offline/etcd"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^quay\\.io/coreos/etcd@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "minioSlot": {
+      "properties": {
+        "slot": {"const": "MINIO_IMAGE"}, "role": {"const": "minio"},
+        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
+        "repository": {"const": "minio/minio"}, "source_tag": {"const": "RELEASE.2024-12-18T13-15-44Z"},
+        "source_reference": {"const": "minio/minio:RELEASE.2024-12-18T13-15-44Z"},
+        "import_repository": {"const": "tsing-radar-offline/minio"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^minio/minio@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "milvusSlot": {
+      "properties": {
+        "slot": {"const": "MILVUS_IMAGE"}, "role": {"const": "milvus"},
+        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
+        "repository": {"const": "milvusdb/milvus"}, "source_tag": {"const": "v2.5.27"},
+        "source_reference": {"const": "milvusdb/milvus:v2.5.27"},
+        "import_repository": {"const": "tsing-radar-offline/milvus"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^milvusdb/milvus@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "clamavSlot": {
+      "properties": {
+        "slot": {"const": "CLAMAV_IMAGE"}, "role": {"const": "clamav"},
+        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
+        "repository": {"const": "clamav/clamav-debian"}, "source_tag": {"const": "1.4"},
+        "source_reference": {"const": "clamav/clamav-debian:1.4"},
+        "import_repository": {"const": "tsing-radar-offline/clamav"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^clamav/clamav-debian@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "backendSlot": {
+      "required": ["engine_observation"],
+      "properties": {
+        "slot": {"const": "BACKEND_IMAGE"}, "role": {"const": "backend"},
+        "kind": {"const": "application"}, "registry": {"const": "local-engine"},
+        "repository": {"const": "tsing-radar-backend"}, "source_tag": {"const": "l2-local"},
+        "source_reference": {"const": "tsing-radar-backend:l2-local"},
+        "import_repository": {"const": "tsing-radar-offline/backend"},
+        "delivery_mode": {"const": "oci_archive"},
+        "compose_reference": {"pattern": "^tsing-radar-offline/backend@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "frontendSlot": {
+      "required": ["engine_observation"],
+      "properties": {
+        "slot": {"const": "FRONTEND_IMAGE"}, "role": {"const": "frontend"},
+        "kind": {"const": "application"}, "registry": {"const": "local-engine"},
+        "repository": {"const": "tsing-radar-frontend"}, "source_tag": {"const": "l2-local"},
+        "source_reference": {"const": "tsing-radar-frontend:l2-local"},
+        "import_repository": {"const": "tsing-radar-offline/frontend"},
+        "delivery_mode": {"const": "oci_archive"},
+        "compose_reference": {"pattern": "^tsing-radar-offline/frontend@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "caddySlot": {
+      "properties": {
+        "slot": {"const": "CADDY_IMAGE"}, "role": {"const": "edge"},
+        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
+        "repository": {"const": "library/caddy"}, "source_tag": {"const": "2.10.2-alpine"},
+        "source_reference": {"const": "caddy:2.10.2-alpine"},
+        "import_repository": {"const": "tsing-radar-offline/caddy"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^caddy@sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "nginxUnprivilegedSlot": {
+      "properties": {
+        "slot": {"const": "NGINX_UNPRIVILEGED_IMAGE"}, "role": {"const": "protocol-media-gateway"},
+        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
+        "repository": {"const": "nginxinc/nginx-unprivileged"}, "source_tag": {"const": "1.31.3-alpine3.24"},
+        "source_reference": {"const": "nginxinc/nginx-unprivileged:1.31.3-alpine3.24"},
+        "import_repository": {"const": "tsing-radar-offline/nginx-unprivileged"},
+        "delivery_mode": {"const": "digest_pull"},
+        "compose_reference": {"pattern": "^nginxinc/nginx-unprivileged@sha256:[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

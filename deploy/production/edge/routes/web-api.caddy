@@ -1,0 +1,157 @@
+(backend_proxy) {
+    request_body {
+        max_size 1MB
+    }
+    reverse_proxy backend:8000 {
+        header_up -Forwarded
+        header_up -X-Forwarded-For
+        header_up -X-Forwarded-Host
+        header_up -X-Forwarded-Port
+        header_up -X-Forwarded-Proto
+        header_up -X-Real-IP
+        transport http {
+            dial_timeout 3s
+            response_header_timeout 30s
+        }
+    }
+}
+
+(backend_upload_proxy) {
+    request_body {
+        # Leave enough multipart framing room for an 8 MiB file while making
+        # clearly oversized requests fail at the edge with HTTP 413.
+        max_size 8500KB
+    }
+    reverse_proxy backend:8000 {
+        header_up -Forwarded
+        header_up -X-Forwarded-For
+        header_up -X-Forwarded-Host
+        header_up -X-Forwarded-Port
+        header_up -X-Forwarded-Proto
+        header_up -X-Real-IP
+        transport http {
+            dial_timeout 3s
+            response_header_timeout 30s
+        }
+    }
+}
+
+{$WEB_HOST} {
+    header -Server
+
+    @forwarded header Forwarded *
+    respond @forwarded "Forwarded headers are not accepted" 400
+
+    @public_get {
+        method GET
+        path /health/live /health/ready /api/session /api/mentors /api/mentors/sort /api/departments /api/departments/mentors /api/departments/students /api/mentor-evidence/status /api/mentor-distribution /api/recruitments /api/recruitments/mine /api/scatter /api/applications /api/documents /api/interviews/hard-constraint-capabilities
+    }
+    handle @public_get {
+        import backend_proxy
+    }
+
+    @public_get_dynamic {
+        method GET
+        path_regexp public_get_dynamic ^/api/(interviews/[A-Za-z0-9_-]+|applications/[A-Za-z0-9_-]+|documents/[A-Za-z0-9_-]+)$
+    }
+    handle @public_get_dynamic {
+        import backend_proxy
+    }
+
+    @public_post {
+        method POST
+        path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat /api/resume/generate /api/resume/submit /api/artifacts/match-report
+    }
+    handle @public_post {
+        import backend_proxy
+    }
+
+    @private_document_upload {
+        method POST
+        path /api/documents
+    }
+    handle @private_document_upload {
+        import backend_upload_proxy
+    }
+
+    @document_analysis {
+        method POST
+        path_regexp document_analysis ^/api/documents/[A-Za-z0-9_-]+/(analysis|interpretation)$
+    }
+    handle @document_analysis {
+        import backend_proxy
+    }
+
+    @artifact_delivery {
+        method POST
+        path_regexp artifact_delivery ^/api/artifacts/([A-Za-z0-9_-]+/download-grant|download/[A-Za-z0-9._~-]+)$
+    }
+    handle @artifact_delivery {
+        import backend_proxy
+    }
+
+    @interview_answer {
+        method POST
+        path_regexp interview_answer ^/api/interviews/[A-Za-z0-9_-]+/(answers|confirm|enhancement-retry)$
+    }
+    handle @interview_answer {
+        import backend_proxy
+    }
+
+    @profile_or_application_patch {
+        method PATCH
+        path_regexp patch_paths ^/api/(interviews/[A-Za-z0-9_-]+/profile|applications/[A-Za-z0-9_-]+|recruitments/[A-Za-z0-9_-]+)$
+    }
+    handle @profile_or_application_patch {
+        import backend_proxy
+    }
+
+    @session_delete {
+        method DELETE
+        path /api/session
+    }
+    handle @session_delete {
+        import backend_proxy
+    }
+
+    @owned_resource_delete {
+        method DELETE
+        path_regexp owned_resource_delete ^/api/(applications|documents|recruitments)/[A-Za-z0-9_-]+$
+    }
+    handle @owned_resource_delete {
+        import backend_proxy
+    }
+
+    @cors_preflight {
+        method OPTIONS
+        path_regexp cors_paths ^/(health/(live|ready)|api/(session|mentors(/sort)?|departments(/(mentors|students))?|mentor-evidence/status|mentor-distribution|recruitments(/mine|/[A-Za-z0-9_-]+)?|scatter|feedback|match|v1/llm/chat|resume/(generate|submit)|interviews(/[A-Za-z0-9_-]+(/(answers|confirm|profile|enhancement-retry))?)?|applications(/[A-Za-z0-9_-]+)?|documents(/[A-Za-z0-9_-]+(/(analysis|interpretation))?)?|artifacts/(match-report|[A-Za-z0-9_-]+/download-grant|download/[A-Za-z0-9._~-]+)))$
+    }
+    handle @cors_preflight {
+        import backend_proxy
+    }
+
+    @static {
+        method GET HEAD
+        not path /api/* /v1/* /health/*
+    }
+    handle @static {
+        reverse_proxy frontend:80 {
+            header_up -Forwarded
+            header_up -X-Forwarded-For
+            header_up -X-Forwarded-Host
+            header_up -X-Forwarded-Port
+            header_up -X-Forwarded-Proto
+            header_up -X-Real-IP
+            transport http {
+                dial_timeout 3s
+                response_header_timeout 15s
+            }
+        }
+    }
+
+    # Every backend route not explicitly matched above is denied. In
+    # particular docs, OpenAPI, LLM embeddings, training/admin, scraper,
+    # attachments and /v1 are absent. Private document and artifact routes above
+    # remain session-bound and are listed individually.
+    respond "Route or method not available" 404
+}
