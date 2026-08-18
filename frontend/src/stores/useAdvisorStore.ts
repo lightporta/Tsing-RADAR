@@ -7,14 +7,11 @@ import type {
   SortMetric,
 } from '@/types/advisor'
 import * as advisorApi from '@/api/advisor'
-import * as mockApi from '@/mock'
 
 // =====================================================================
 // 导师 Store（文档 §7.1 useAdvisorStore）
 // 导师列表 / 当前选中 / 筛选排序 / 散点数据
 // =====================================================================
-
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 export const useAdvisorStore = defineStore('advisor', () => {
   // —— 匹配后的导师（带 score / synergy / reason）——
@@ -50,15 +47,7 @@ export const useAdvisorStore = defineStore('advisor', () => {
   async function loadAll() {
     loading.value = true
     try {
-      if (USE_MOCK) {
-        distribution.value = {
-          departments: [],
-          resource_types: [],
-          meta: { grouped_advisors: 0, raw_resource_records: 0, basis: 'published_resources_only' },
-        }
-      } else {
-        distribution.value = await advisorApi.fetchMentorDistribution()
-      }
+      distribution.value = await advisorApi.fetchMentorDistribution()
       // 导师公开列表不等同于推荐；确认画像前不生成匹配结果。
       matchedAdvisors.value = []
     } finally {
@@ -75,29 +64,16 @@ export const useAdvisorStore = defineStore('advisor', () => {
   ) {
     loading.value = true
     try {
-      if (USE_MOCK) {
-        matchedAdvisors.value = mockApi.mockMatch(interest)
-        resultStatus.value = 'no_published_data'
-        resultMessage.value =
-          '前端独立 Mock 当前没有已审核导师数据，因此不会生成虚假推荐。'
-        resultMeta.value = {
-          total_records: 0,
-          published_records: 0,
-          withheld_records: 0,
-          policy: 'verified_only',
-        }
-      } else {
-        const res = await advisorApi.matchAdvisors({
-          interest,
-          session_id: sessionId,
-          portrait,
-          weight,
-        })
-        matchedAdvisors.value = res.data
-        resultStatus.value = res.status
-        resultMessage.value = res.message
-        resultMeta.value = res.meta
-      }
+      const res = await advisorApi.matchAdvisors({
+        interest,
+        session_id: sessionId,
+        portrait,
+        weight,
+      })
+      matchedAdvisors.value = res.data
+      resultStatus.value = res.status
+      resultMessage.value = res.message
+      resultMeta.value = res.meta
       selectedName.value = null
       comparisonIds.value = []
     } catch (error) {

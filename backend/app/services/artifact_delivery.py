@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -100,6 +101,56 @@ def _make_token(grant_id: str, nonce: str | None = None) -> str:
     unsigned = f"v1.{grant_id}.{nonce}"
     signature = _keyed_digest(unsigned, purpose="artifact-url")
     return f"{unsigned}.{signature}"
+
+
+# —— 雷达图轻量签名令牌 ——
+# 雷达图由已发布的公开评分确定性渲染，不落对象存储、不走私有文档管线；
+# 令牌即凭证（HMAC 签名 + 短时过期），与附件令牌共用签名密钥但用途域独立。
+
+_RADAR_ADVISOR_ID_PATTERN = re.compile(r"[A-Za-z0-9_\-]{1,64}")
+
+
+def issue_radar_chart_token(
+    advisor_id: str, *, ttl_seconds: int | None = None
+) -> tuple[str, datetime]:
+    """为公开评分雷达图签发短时令牌；返回 (token, expires_at)。"""
+    normalized = (advisor_id or "").strip()
+    if not _RADAR_ADVISOR_ID_PATTERN.fullmatch(normalized):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="advisor_id 非法"
+        )
+    ttl = settings.QXD_ATTACHMENT_TTL_SECONDS if ttl_seconds is None else ttl_seconds
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+    expires_epoch = int(expires_at.timestamp())
+    unsigned = f"v1.{normalized}.{expires_epoch}"
+    signature = _keyed_digest(unsigned, purpose="radar-url")
+    return f"{unsigned}.{signature}", expires_at
+
+
+def redeem_radar_chart_token(token: str) -> str:
+    """校验雷达图令牌；有效返回 advisor_id，篡改返回 404、过期返回 410。"""
+    parts = token.split(".")
+    if len(parts) != 4 or parts[0] != "v1":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="雷达图链接不存在"
+        )
+    _, advisor_id, expires_epoch_text, signature = parts
+    if not _RADAR_ADVISOR_ID_PATTERN.fullmatch(advisor_id) or not expires_epoch_text.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="雷达图链接不存在"
+        )
+    unsigned = f"v1.{advisor_id}.{expires_epoch_text}"
+    expected = _keyed_digest(unsigned, purpose="radar-url")
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="雷达图链接不存在"
+        )
+    expires_at = datetime.fromtimestamp(int(expires_epoch_text), tz=timezone.utc)
+    if datetime.now(timezone.utc) >= expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE, detail="雷达图链接已过期"
+        )
+    return advisor_id
 
 
 def _validate_public_base_url() -> str:

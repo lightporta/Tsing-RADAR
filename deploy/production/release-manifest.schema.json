@@ -43,8 +43,8 @@
     },
     "compose_image_slots": {
       "type": "array",
-      "minItems": 10,
-      "maxItems": 10,
+      "minItems": 7,
+      "maxItems": 7,
       "uniqueItems": true,
       "items": {
         "type": "object",
@@ -55,9 +55,6 @@
             "enum": [
               "POSTGRES_IMAGE",
               "REDIS_IMAGE",
-              "ETCD_IMAGE",
-              "MINIO_IMAGE",
-              "MILVUS_IMAGE",
               "CLAMAV_IMAGE",
               "BACKEND_IMAGE",
               "FRONTEND_IMAGE",

@@ -99,6 +99,10 @@ service.interceptors.response.use(
   },
   (error) => {
     finishRequest(error.config, error.response?.status || error.code || 'error')
+    // 主动取消的请求不弹错误提示（由调用方静默处理）
+    if (axios.isCancel(error)) {
+      return Promise.reject(error)
+    }
     const msg =
       error.response?.data?.detail ||
       error.response?.data?.message ||

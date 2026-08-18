@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import importlib.util
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -587,32 +586,9 @@ def test_catalog_resource_is_public_but_never_a_match_candidate(monkeypatch, tmp
 
 def test_raw_runtime_copies_are_removed():
     assert not (BACKEND_ROOT / "data" / "mentors.json").exists()
-    frontend_mock = (
-        REPOSITORY_ROOT / "frontend" / "src" / "mock" / "mentors.json"
-    )
-    assert json.loads(frontend_mock.read_text(encoding="utf-8")) == []
-    legacy_root = REPOSITORY_ROOT / "legacy"
-    assert not (legacy_root / "mentors.json").exists()
-    assert not (legacy_root / "mentors.json.bak").exists()
-    legacy_html = (legacy_root / "index.html").read_text(encoding="utf-8")
-    assert "const DEFAULT_MENTORS = [];" in legacy_html
-    assert "fetch('mentors.json')" not in legacy_html
+    assert not (REPOSITORY_ROOT / "frontend" / "src" / "mock").exists()
+    assert not (REPOSITORY_ROOT / "legacy").exists()
 
     dockerfile = (BACKEND_ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY data/" not in dockerfile
     assert "RUN mkdir -p /app/data" in dockerfile
-
-
-def test_legacy_app_starts_in_fail_closed_empty_state():
-    legacy_app_path = REPOSITORY_ROOT / "legacy" / "app.py"
-    spec = importlib.util.spec_from_file_location(
-        "tsing_radar_legacy_empty_state",
-        legacy_app_path,
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    assert module.DEFAULT_MENTORS == []
-    source = legacy_app_path.read_text(encoding="utf-8")
-    assert "mentors.json" not in source

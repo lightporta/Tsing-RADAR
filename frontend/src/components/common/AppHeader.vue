@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { ArrowLeft, Menu } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/useUserStore'
 import AppLogo from './AppLogo.vue'
 
@@ -59,7 +60,7 @@ function handleProfileClick() {
         aria-label="返回首页"
         @click="goBack"
       >
-        <el-icon aria-hidden="true">←</el-icon>
+        <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
         <span class="back-text">返回</span>
       </button>
       <button
@@ -68,7 +69,7 @@ function handleProfileClick() {
         aria-label="打开菜单"
         @click="emit('menu-click')"
       >
-        <el-icon aria-hidden="true">☰</el-icon>
+        <el-icon aria-hidden="true"><Menu /></el-icon>
       </button>
       <AppLogo v-else />
     </div>

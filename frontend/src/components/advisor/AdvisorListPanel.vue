@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { Search } from '@element-plus/icons-vue'
 import FilterBar from './FilterBar.vue'
 import AdvisorCard from './AdvisorCard.vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
@@ -42,7 +43,7 @@ function latestEvidenceTime(item: (typeof advisorStore.matchedAdvisors)[number])
 
     <div class="list-scroll" aria-live="polite">
       <div v-if="!advisorStore.matchedAdvisors.length && !advisorStore.loading" class="empty-state">
-        <el-icon class="empty-icon" aria-hidden="true">⌕</el-icon>
+        <el-icon class="empty-icon" aria-hidden="true"><Search /></el-icon>
         <p>{{ advisorStore.resultMessage }}</p>
         <span v-if="advisorStore.resultStatus === 'no_published_data'" class="empty-hint">
           这是数据审核状态，不是匹配失败；2027 招生目录也不会冒充导师个人画像。

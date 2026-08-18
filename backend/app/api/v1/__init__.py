@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     admin_reviews,
     advisor,
+    advisor_ratings,
     applications,
     artifacts,
     documents,
@@ -19,6 +20,7 @@ from app.api.v1 import (
     mentor_profile,
     mentor_recruitment,
     recruitment,
+    recruitment_comments,
     resume,
     scatter,
     session,
@@ -37,6 +39,7 @@ api_router.include_router(interview.router, tags=["动态访谈"])
 api_router.include_router(llm.router, tags=["LLM"])
 api_router.include_router(match.router, tags=["匹配"])
 api_router.include_router(recruitment.router, tags=["招募"])
+api_router.include_router(recruitment_comments.router, tags=["招募评论"])
 api_router.include_router(resume.router, tags=["简历"])
 api_router.include_router(scatter.router, tags=["散点图"])
 api_router.include_router(train.router, tags=["训练"])
@@ -48,3 +51,4 @@ api_router.include_router(mentor_inbox.router, tags=["导师服务-意向中心"
 api_router.include_router(mentor_recruitment.router, tags=["导师服务-招募"])
 api_router.include_router(mentor_privacy.router, tags=["导师服务-隐私"])
 api_router.include_router(admin_reviews.router, tags=["管理员-导师审批"])
+api_router.include_router(advisor_ratings.router, tags=["学生评价"])

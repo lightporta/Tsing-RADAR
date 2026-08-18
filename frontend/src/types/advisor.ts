@@ -214,3 +214,54 @@ export const TRAIT_LABEL_MAP: Record<TraitKey, string> = TRAITS.reduce(
   (acc, t) => ({ ...acc, [t.key]: t.label }),
   {} as Record<TraitKey, string>,
 )
+
+// =====================================================================
+// 学生评价体系 M1（六维匿名评分，纯分数不含文字依据）
+// =====================================================================
+
+/** 在组时长：半年内 / 半年到两年 / 两年以上 / 组外（旁听、合作等） */
+export type PeriodInGroup = '0.5y' | '0.5-2y' | '2y+' | 'outside'
+
+/** 单维聚合结果；value 为 null 表示该维暂无样本（诚实空态） */
+export interface RatingDimensionItem {
+  value: number | null
+  n: number
+}
+
+/** 导师学生评价聚合摘要（total_n=0 即「暂无学生评价」空态） */
+export interface RatingSummary {
+  advisor_id: string
+  dimensions: Record<TraitKey, RatingDimensionItem>
+  total_n: number
+  last_collected_at: string | null
+}
+
+/** 提交评分请求体（六维键恰好齐全、每项 1-5） */
+export interface RatingSubmitRequest {
+  scores: Record<TraitKey, number>
+  period_in_group?: PeriodInGroup | null
+}
+
+/** 提交评分响应 */
+export interface RatingSubmitResponse {
+  rating_id: string
+  advisor_id: string
+  review_status: string
+}
+
+/** 脱敏评价列表项（不暴露打分人与单人分数） */
+export interface RatingListItem {
+  period_in_group: PeriodInGroup | null
+  rater_verified: boolean
+  created_at: string | null
+}
+
+/** 我的评价记录（仅本人可见自己的分数） */
+export interface MyRatingItem {
+  rating_id: string
+  advisor_id: string
+  scores: Record<TraitKey, number>
+  period_in_group: PeriodInGroup | null
+  review_status: string
+  created_at: string | null
+}

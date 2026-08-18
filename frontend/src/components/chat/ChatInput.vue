@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Document, Paperclip, Promotion, VideoPause } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/useChatStore'
 import { formatBytes } from '@/utils/format'
 import { uploadDocument } from '@/api/actions'
@@ -134,7 +135,7 @@ function retryGlmEnhancement() {
     <!-- 已上传附件预览 -->
     <div v-if="attachments.length" class="attachments">
       <div v-for="(a, i) in attachments" :key="i" class="attachment-chip">
-        <el-icon aria-hidden="true">📄</el-icon>
+        <el-icon aria-hidden="true"><Document /></el-icon>
         <span class="att-name" :title="a.name">{{ a.name }}</span>
         <span class="att-size">{{ formatBytes(a.size) }}</span>
         <button
@@ -153,7 +154,7 @@ function retryGlmEnhancement() {
         :class="{ disabled: uploading || chatStore.enhancementRetrying }"
         aria-label="私有上传 PDF 或 DOCX"
       >
-        <el-icon aria-hidden="true">📎</el-icon>
+        <el-icon aria-hidden="true"><Paperclip /></el-icon>
         <input
           type="file"
           multiple
@@ -181,7 +182,7 @@ function retryGlmEnhancement() {
         aria-label="停止生成"
         @click="stopStream"
       >
-        <el-icon aria-hidden="true">⏸</el-icon>
+        <el-icon aria-hidden="true"><VideoPause /></el-icon>
       </button>
       <button
         v-else
@@ -190,7 +191,7 @@ function retryGlmEnhancement() {
         :disabled="!text.trim() || uploading || chatStore.enhancementRetrying"
         @click="send"
       >
-        <el-icon aria-hidden="true">➤</el-icon>
+        <el-icon aria-hidden="true"><Promotion /></el-icon>
       </button>
     </div>
 

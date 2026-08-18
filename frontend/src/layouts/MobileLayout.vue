@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Bell, OfficeBuilding, School, User } from '@element-plus/icons-vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import AdvisorListPanel from '@/components/advisor/AdvisorListPanel.vue'
@@ -222,7 +223,7 @@ function navigate(path: '/mentors' | '/profile' | '/recruitment' | '/mentor/dash
           :aria-current="route.path === '/mentors' ? 'page' : undefined"
           @click="navigate('/mentors')"
         >
-          <el-icon aria-hidden="true">师</el-icon>
+          <el-icon aria-hidden="true"><School /></el-icon>
           <span>导师数据</span>
         </button>
         <button
@@ -231,7 +232,7 @@ function navigate(path: '/mentors' | '/profile' | '/recruitment' | '/mentor/dash
           :aria-current="route.path === '/profile' ? 'page' : undefined"
           @click="navigate('/profile')"
         >
-          <el-icon aria-hidden="true">人</el-icon>
+          <el-icon aria-hidden="true"><User /></el-icon>
           <span>个人信息</span>
         </button>
         <button
@@ -240,7 +241,7 @@ function navigate(path: '/mentors' | '/profile' | '/recruitment' | '/mentor/dash
           :aria-current="route.path === '/recruitment' ? 'page' : undefined"
           @click="navigate('/recruitment')"
         >
-          <el-icon aria-hidden="true">讯</el-icon>
+          <el-icon aria-hidden="true"><Bell /></el-icon>
           <span>信息平台</span>
         </button>
         <button
@@ -249,7 +250,7 @@ function navigate(path: '/mentors' | '/profile' | '/recruitment' | '/mentor/dash
           :aria-current="route.path.startsWith('/mentor/') ? 'page' : undefined"
           @click="navigate('/mentor/dashboard')"
         >
-          <el-icon aria-hidden="true">门</el-icon>
+          <el-icon aria-hidden="true"><OfficeBuilding /></el-icon>
           <span>导师门户</span>
         </button>
       </nav>

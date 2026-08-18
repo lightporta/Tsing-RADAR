@@ -4,8 +4,7 @@ from fastapi import APIRouter
 
 from app.services.constants import DEPT_COLORS, DEPT_FALLBACK_COLOR
 from app.services.data_loader import load_mentors, mentor_data_summary
-from app.services.mentor_resources import grouped_mentor_resources
-from app.services.mentor_score_governance import score_enriched_resources
+from app.services.mentor_catalog import enriched_mentor_resources
 
 router = APIRouter()
 
@@ -13,9 +12,7 @@ router = APIRouter()
 @router.get("/scatter")
 def scatter():
     """返回散点图数据：x=popularity, y=sector(0=国,1=私), color 按院系分配。"""
-    resources, gate = score_enriched_resources(
-        grouped_mentor_resources(load_mentors())
-    )
+    resources, gate = enriched_mentor_resources(load_mentors())
     points = []
     for m in resources:
         if m.get("popularity") is None or m.get("sector") not in {"国", "私"}:

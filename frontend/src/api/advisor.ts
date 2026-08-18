@@ -37,17 +37,21 @@ export function fetchMentorDistribution() {
   return get<MentorDistribution>('/api/mentor-distribution')
 }
 
-export function fetchMentorResources(params: {
-  q?: string
-  dept?: string
-  resource_type?: MentorResourceType
-  catalog_type?: 'doctoral_regular' | 'doctoral_recommendation_exempt'
-  page?: number
-  page_size?: number
-}) {
+export function fetchMentorResources(
+  params: {
+    q?: string
+    dept?: string
+    resource_type?: MentorResourceType
+    catalog_type?: 'doctoral_regular' | 'doctoral_recommendation_exempt'
+    page?: number
+    page_size?: number
+  },
+  signal?: AbortSignal,
+) {
   return get<{ data: MentorResource[]; meta: MentorResourceMeta }>(
     '/api/mentors',
     params,
+    { signal },
   )
 }
 

@@ -17,6 +17,7 @@ import type {
   MentorTakedownRecord,
 } from '@/types/mentor'
 import { REVIEW_STATUS_LABELS, SELF_CLAIM_FIELD_META } from '@/types/mentor'
+import { displayTime } from '@/utils/format'
 
 // =====================================================================
 // 导师服务管理审批端：认领 / 字段编辑 / 下架 三类审批流。
@@ -140,10 +141,6 @@ async function reviewTakedown(item: MentorTakedownRecord, action: 'approve' | 'r
   }
   ElMessage.success(action === 'approve' ? '已通过' : '已驳回')
   await loadActive()
-}
-
-function displayTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
 }
 
 onMounted(() => {

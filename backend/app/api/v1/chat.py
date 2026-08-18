@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import hmac
 import json
@@ -13,7 +14,7 @@ import uuid
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.core.config import settings
 from app.core.deps import verify_admin
@@ -34,13 +35,36 @@ from app.services.artifact_delivery import (
     artifact_download_response,
     assert_qxd_delivery_ready,
     issue_delivery_grant,
+    issue_radar_chart_token,
     redeem_delivery_token,
+    redeem_radar_chart_token,
 )
 from app.services.artifact_generation import create_match_report_artifact
-from app.services.interview import answer_session, state_response, sync_user_transcript
+from app.services.interview import (
+    InterviewAccessError,
+    InterviewConflictError,
+    InterviewNotFoundError,
+    answer_session,
+    confirmed_portrait,
+    state_response,
+    sync_user_transcript,
+)
 from app.services.match_application import (
     format_match_outcome,
     run_confirmed_match,
+)
+from app.services.mentor_score_governance import public_score_bundles
+from app.services.radar_chart import (
+    ADVISOR_TRAIT_COLOR,
+    RADAR_DIMENSION_LABELS,
+    TRAIT_KEYS,
+    RadarSeries,
+    build_radar_series_for_advisor,
+    render_radar_svg,
+)
+from app.services.recruitment_public import (
+    format_recruitment_digest,
+    list_public_recruitments,
 )
 from app.services.qxd_media import (
     MediaFetchError,
@@ -60,6 +84,19 @@ _REPORT_INTENTS = (
     "下载匹配报告",
 )
 _REPORT_DELIVERY_CONFIRMATION = "确认生成并通过清小搭附件交付"
+_RADAR_INTENTS = (
+    "雷达图",
+    "查看雷达",
+    "显示雷达",
+    "看看雷达",
+)
+_RECRUITMENT_INTENTS = (
+    "招募",
+    "实习信息",
+    "招生信息",
+    "科研助理",
+)
+_SITE_HOME_URL = "https://www.tsingradar.com.cn"
 _TRIAL_RESET_UTTERANCES = {
     "重新开始",
     "开始新访谈",
@@ -88,6 +125,24 @@ _trial_request_lock = threading.Lock()
 class AgentReply:
     content: str
     attachments: tuple[SodaAttachment, ...] = ()
+    reasoning: tuple[str, ...] = ()
+
+
+def _reply_reasoning_steps(*, stage: str, attachments_count: int) -> tuple[str, ...]:
+    """按业务阶段生成确定性的思考过程文案（不冒充模型推理）。
+
+    帧序：role → reasoning… → content… → stop；reasoning 只出不入。
+    """
+    if attachments_count > 0:
+        return ("正在准备文件…",)
+    if stage == "matched":
+        return (
+            "正在检索匹配导师…",
+            "正在核实证据与置信度…",
+        )
+    if stage == "recommend_ready":
+        return ("正在读取已确认画像…",)
+    return ("正在理解你的回答…", "正在更新访谈画像…")
 
 
 def _reset_trial_state() -> None:
@@ -312,7 +367,20 @@ async def generate_agent_reply(
                 user_messages,
             )
 
-        if resolved_principal.persistent:
+        if resolved_principal.persistent and request.sessionId:
+            # 网关 sessionId（同一通对话每轮相同）优先作为会话记忆键；
+            # 与终端用户主体绑定派生，不同主体即使传相同 sessionId 也不会互串。
+            session_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    (
+                        "tsing-radar:qxd-session:"
+                        f"{resolved_principal.subject_id}:{request.sessionId}"
+                    ),
+                )
+            )
+            student_id = resolved_principal.subject_id
+        elif resolved_principal.persistent:
             conversation_key = (request.user or "default").strip() or "default"
             session_id = str(
                 uuid.uuid5(
@@ -333,6 +401,8 @@ async def generate_agent_reply(
             student_id = resolved_principal.subject_id
 
         db = SessionLocal()
+        pending_attachments: list[SodaAttachment] = []
+        reply_stage = "interviewing"
         try:
             if trial_state is not None and trial_state.consumed_turns > 0:
                 session = answer_session(
@@ -356,7 +426,22 @@ async def generate_agent_reply(
                     session_id=session_id,
                     student_id=student_id,
                 )
-                visible = format_match_outcome(outcome)
+                try:
+                    portrait = confirmed_portrait(
+                        db,
+                        session_id=session_id,
+                        student_id=student_id,
+                    )
+                except (
+                    InterviewNotFoundError,
+                    InterviewAccessError,
+                    InterviewConflictError,
+                ):
+                    portrait = None
+                reply_stage = (
+                    "matched" if outcome.status == "matched" else "recommend_ready"
+                )
+                visible = format_match_outcome(outcome, profile=portrait)
                 latest_user = user_messages[-1].strip() if user_messages else ""
                 earlier_users = user_messages[:-1]
                 if any(intent in latest_user for intent in _REPORT_INTENTS):
@@ -374,6 +459,17 @@ async def generate_agent_reply(
                             "交给清小搭转存；不会包含用户上传原件，也不会发送给导师。"
                             f"\n\n如同意，请单独回复“{_REPORT_DELIVERY_CONFIRMATION}”。"
                         )
+                elif any(intent in latest_user for intent in _RADAR_INTENTS):
+                    radar_text, radar_attachment = _radar_intent_reply(
+                        outcome,
+                        latest_user=latest_user,
+                    )
+                    visible = radar_text
+                    if radar_attachment is not None:
+                        pending_attachments.append(radar_attachment)
+                elif any(intent in latest_user for intent in _RECRUITMENT_INTENTS):
+                    records, _withheld = list_public_recruitments(db)
+                    visible = format_recruitment_digest(records, profile=portrait)
                 elif latest_user == _REPORT_DELIVERY_CONFIRMATION:
                     if not settings.QXD_ATTACHMENTS_ENABLED:
                         visible = "清小搭附件交付当前未启用；未生成或公开任何文件。"
@@ -428,11 +524,40 @@ async def generate_agent_reply(
                         return AgentReply(
                             content=visible,
                             attachments=(attachment,),
+                            reasoning=_reply_reasoning_steps(
+                                stage=reply_stage, attachments_count=1
+                            ),
                         )
+                if (
+                    outcome.status == "matched"
+                    and outcome.items
+                    and not pending_attachments
+                    and not any(
+                        intent in latest_user
+                        for intent in (
+                            _RADAR_INTENTS
+                            + _RECRUITMENT_INTENTS
+                            + _REPORT_INTENTS
+                        )
+                    )
+                    and latest_user != _REPORT_DELIVERY_CONFIRMATION
+                    and _radar_available_for_items(outcome.items)
+                ):
+                    visible += (
+                        "\n\n需要雷达图吗？回复「雷达图」查看首位候选，"
+                        "或「雷达图 + 姓名」指定导师。"
+                    )
         finally:
             db.close()
 
-        reply = AgentReply(content=visible)
+        reply = AgentReply(
+            content=visible,
+            attachments=tuple(pending_attachments),
+            reasoning=_reply_reasoning_steps(
+                stage=reply_stage,
+                attachments_count=len(pending_attachments),
+            ),
+        )
         if trial_state is not None:
             _complete_trial_request(
                 trial_state,
@@ -442,6 +567,171 @@ async def generate_agent_reply(
     finally:
         if trial_lock_acquired:
             _trial_request_lock.release()
+
+
+def _radar_available_for_items(items: list[dict]) -> bool:
+    """匹配候选中是否至少有一位导师具有已审核六维评分（用于自动提示）。"""
+    try:
+        bundles, _status = public_score_bundles()
+    except Exception:  # noqa: BLE001 —— 评分数据异常时按"无雷达"处理，不影响对话主链路
+        logger.exception("radar_bundle_lookup_failed")
+        return False
+    return any(str(item.get("advisor_id")) in bundles for item in items)
+
+
+def _select_radar_item(
+    items: list[dict], latest_user: str, bundles: dict[str, dict]
+) -> dict | None:
+    """优先返回用户点名（姓名包含在消息中）且有评分数据的候选，否则首位有数据者。"""
+    for item in items:
+        name = str(item.get("name") or "")
+        if name and name in latest_user and str(item.get("advisor_id")) in bundles:
+            return item
+    for item in items:
+        if str(item.get("advisor_id")) in bundles:
+            return item
+    return None
+
+
+def _radar_text_table(name: str, values_by_key: dict[str, float]) -> str:
+    lines = [f"{name} 六维评分（已审核，满分 100）："]
+    for key in TRAIT_KEYS:
+        value = values_by_key.get(key)
+        if value is None:
+            lines.append(f"- {RADAR_DIMENSION_LABELS[key]}：暂无已审核评分")
+        else:
+            lines.append(f"- {RADAR_DIMENSION_LABELS[key]}：{value:.0f}")
+    return "\n".join(lines)
+
+
+def _radar_intent_reply(
+    outcome,
+    *,
+    latest_user: str,
+) -> tuple[str, SodaAttachment | None]:
+    """雷达图意图处理：有已审核评分则发 image 附件，否则诚实空态 + 文本表格。"""
+    items = outcome.items or []
+    if not items:
+        return (
+            "当前匹配结果为空，暂无可展示雷达图的导师。可以先检查画像或匹配条件。"
+            if outcome.status == "no_match"
+            else outcome.message,
+            None,
+        )
+    try:
+        bundles, status = public_score_bundles()
+    except Exception:  # noqa: BLE001 —— 评分数据异常时走诚实空态
+        logger.exception("radar_bundle_lookup_failed")
+        bundles, status = {}, {}
+
+    item = _select_radar_item(items, latest_user, bundles)
+    if item is None:
+        first = items[0]
+        name = str(first.get("name") or "该导师")
+        values = {}
+        return (
+            "暂无候选导师的已审核六维评分，不能诚实地绘制雷达图"
+            "（评分门控状态：未开放或未覆盖）。\n\n"
+            f"{_radar_text_table(name, values)}\n\n"
+            f"交互式雷达图与完整证据 👉 {_SITE_HOME_URL}",
+            None,
+        )
+
+    advisor_id = str(item.get("advisor_id"))
+    name = str(item.get("name") or advisor_id)
+    series = build_radar_series_for_advisor(advisor_id, bundles)
+    if series is None:
+        return (
+            f"{name} 暂无完整的已审核六维评分，不伪造雷达图。\n\n"
+            f"交互式雷达图与完整证据 👉 {_SITE_HOME_URL}",
+            None,
+        )
+    if not settings.QXD_ATTACHMENTS_ENABLED:
+        release_note = (
+            f"样本来源：已审核评分发布 v{status.get('release_version', '?')}"
+            if status.get("release_version")
+            else "样本来源：已审核评分发布"
+        )
+        return (
+            "雷达图附件当前未启用；文本版六维数据如下。\n\n"
+            f"{_radar_text_table(name, dict(zip(TRAIT_KEYS, series.values)))}\n\n"
+            f"{release_note}\n交互式雷达图 👉 {_SITE_HOME_URL}",
+            None,
+        )
+    try:
+        assert_qxd_delivery_ready()
+    except HTTPException as exc:
+        logger.warning("radar_delivery_not_ready status=%s", exc.status_code)
+        return (
+            "雷达图附件交付尚未配置公网地址；文本版六维数据如下。\n\n"
+            f"{_radar_text_table(name, dict(zip(TRAIT_KEYS, series.values)))}\n\n"
+            f"交互式雷达图 👉 {_SITE_HOME_URL}",
+            None,
+        )
+    token, expires_at = issue_radar_chart_token(advisor_id)
+    attachment = SodaAttachment(
+        fileUrl=f"{settings.PUBLIC_BASE_URL}/v1/radar/{token}",
+        fileName=f"导师雷达图_{name}.svg",
+        fileType="image",
+        mimeType="image/svg+xml",
+        expiresAt=expires_at,
+    )
+    others = [
+        str(other.get("name") or "")
+        for other in items
+        if other is not item and str(other.get("advisor_id")) in bundles
+    ]
+    extra = (
+        f"\n其他候选也可查看：回复「雷达图 {'、'.join(others[:2])}」。"
+        if others
+        else ""
+    )
+    text = (
+        f"已生成 {name} 的导师特质雷达图（已审核评分，短时签名链接）：\n"
+        "- 六维：学术敏锐度、人脉资源、指导意愿、性格包容度、经费实力、产出效率"
+        f"{extra}\n\n"
+        f"完整对比与交互式雷达图 👉 {_SITE_HOME_URL}"
+    )
+    return text, attachment
+
+
+@router.get("/radar/{token}")
+def download_radar_chart(token: str):
+    """无状态雷达图端点：令牌即凭证（HMAC 签名 + 短时过期）。
+
+    雷达图由已发布的公开评分确定性渲染，不落对象存储、不经过私有文档管线。
+    """
+    advisor_id = redeem_radar_chart_token(token)
+    series = build_radar_series_for_advisor(advisor_id)
+    if series is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="该导师暂无已审核六维评分",
+        )
+    svg = _render_radar_svg_cached(advisor_id, tuple(series.values))
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+        },
+    )
+
+
+@functools.lru_cache(maxsize=64)
+def _render_radar_svg_cached(advisor_id: str, values: tuple[float, ...]) -> str:
+    series = RadarSeries(
+        name="导师特质（已审核评分）",
+        values=list(values),
+        color=ADVISOR_TRAIT_COLOR,
+    )
+    return render_radar_svg(
+        series=[series],
+        title="导师特质雷达图（已审核评分）",
+        sample_note="社区与官方目录数据请以网站为准；样本量与时间窗见详情页",
+    )
 
 
 @router.get("/attachments/{token}")
@@ -607,6 +897,15 @@ async def chat(
             model=model,
             delta={"role": "assistant"},
         )
+        # 思考过程帧（只出不入；确定性阶段文案，不冒充模型推理）
+        for step in reply.reasoning:
+            yield _stream_frame(
+                completion_id=completion_id,
+                created=created,
+                model=model,
+                delta={"reasoning": step},
+            )
+            await asyncio.sleep(0)
         for index in range(0, len(reply.content), 8):
             yield _stream_frame(
                 completion_id=completion_id,

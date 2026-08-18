@@ -9,16 +9,13 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.data_loader import load_mentors, mentor_data_summary
+from app.services.mentor_catalog import enriched_mentor_resources
 from app.services.mentor_resources import (
-    grouped_mentor_resources,
     mentor_distribution,
     mentor_department_catalog,
     student_department_catalog,
 )
-from app.services.mentor_score_governance import (
-    score_coverage_status,
-    score_enriched_resources,
-)
+from app.services.mentor_score_governance import score_coverage_status
 
 router = APIRouter()
 
@@ -49,10 +46,7 @@ def get_all_mentors(
     page_size: int = Query(default=20, ge=1, le=100),
 ):
     """Search published resources with bounded, deterministic pagination."""
-    raw_records = load_mentors()
-    records, score_status = score_enriched_resources(
-        grouped_mentor_resources(raw_records)
-    )
+    records, score_status = enriched_mentor_resources(load_mentors())
     query = _search_text(q).strip() if q else ""
     department = _search_text(dept).strip() if dept else ""
 

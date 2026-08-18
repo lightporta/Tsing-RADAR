@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { DArrowRight } from '@element-plus/icons-vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import AdvisorListPanel from '@/components/advisor/AdvisorListPanel.vue'
@@ -36,7 +37,7 @@ function toggleChat() {
         aria-label="展开对话栏"
         @click="toggleChat"
       >
-        <el-icon aria-hidden="true">»</el-icon>
+        <el-icon aria-hidden="true"><DArrowRight /></el-icon>
       </button>
 
       <!-- 中栏：导师卡片列表 -->

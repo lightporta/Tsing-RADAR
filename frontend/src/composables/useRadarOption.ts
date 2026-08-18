@@ -1,4 +1,5 @@
 import type { EChartsOption } from 'echarts'
+import type { TopLevelFormatterParams } from 'echarts/types/dist/shared'
 import type { RadarTraits } from '@/types/advisor'
 import { TRAITS } from '@/types/advisor'
 import type { TraitKey } from '@/types/advisor'
@@ -14,11 +15,13 @@ const INDICATORS = TRAITS.map((t) => ({ name: t.label, max: 100 }))
 
 export interface RadarSeries {
   name: string
-  values: number[]
+  values: (number | null)[] // null = 该维不画线（如样本不足）
   color: string // line color
   areaColor: string // fill color
   lineType?: 'solid' | 'dashed' | 'dotted'
   lineWidth?: number
+  /** 悬停该系列时的固定提示文案（如学生评价的主观性声明） */
+  tooltipText?: string
 }
 
 /** 构造雷达图 option */
@@ -28,8 +31,25 @@ export function buildRadarOption(
 ): EChartsOption {
   const { showAxisLabel = true, showLegend = true, radius = '65%' } = options
 
+  // 系列级固定提示文案（主观评价声明等）；无任何文案时保持默认 tooltip
+  const seriesTooltips = new Map(
+    series
+      .filter((s) => s.tooltipText)
+      .map((s) => [s.name, s.tooltipText as string]),
+  )
+
   return {
-    tooltip: { trigger: 'item' },
+    tooltip:
+      seriesTooltips.size > 0
+        ? {
+            trigger: 'item',
+            formatter: (params: TopLevelFormatterParams) => {
+              const item = Array.isArray(params) ? params[0] : params
+              const name = item?.name ?? ''
+              return seriesTooltips.get(name) ?? name
+            },
+          }
+        : { trigger: 'item' },
     legend: showLegend
       ? {
           show: true,
@@ -86,6 +106,8 @@ export function traitToArray(traits: RadarTraits | Record<TraitKey, number>): nu
 export const STUDENT_SERIES_NAME = '学生需求'
 export const ADVISOR_SERIES_NAME = '导师特质'
 export const ADVISOR_DEFAULT_SERIES_NAME = '导师基准（无评分数据）'
+/** 学生评价雷达第三系列（绿色虚线 = 主观评价，与官方事实实线区分） */
+export const RATING_SERIES_NAME = '学生评价'
 
 export const STUDENT_RADAR = {
   color: '#409EFF',
@@ -105,6 +127,16 @@ export const ADVISOR_DEFAULT_RADAR = {
   lineType: 'dashed' as const,
   lineWidth: 1.5,
 }
+
+/** 学生评价雷达颜色（绿 #67c23a，固定虚线：主观 ≠ 事实） */
+export const RATING_RADAR = {
+  color: '#67c23a',
+  areaColor: 'rgba(103, 194, 58, 0.25)',
+  lineType: 'dashed' as const,
+}
+
+/** 单维样本量低于该值时该维不画线（隐私与抗压评阈值） */
+export const RATING_MIN_DIMENSION_N = 3
 
 /** 默认六维基准值（无证据数据时使用） */
 export const DEFAULT_TRAIT_VALUES: Record<string, number> = {

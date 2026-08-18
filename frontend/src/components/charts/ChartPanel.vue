@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import MentorDistributionChart from './MentorDistributionChart.vue'
 import RadarChartLarge from './RadarChartLarge.vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
@@ -68,8 +69,8 @@ const matchReasons = computed<string[]>(() => {
           <h2 class="advisor-name">{{ selected.name }}</h2>
           <p class="advisor-dept">{{ selected.dept }} · {{ selected.field }}</p>
         </div>
-        <button class="back-btn" @click="advisorStore.selectAdvisor(null)">
-          <el-icon aria-hidden="true">←</el-icon>
+        <button class="back-btn" aria-label="返回分布图" @click="advisorStore.selectAdvisor(null)">
+          <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
           返回分布图
         </button>
       </div>

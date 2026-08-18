@@ -13,8 +13,14 @@
   {"method": "GET", "path": "/api/recruitments"},
   {"method": "GET", "path": "/api/recruitments/mine"},
   {"method": "POST", "path": "/api/recruitments"},
+  {"method": "GET", "path": "/api/recruitments/{recruit_id}"},
   {"method": "PATCH", "path": "/api/recruitments/{recruit_id}"},
   {"method": "DELETE", "path": "/api/recruitments/{recruit_id}"},
+  {"method": "GET", "path": "/api/recruitments/{recruit_id}/comments"},
+  {"method": "POST", "path": "/api/recruitments/{recruit_id}/comments"},
+  {"method": "POST", "path": "/api/recruitments/{recruit_id}/comments/{comment_id}/like"},
+  {"method": "POST", "path": "/api/recruitments/{recruit_id}/comments/{comment_id}/report"},
+  {"method": "DELETE", "path": "/api/recruitments/{recruit_id}/comments/{comment_id}"},
   {"method": "GET", "path": "/api/scatter"},
   {"method": "POST", "path": "/api/feedback"},
   {"method": "POST", "path": "/api/match"},
@@ -62,5 +68,9 @@
   {"method": "GET", "path": "/api/mentor/privacy"},
   {"method": "PATCH", "path": "/api/mentor/privacy/visibility"},
   {"method": "GET", "path": "/api/mentor/privacy/takedowns"},
-  {"method": "POST", "path": "/api/mentor/privacy/takedowns"}
+  {"method": "POST", "path": "/api/mentor/privacy/takedowns"},
+  {"method": "POST", "path": "/api/advisors/{advisor_id}/ratings"},
+  {"method": "GET", "path": "/api/advisors/{advisor_id}/ratings"},
+  {"method": "GET", "path": "/api/advisors/{advisor_id}/ratings/summary"},
+  {"method": "GET", "path": "/api/ratings/mine"}
 ]

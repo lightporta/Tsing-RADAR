@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Paperclip } from '@element-plus/icons-vue'
 import type { ChatMessage } from '@/types/chat'
 import { renderMarkdown } from '@/utils/markdown'
 import { useUserStore } from '@/stores/useUserStore'
@@ -40,7 +41,8 @@ const html = computed(() =>
         <div v-else class="markdown-body" v-html="html" />
         <div v-if="isUser && message.attachments?.length" class="message-attachments">
           <span v-for="item in message.attachments" :key="item.documentId">
-            📎 {{ item.name }}（已私有保存，未注入访谈）
+            <el-icon aria-hidden="true"><Paperclip /></el-icon>
+            {{ item.name }}（已私有保存，未注入访谈）
           </span>
         </div>
         <span v-if="message.streaming" class="cursor" />

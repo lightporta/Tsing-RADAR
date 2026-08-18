@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
+import re
 from datetime import datetime
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -77,7 +79,8 @@ class QXDMessage(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str | list[ContentPart]
+    # 平台会回传全量历史，上限放宽到 100k 字符 / 200 条，防滥用但不误伤正常多轮。
+    content: str | list[ContentPart] = Field(max_length=100_000)
 
 
 class QXDChatRequest(BaseModel):
@@ -86,10 +89,29 @@ class QXDChatRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     model: str | None = None
-    messages: list[QXDMessage] = Field(min_length=1)
+    messages: list[QXDMessage] = Field(min_length=1, max_length=200)
     stream: StrictBool = False
     max_tokens: int | None = Field(default=None, ge=1)
     user: str | None = Field(default=None, min_length=1, max_length=128)
+    # 清小搭网关在 body 顶层携带 sessionId（同一通对话每轮相同）；
+    # 仅作为会话记忆键使用，不回传。见《接入指南》§3.3。
+    sessionId: str | None = Field(default=None, max_length=128)
+
+    @field_validator("sessionId")
+    @classmethod
+    def normalize_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped or len(stripped) > 128 or not re.fullmatch(
+            r"[A-Za-z0-9_\-]{1,128}", stripped
+        ):
+            # 不符合网关约定的 sessionId 视为缺失（按新会话处理），不拒绝请求。
+            logging.getLogger("tsing_radar.qxd").warning(
+                "qxd_request_session_id_ignored reason=malformed"
+            )
+            return None
+        return stripped
 
     @model_validator(mode="after")
     def require_user_message(self) -> "QXDChatRequest":

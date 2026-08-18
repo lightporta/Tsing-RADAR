@@ -13,6 +13,7 @@ import type {
   MentorInboundApplications,
   MentorInboundMatches,
 } from '@/types/mentor'
+import { displayTime, formatBytes } from '@/utils/format'
 
 // =====================================================================
 // 意向中心：匹配意向、站内投递与反馈概览。
@@ -59,14 +60,8 @@ async function loadFeedback() {
   }
 }
 
-function displayTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
-}
-
 function displaySize(bytes?: number | null) {
-  if (bytes == null) return '—'
-  if (bytes < 1024) return `${bytes} B`
-  return `${(bytes / 1024).toFixed(1)} KB`
+  return bytes == null ? '—' : formatBytes(bytes)
 }
 
 onMounted(() => {

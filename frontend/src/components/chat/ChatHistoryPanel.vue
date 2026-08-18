@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
 import { useChatStore } from '@/stores/useChatStore'
+import { displayTime } from '@/utils/format'
 
 const emit = defineEmits<{ (event: 'close'): void }>()
 
@@ -11,15 +12,6 @@ const advisorStore = useAdvisorStore()
 const closeButton = ref<HTMLButtonElement | null>(null)
 const historyCard = ref<HTMLElement | null>(null)
 const confirmingClear = ref(false)
-
-function formatTime(timestamp: number) {
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp))
-}
 
 function restore(id: string) {
   const advisor = chatStore.restoreSession(id, advisorStore.createHistorySnapshot())
@@ -112,7 +104,7 @@ onBeforeUnmount(() => {
           >
             <strong>{{ session.title }}</strong>
             <span>
-              <time :datetime="new Date(session.updatedAt).toISOString()">{{ formatTime(session.updatedAt) }}</time>
+              <time :datetime="new Date(session.updatedAt).toISOString()">{{ displayTime(session.updatedAt) }}</time>
               · {{ session.messages.length }} 条消息
               · {{ session.advisor.matchedAdvisors.length }} 条匹配
             </span>

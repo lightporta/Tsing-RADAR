@@ -2,11 +2,13 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Bell, Edit, Lock, Promotion } from '@element-plus/icons-vue'
 import SubPageLayout from '@/layouts/SubPageLayout.vue'
 import StatusChip from '@/components/mentor/StatusChip.vue'
 import { fetchMentorProfile } from '@/api/mentor'
 import type { MentorProfile } from '@/types/mentor'
 import { useMentorStore } from '@/stores/useMentorStore'
+import { displayTime } from '@/utils/format'
 
 // =====================================================================
 // 导师工作台：档案概览 + 功能入口 + 退出登录。
@@ -20,10 +22,10 @@ const profile = ref<MentorProfile | null>(null)
 const loading = ref(false)
 
 const entryCards = [
-  { key: 'profile-edit', title: '档案编辑', desc: '提交研究方向亮点、招生要求等字段编辑', icon: '✎' },
-  { key: 'intents', title: '意向中心', desc: '查看匹配意向、站内投递与反馈概览', icon: '➤' },
-  { key: 'recruitment', title: '招募管理', desc: '发布与维护招生、实习招募信息', icon: '讯' },
-  { key: 'privacy', title: '隐私控制', desc: '字段展示策略与档案下架申请', icon: '🔒' },
+  { key: 'profile-edit', title: '档案编辑', desc: '提交研究方向亮点、招生要求等字段编辑', icon: Edit },
+  { key: 'intents', title: '意向中心', desc: '查看匹配意向、站内投递与反馈概览', icon: Promotion },
+  { key: 'recruitment', title: '招募管理', desc: '发布与维护招生、实习招募信息', icon: Bell },
+  { key: 'privacy', title: '隐私控制', desc: '字段展示策略与档案下架申请', icon: Lock },
 ] as const
 
 async function loadProfile() {
@@ -65,7 +67,7 @@ onMounted(loadProfile)
           </div>
           <div v-if="profile?.takedown.active" class="takedown-banner">
             <strong>档案已下架</strong>
-            <span>生效时间：{{ new Date(profile.takedown.effective_at || '').toLocaleString() }}</span>
+            <span>生效时间：{{ displayTime(profile.takedown.effective_at) }}</span>
           </div>
           <div v-else class="profile-note">
             公开档案来自已发布的治理数据；导师自述与编辑字段当前仅本人与管理员可见。
@@ -80,7 +82,7 @@ onMounted(loadProfile)
             class="entry-card"
             @click="go(entry)"
           >
-            <span class="entry-icon" aria-hidden="true">{{ entry.icon }}</span>
+            <el-icon class="entry-icon" aria-hidden="true"><component :is="entry.icon" /></el-icon>
             <strong>{{ entry.title }}</strong>
             <p>{{ entry.desc }}</p>
           </button>

@@ -42,7 +42,33 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
         "mentor_profile_edits",
         "takedown_requests",
         "mentor_profiles",
+        "advisor_ratings",
+        "advisor_rating_summary",
+        "recruitment_comments",
+        "recruitment_comment_likes",
     }.issubset(inspector.get_table_names())
+    # 招募立体化扩展列（0010，全部可空向后兼容）
+    assert {
+        "location",
+        "quota",
+        "compensation",
+        "duration",
+        "apply_method",
+        "tags",
+        "advisor_id",
+    }.issubset({item["name"] for item in inspector.get_columns("recruitments")})
+    # 评论表关键列（0011）
+    assert {
+        "comment_id",
+        "recruit_id",
+        "parent_id",
+        "author_principal",
+        "review_status",
+        "like_count",
+        "deleted_at",
+    }.issubset(
+        {item["name"] for item in inspector.get_columns("recruitment_comments")}
+    )
     assert {
         item["name"]
         for item in inspector.get_columns("private_documents")
@@ -94,7 +120,7 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0008"
+    assert revision == "0011"
     engine.dispose()
 
 

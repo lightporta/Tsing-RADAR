@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SubPageLayout from '@/layouts/SubPageLayout.vue'
 import RecruitmentList from '@/components/recruitment/RecruitmentList.vue'
@@ -10,6 +11,9 @@ import {
   type MyRecruitment,
 } from '@/api/recruitment'
 import { newIdempotencyKey } from '@/api/request'
+import { displayTime } from '@/utils/format'
+
+const router = useRouter()
 
 const mine = ref<MyRecruitment[]>([])
 const mineLoading = ref(false)
@@ -47,6 +51,12 @@ function viewDetail(item: MyRecruitment) {
   detailVisible.value = true
 }
 
+/** 已公开投稿跳转独立详情页（路由化深链，替代弹窗展示公开内容） */
+function goPublicDetail(item: MyRecruitment) {
+  detailVisible.value = false
+  router.push(`/recruitment/${item.recruit_id}`)
+}
+
 async function withdraw(item: MyRecruitment) {
   if (withdrawingId.value) return
   try {
@@ -72,10 +82,6 @@ async function withdraw(item: MyRecruitment) {
   } finally {
     withdrawingId.value = null
   }
-}
-
-function displayTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
 }
 
 onMounted(loadMine)
@@ -166,6 +172,14 @@ onMounted(loadMine)
               <div><dt>是否急招</dt><dd>{{ selectedDetail.is_urgent ? '是' : '否' }}</dd></div>
               <div><dt>专业板块</dt><dd>{{ selectedDetail.major }}</dd></div>
               <div><dt>截止日期</dt><dd>{{ selectedDetail.deadline }}</dd></div>
+              <div v-if="selectedDetail.location"><dt>地点</dt><dd>{{ selectedDetail.location }}</dd></div>
+              <div v-if="selectedDetail.quota"><dt>名额</dt><dd>{{ selectedDetail.quota }}</dd></div>
+              <div v-if="selectedDetail.compensation"><dt>待遇</dt><dd>{{ selectedDetail.compensation }}</dd></div>
+              <div v-if="selectedDetail.duration"><dt>周期</dt><dd>{{ selectedDetail.duration }}</dd></div>
+              <div v-if="selectedDetail.apply_method"><dt>投递方式</dt><dd>{{ selectedDetail.apply_method }}</dd></div>
+              <div v-if="selectedDetail.tags?.length">
+                <dt>标签</dt><dd>{{ selectedDetail.tags.join('、') }}</dd>
+              </div>
               <div><dt>提交时间</dt><dd>{{ displayTime(selectedDetail.created_at) }}</dd></div>
               <div><dt>更新时间</dt><dd>{{ displayTime(selectedDetail.updated_at) }}</dd></div>
               <div class="wide"><dt>要求与职责</dt><dd>{{ selectedDetail.req }}</dd></div>
@@ -176,6 +190,14 @@ onMounted(loadMine)
           </div>
           <template #footer>
             <el-button @click="detailVisible = false">关闭</el-button>
+            <el-button
+              v-if="selectedDetail && selectedDetail.publication_status === 'published'"
+              type="primary"
+              plain
+              @click="goPublicDetail(selectedDetail)"
+            >
+              查看公开详情页
+            </el-button>
             <el-button
               v-if="selectedDetail && ['pending_review', 'rejected'].includes(selectedDetail.review_status)"
               @click="edit(selectedDetail)"

@@ -7,6 +7,7 @@ import AdvisorDetail from './AdvisorDetail.vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
 import { useUserStore } from '@/stores/useUserStore'
 import { submitFeedback } from '@/api/feedback'
+import { useRatingSummary } from '@/composables/useRatingSummary'
 import { deptColor } from '@/utils/format'
 import type { MatchedAdvisor } from '@/types/advisor'
 
@@ -32,6 +33,15 @@ const comparisonKey = computed(() => props.advisor.advisor_id || props.advisor.n
 const compared = computed(() =>
   advisorStore.comparisonIds.includes(comparisonKey.value),
 )
+
+// 样本量角标只读缓存（详情/大雷达拉取后才有数据），卡片自身不发请求，避免列表 N+1
+const { peekRatingSummary } = useRatingSummary()
+const ratingTotalN = computed(() => {
+  const id = props.advisor.advisor_id
+  if (!id) return null
+  const summary = peekRatingSummary(id)
+  return summary && summary.total_n > 0 ? summary.total_n : null
+})
 
 function onClick() {
   if (advisorStore.selectedName === props.advisor.name) {
@@ -117,6 +127,9 @@ async function giveFeedback(rating: 1 | -1) {
             :class="{ hot: advisor.popularity > 60 }"
           >
             {{ advisor.popularity > 60 ? '🔥 热门' : '❄️ 冷门' }}
+          </span>
+          <span v-if="ratingTotalN" class="rating-badge">
+            🧑‍🎓 {{ ratingTotalN }} 评价
           </span>
         </div>
       </div>
@@ -297,6 +310,13 @@ async function giveFeedback(rating: 1 | -1) {
     background: rgba(245, 108, 108, 0.1);
     color: $color-danger;
   }
+}
+.rating-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(103, 194, 58, 0.1);
+  color: #67c23a;
 }
 
 .card-right {

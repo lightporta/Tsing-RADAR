@@ -226,3 +226,73 @@ def test_tsinghua_verify_fails_closed():
     """未接入校内身份提供者时不得模拟成功。"""
     resp = client.get("/api/tsinghua/auth/verify", params={"token": "test"})
     assert resp.status_code == 501
+
+
+def test_llm_chat_rejects_tool_role():
+    """B3：role 只接受 user/assistant/system。"""
+    resp = client.post(
+        "/api/v1/llm/chat",
+        headers=WEB_HEADERS,
+        json={"messages": [{"role": "tool", "content": "工具结果"}]},
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_chat_rejects_oversized_content():
+    """B3：单条消息内容超过 20000 字拒绝。"""
+    resp = client.post(
+        "/api/v1/llm/chat",
+        headers=WEB_HEADERS,
+        json={"messages": [{"role": "user", "content": "长" * 20_001}]},
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_chat_rejects_too_many_messages():
+    """B3：消息条数超过 50 拒绝。"""
+    resp = client.post(
+        "/api/v1/llm/chat",
+        headers=WEB_HEADERS,
+        json={
+            "messages": [
+                {"role": "user", "content": f"第 {index} 条"}
+                for index in range(51)
+            ]
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_embeddings_rejects_oversized_text():
+    """B3：embedding 文本超过 20000 字拒绝。"""
+    resp = client.post(
+        "/api/v1/llm/embeddings",
+        json={"text": "长" * 20_001},
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_request_limits_accept_boundary_values():
+    """B3：边界内正常值放行（50 条消息、20000 字内容/文本）。"""
+    chat = client.post(
+        "/api/v1/llm/chat",
+        params={"stream": "false"},
+        headers=WEB_HEADERS,
+        json={
+            "messages": [
+                {"role": "system", "content": "系统提示"},
+                *[
+                    {"role": "user", "content": "自然语言处理"}
+                    for _ in range(49)
+                ],
+            ]
+        },
+    )
+    assert chat.status_code == 200
+
+    embeddings = client.post(
+        "/api/v1/llm/embeddings",
+        json={"text": "文" * 20_000},
+    )
+    assert embeddings.status_code == 200
+    assert embeddings.json()["data"]

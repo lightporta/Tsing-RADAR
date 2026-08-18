@@ -8,17 +8,24 @@ import {
   STUDENT_SERIES_NAME,
   ADVISOR_SERIES_NAME,
   ADVISOR_DEFAULT_SERIES_NAME,
+  RATING_SERIES_NAME,
   STUDENT_RADAR,
   ADVISOR_RADAR,
   ADVISOR_DEFAULT_RADAR,
+  RATING_RADAR,
+  RATING_MIN_DIMENSION_N,
   type RadarSeries,
 } from '@/composables/useRadarOption'
+import { useRatingSummary } from '@/composables/useRatingSummary'
+import { displayTime } from '@/utils/format'
 import type { MatchedAdvisor } from '@/types/advisor'
+import { TRAITS } from '@/types/advisor'
 import type { TraitKey } from '@/types/advisor'
 
 // =====================================================================
-// 大尺寸双轨雷达图（右栏选中导师时展示）
-// 有数据：深色实线；无数据：默认基准50（浅色虚线）
+// 大尺寸多轨雷达图（右栏选中导师时展示）
+// 蓝=学生需求；橙=导师特质/官方事实（无数据时灰色虚线基准50）；
+// 绿虚线=学生评价第三系列（主观评价，某维样本不足时不画线）
 // =====================================================================
 
 const props = defineProps<{
@@ -27,6 +34,20 @@ const props = defineProps<{
 }>()
 
 const el = ref<HTMLElement | null>(null)
+
+const { ensureRatingSummary, peekRatingSummary } = useRatingSummary()
+
+const advisorId = computed(() => props.advisor?.advisor_id ?? '')
+watch(
+  advisorId,
+  (id) => {
+    if (id) void ensureRatingSummary(id)
+  },
+  { immediate: true },
+)
+const ratingSummary = computed(() =>
+  advisorId.value ? peekRatingSummary(advisorId.value) : undefined,
+)
 
 const hasRealTraits = computed(() => {
   if (!props.advisor?.radar_traits) return false
@@ -57,6 +78,24 @@ const option = computed(() => {
       values: defaultTraitArray(),
       ...ADVISOR_DEFAULT_RADAR,
       lineWidth: 1.5,
+    })
+  }
+
+  // 学生评价第三系列（绿色虚线）：值 = 聚合分/5*100；某维 n<3 时该维不画线
+  const summary = ratingSummary.value
+  if (summary && summary.total_n > 0) {
+    series.push({
+      name: `${RATING_SERIES_NAME} (N=${summary.total_n})`,
+      values: TRAITS.map((trait) => {
+        const dimension = summary.dimensions[trait.key]
+        return dimension &&
+          dimension.n >= RATING_MIN_DIMENSION_N &&
+          dimension.value != null
+          ? (dimension.value / 5) * 100
+          : null
+      }),
+      ...RATING_RADAR,
+      tooltipText: `社区主观评价，样本 N=${summary.total_n}，采集时间 ${displayTime(summary.last_collected_at)}，非官方事实`,
     })
   }
 

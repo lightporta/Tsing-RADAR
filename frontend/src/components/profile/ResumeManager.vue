@@ -21,6 +21,7 @@ import {
   type ParsedDocumentFact,
 } from '@/api/documentAnalysis'
 import { newIdempotencyKey } from '@/api/request'
+import { formatBytes } from '@/utils/format'
 import { useChatStore } from '@/stores/useChatStore'
 import { useUserStore } from '@/stores/useUserStore'
 import type { StudentProfile } from '@/types/user'
@@ -77,12 +78,6 @@ const canGenerateReport = computed(
     chatStore.recommendReady &&
     confirmGeneration.value,
 )
-
-function formatBytes(value: number) {
-  return value < 1024 * 1024
-    ? `${Math.ceil(value / 1024)} KB`
-    : `${(value / 1024 / 1024).toFixed(1)} MB`
-}
 
 function displayFactValue(value: string | string[]) {
   return Array.isArray(value) ? value.join('、') : value

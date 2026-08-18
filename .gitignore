@@ -64,14 +64,17 @@ tmp/
 *.tmp
 
 # ===== 项目特定 =====
-# 保留 legacy/ 目录用于追溯，但不追踪其变更产生的临时文件
-legacy/__pycache__/
 
 # D1 官方目录只允许本地缓存和生成，不上传原始页面或数据集
 backend/data/catalog_d1/cache/
 backend/data/catalog_d1/generated/
 # 未获公开授权的旧导师治理记录只保留在本机；公开仓库使用 0 记录基线。
 backend/data/private_local/
+# 本地运行时治理数据与演示产物不入库（生产经 volume 挂载真实数据）
+backend/data/mentors.evidence.json
+backend/data/mentor_scores*.json
+backend/data/*.svg
+backend/data/*.png
 
 # A5 私有上传与本地测试依赖不得入库
 private_uploads/
@@ -90,5 +93,4 @@ deploy/production/image-lock.local.json
 
 # IDE 工作区（不入仓库）
 .trae/
-.zcode/
 .zcode/

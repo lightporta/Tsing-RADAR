@@ -24,8 +24,6 @@ services:
       REDIS_PORT: "6379"
       REDIS_DATABASE: "0"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      MILVUS_HOST: milvus
-      MILVUS_PORT: "19530"
       ADMIN_TOKEN_FILE: /run/secrets/admin_token
       SESSION_HMAC_SECRET_FILE: /run/secrets/session_hmac_secret
       ARTIFACT_SIGNING_SECRET_FILE: /run/secrets/artifact_signing_secret
@@ -121,15 +119,12 @@ services:
     networks:
       - prod-app
       - prod-data
-      - vector-data
       - scanner-shared
       - backend-egress
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      milvus:
         condition: service_healthy
       clamav:
         condition: service_healthy
@@ -200,8 +195,6 @@ networks:
   prod-app:
     internal: true
   prod-data:
-    internal: true
-  vector-data:
     internal: true
   scanner-shared:
     internal: true

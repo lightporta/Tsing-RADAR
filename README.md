@@ -83,7 +83,7 @@ cd backend
 
 # 配置环境变量
 cp .env.example .env
-# 本地开发可填 GLM_API_KEY（智谱）或 DEEPSEEK_API_KEY
+# 本地开发可填 GLM_API_KEY（智谱）
 # 生产部署只使用 LLM_PROVIDER + LLM_API_KEY_FILE
 
 # 安装依赖（Python 3.10+）
@@ -114,59 +114,27 @@ npm run dev
 
 🌐 浏览器访问 **http://localhost:5173**
 
-> 💡 **纯前端独立开发**：若只想调试前端，设置 `frontend/.env.development` 中 `VITE_USE_MOCK=true`，无需启动后端。
+> 💡 首次本地启动前，先复制 0 记录诚实空态种子（仓库已跟踪）：
+> `cp deploy/production/data/empty-mentor-governance.json backend/data/mentors.evidence.json`
+> 需要评分链路时同理复制 `empty-mentor-score-governance.json` 并配置 `MENTOR_SCORE_DATA_FILE`。
 
 ---
 
-### 🐳 方式二：Docker Compose 完整部署（生产推荐）
+### 🐳 方式二：生产部署（Docker Compose）
 
-> 一键拉起 PostgreSQL + Redis + Milvus + 后端 + 前端，适合生产环境。
-
-#### 1️⃣ 配置环境
-
-```bash
-cp backend/.env.example backend/.env
-# 编辑 backend/.env：
-#   本地开发可配置 GLM_API_KEY 或 DEEPSEEK_API_KEY
-#   生产环境使用 LLM_PROVIDER + LLM_API_KEY_FILE，不把 Key 写入环境变量
-#   DATABASE_URL=postgresql://tsingradar:tsingradar_dev_pwd@postgres:5432/tsingradar
-#   REDIS_URL=redis://redis:6379/0
-#   MILVUS_HOST=milvus
-```
-
-#### 2️⃣ 一键启动
+> 生产编排全部位于 `deploy/production/`（`compose.infra.yml` + `compose.prod.yml`
+> 及边缘/媒体/清小搭网关等追加 compose），完整启动、迁移、密钥与回滚流程见
+> [deploy/production/RUNBOOK.md](./deploy/production/RUNBOOK.md)。
 
 ```bash
-docker-compose up -d
+cd deploy/production
+cp production.env.example production.env   # 按 RUNBOOK 填入域名与密钥文件路径
+docker compose -f compose.infra.yml -f compose.prod.yml up -d
 ```
 
-#### 3️⃣ 数据库迁移（首次部署）
-
-```bash
-# 执行数据库迁移（创建 9 张表）
-docker-compose exec backend alembic upgrade head
-
-# 默认发布导师数据为 0 条。只有通过来源、授权、字段质量和发布审核的
-# 治理数据才能由独立发布流程导入；不要恢复旧 mentors.json。
-```
-
-#### 4️⃣ 打开应用
-
-| 服务 | 地址 |
-| :--- | :--- |
-| 🌐 **前端应用** | http://localhost |
-| 🔧 后端 API | http://localhost:8000 |
-| 📚 API 文档 | http://localhost:8000/docs |
-| 🗄️ PostgreSQL | localhost:5432 |
-| ⚡ Redis | localhost:6379 |
-| 📊 Milvus | localhost:19530 |
-
-#### 停止与清理
-
-```bash
-docker-compose down          # 停止服务（保留数据）
-# 删除数据卷属于破坏性操作，不作为常规停止步骤
-```
+数据库迁移由独立一次性任务执行（`compose.jobs.yml`），不随应用容器自动运行。
+默认发布导师数据为 0 条；只有通过来源、授权、字段质量和发布审核的治理数据
+才能由独立发布流程导入。
 
 ---
 
@@ -192,14 +160,12 @@ docker run -d -p 80:80 tsing-radar-frontend
 
 | 变量 | 必填 | 说明 | 默认值 |
 | :--- | :---: | :--- | :--- |
-| `LLM_PROVIDER` | 生产必填 | 生产模型分支：`glm` 或 `deepseek` | 空 |
+| `LLM_PROVIDER` | 生产必填 | 生产模型分支：`glm` | 空 |
 | `LLM_API_KEY_FILE` | 生产必填 | 只读密钥文件绝对路径 | 空 |
 | `GLM_API_KEY` | 仅开发 | 本地开发直连智谱 GLM；生产拒绝 | 空 |
-| `DEEPSEEK_API_KEY` | 仅开发 | 本地开发直连 DeepSeek；生产拒绝 | 空 |
 | `DATABASE_URL` | | 数据库连接 | `sqlite:///./tsing_radar.db` |
 | `REDIS_URL` | | Redis 连接（空则内存缓存） | 空 |
-| `MILVUS_HOST` | | Milvus 地址（空则 hash 向量） | 空 |
-| `ADMIN_TOKEN` | | 训练触发管理员 token | `admin` |
+| `ADMIN_TOKEN` | | 训练触发管理员 token | 空 |
 | `CORS_ORIGINS` | | CORS 白名单（逗号分隔） | 本地地址 |
 
 香港生产目标的私有 COS 使用 bucket-free SDK endpoint
@@ -209,7 +175,7 @@ Bucket 必须为 `bucketname-appid` 格式，访问身份仍只通过独立 `*_F
 密钥文件注入；应用启动门会拒绝其他区域、path-style、HTTP 或未加密配置。
 
 > ⚠️ 本地开发可使用直接环境变量或确定性 stub。生产环境必须显式配置
-> `LLM_PROVIDER=<glm|deepseek>` 与
+> `LLM_PROVIDER=glm` 与
 > `LLM_API_KEY_FILE=/run/secrets/llm_api_key`；密钥值不得进入 Compose 环境、
 > Git 或日志。未配置真实模型时只能声明本地规则模式，不能冒充真模型。
 
@@ -218,14 +184,12 @@ Bucket 必须为 `bucketname-appid` 格式，访问身份仍只通过独立 `*_F
 | 变量 | 说明 | 默认值 |
 | :--- | :--- | :--- |
 | `VITE_API_BASE` | 后端 API 地址（vite proxy 转发） | `http://localhost:8000` |
-| `VITE_USE_MOCK` | 是否使用前端 Mock 数据（独立开发） | `false` |
 
 ### 获取大模型 API Key
 
 | 模型 | 申请地址 | 用途 |
 | :--- | :--- | :--- |
-| 智谱 GLM | https://open.bigmodel.cn/ | 对话 / 向量化 / 简历打磨（主） |
-| DeepSeek | https://platform.deepseek.com/ | GLM 异常时兜底 |
+| 智谱 GLM | https://open.bigmodel.cn/ | 对话 / 向量化 / 简历打磨 |
 
 ---
 
@@ -260,8 +224,7 @@ Tsing-RADAR/
 │   │   ├── components/        # chat / advisor / charts / common / profile / recruitment
 │   │   ├── composables/       # useEChart / useResponsive / useInfiniteScroll / useRadarOption
 │   │   ├── layouts/           # PCLayout（三栏）/ MobileLayout / SubPageLayout
-│   │   ├── mock/              # 前端独立 Mock（默认诚实空数组）
-│   │   ├── router/            # Vue Router（/ /profile /recruitment）
+│   │   ├── router/            # Vue Router（/ /profile /recruitment /mentor/*）
 │   │   ├── stores/            # Pinia（chat / advisor / user）
 │   │   ├── types/             # TypeScript 类型（无 any）
 │   │   ├── utils/             # synergy / markdown / format
@@ -271,23 +234,22 @@ Tsing-RADAR/
 │
 ├── backend/                   # FastAPI 模块化后端
 │   ├── app/
-│   │   ├── api/v1/            # 10 个路由模块
+│   │   ├── api/v1/            # 25 个路由模块
 │   │   ├── core/              # config / deps
-│   │   ├── models/            # SQLAlchemy ORM（9 张表）
+│   │   ├── models/            # SQLAlchemy ORM
 │   │   ├── schemas/           # Pydantic 请求/响应模型
-│   │   ├── services/          # matching / llm / training / vectorstore
+│   │   ├── services/          # matching / llm / interview / radar_chart / mentor_* / recruitment_*
 │   │   ├── db/                # session / base / redis_client
-│   │   ├── graph/             # LangGraph 对话编排
 │   │   └── main.py            # FastAPI 入口
 │   ├── data/                  # 运行时只读挂载治理数据；仓库不内置导师记录
-│   ├── alembic/               # 数据库迁移
-│   ├── scripts/               # init_data / vectorize / crawl
-│   ├── tests/                 # pytest（23 项测试）
+│   ├── alembic/               # 数据库迁移（0001-0011 迁移链）
+│   ├── scripts/               # init_data / crawl / ingest / audit / export / 治理工具
+│   ├── tests/                 # pytest
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-├── legacy/                    # 已弃用旧实现归档；导师能力固定为空状态
-├── docker-compose.yml         # 完整基础设施编排
+├── deploy/production/         # 生产编排（compose.*.yml + 边缘网关 + RUNBOOK）
+├── scripts/                   # L1/L2/L3 发布与交接校验
 ├── Tsing-RADAR-项目开发技术文档.md
 └── README.md
 ```
@@ -323,7 +285,7 @@ popularity = 0.4×norm(论文频次) + 0.3×norm(招生帖频次) + 0.3×norm(�
 ## 🧪 测试与质量
 
 ```bash
-# 后端单元 + 集成测试（23 项）
+# 后端单元 + 集成测试
 cd backend && python -m pytest tests/ -v
 
 # 前端类型检查（TypeScript 严格模式，无 any）
@@ -354,9 +316,9 @@ cd frontend && npm run build
 | 层级 | 技术 |
 | :--- | :--- |
 | **前端** | Vue 3 · TypeScript · Vite · Element Plus · ECharts 5 · Pinia · Vue Router 4 · Axios · SCSS |
-| **后端** | FastAPI · SQLAlchemy · Alembic · Pydantic · httpx · LangGraph |
-| **基础设施** | PostgreSQL · Redis · Milvus · Docker · nginx |
-| **大模型** | 智谱 GLM · DeepSeek（生产显式单 provider；本地规则模式仅供开发） |
+| **后端** | FastAPI · SQLAlchemy · Alembic · Pydantic · httpx |
+| **基础设施** | PostgreSQL · Redis · Docker · nginx · Caddy |
+| **大模型** | 智谱 GLM（生产显式单 provider；本地规则模式仅供开发） |
 
 ---
 
@@ -379,13 +341,10 @@ provider Key；生产部署必须由只读文件提供密钥，并同时设置
 **Q4：前后端跨域报错（CORS）？**
 → 开发期由 vite proxy 自动转发，无需处理。生产期确认 nginx 的 `proxy_pass` 配置正确指向后端。
 
-**Q5：Docker 部署后 Milvus 启动失败？**
-→ Milvus 依赖 etcd 与 minio，首次启动较慢，请等待 1-2 分钟。用 `docker-compose logs milvus` 查看日志。
-
-**Q6：`alembic upgrade head` 报错？**
+**Q5：`alembic upgrade head` 报错？**
 → 确认 `DATABASE_URL` 指向的数据库已启动且凭据正确。SQLite 模式下可直接用 `init_db()` 自动建表。
 
-**Q7：端口冲突（8000/5173 被占用）？**
+**Q6：端口冲突（8000/5173 被占用）？**
 → 后端：`uvicorn ... --port 8001`；前端：修改 `vite.config.ts` 的 `server.port`。
 
 </details>
@@ -396,8 +355,8 @@ provider Key；生产部署必须由只读文件提供密钥，并同时设置
 
 - 📋 [项目开发技术文档 v2.1](./Tsing-RADAR-项目开发技术文档.md) — 完整需求规格、数据库设计、API 清单
 - 📚 API 交互文档 — 启动后端访问 `/docs`
-- 🗄️ 数据库设计 — 技术文档第 5 章（9 张表）
-- 📦 旧实现归档 — [`legacy/`](./legacy)（v1 单文件版本，可供对照）
+- 🗄️ 数据库设计 — 技术文档第 5 章
+- 🚀 生产部署手册 — [deploy/production/RUNBOOK.md](./deploy/production/RUNBOOK.md)
 
 ---
 

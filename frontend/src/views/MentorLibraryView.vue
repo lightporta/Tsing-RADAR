@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import axios from 'axios'
 import { fetchMentorDepartments, fetchMentorResources } from '@/api/advisor'
 import SubPageLayout from '@/layouts/SubPageLayout.vue'
+import { displayTime } from '@/utils/format'
 import type {
   MentorResource,
   MentorResourceMeta,
@@ -30,21 +32,35 @@ const filters = reactive<{
   pageSize: 20,
 })
 
+// 快速连续筛选/翻页时取消旧请求，避免旧响应后到会覆盖新数据
+let resourcesController: AbortController | null = null
+
 async function loadResources() {
+  resourcesController?.abort()
+  const controller = new AbortController()
+  resourcesController = controller
   loading.value = true
   try {
-    const response = await fetchMentorResources({
-      q: filters.q.trim() || undefined,
-      dept: filters.dept.trim() || undefined,
-      resource_type: filters.resourceType || undefined,
-      catalog_type: filters.catalogType || undefined,
-      page: filters.page,
-      page_size: filters.pageSize,
-    })
+    const response = await fetchMentorResources(
+      {
+        q: filters.q.trim() || undefined,
+        dept: filters.dept.trim() || undefined,
+        resource_type: filters.resourceType || undefined,
+        catalog_type: filters.catalogType || undefined,
+        page: filters.page,
+        page_size: filters.pageSize,
+      },
+      controller.signal,
+    )
     records.value = response.data
     meta.value = response.meta
+  } catch (error) {
+    // 旧请求被取消属预期行为，静默忽略；其余错误已由拦截器统一提示
+    if (!axios.isCancel(error)) throw error
   } finally {
-    loading.value = false
+    if (resourcesController === controller) {
+      loading.value = false
+    }
   }
 }
 
@@ -209,10 +225,10 @@ onMounted(async () => {
           <footer class="evidence-footer">
             <span>审核：{{ item.data_status.review_status }}</span>
             <span v-if="item.data_status.verified_at">
-              审核时间：{{ new Date(item.data_status.verified_at).toLocaleDateString() }}
+              审核时间：{{ displayTime(item.data_status.verified_at) }}
             </span>
             <span v-if="item.data_status.expires_at">
-              复核期限：{{ new Date(item.data_status.expires_at).toLocaleDateString() }}
+              复核期限：{{ displayTime(item.data_status.expires_at) }}
             </span>
             <a
               v-for="citation in visibleSources(item)"

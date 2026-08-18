@@ -23,6 +23,11 @@ from app.models.mentor_claim import MentorClaim
 from app.models.mentor_profile_edit import MentorProfileEdit
 from app.models.takedown_request import TakedownRequest
 from app.models.mentor_profile import MentorProfile
+from app.models.advisor_rating import AdvisorRating, AdvisorRatingSummary
+from app.models.recruitment_comment import (
+    RecruitmentComment,
+    RecruitmentCommentLike,
+)
 
 __all__ = [
     "Student",
@@ -47,4 +52,8 @@ __all__ = [
     "MentorProfileEdit",
     "TakedownRequest",
     "MentorProfile",
+    "AdvisorRating",
+    "AdvisorRatingSummary",
+    "RecruitmentComment",
+    "RecruitmentCommentLike",
 ]

@@ -833,6 +833,60 @@ def _report_plain_text(
     return "\n".join(lines)
 
 
+def _pdf_radar_section(outcome: MatchApplicationOutcome, styles: dict) -> list:
+    """匹配报告的雷达图节：仅为拥有已审核六维评分的候选绘制（诚实空态兜底）。"""
+    if outcome.status != "matched" or not outcome.items:
+        return []
+    from app.services.mentor_score_governance import public_score_bundles
+    from app.services.radar_chart import (
+        build_radar_series_for_advisor,
+        render_radar_drawing,
+    )
+
+    try:
+        bundles, status = public_score_bundles()
+    except Exception:  # noqa: BLE001 —— 评分数据异常时按无数据呈现，不影响报告生成
+        bundles, status = {}, {}
+    font = _ensure_pdf_font()
+    flowables = [_pdf_paragraph("导师特质雷达图（已审核评分）", styles["h1"])]
+    drawn = 0
+    for item in outcome.items[:3]:
+        advisor_id = str(item.get("advisor_id") or "")
+        if not advisor_id:
+            continue
+        series = build_radar_series_for_advisor(advisor_id, bundles)
+        if series is None:
+            continue
+        release_version = status.get("release_version")
+        sample_note = (
+            f"样本来源：已审核评分发布 v{release_version}"
+            if release_version
+            else "样本来源：已审核评分发布"
+        )
+        block = [
+            _pdf_paragraph(f"{item.get('name', advisor_id)}", styles["h2"]),
+            render_radar_drawing(
+                series=[series],
+                title="六维特质（满分 100）",
+                sample_note=sample_note,
+                font_name=font,
+            ),
+            Spacer(1, 10),
+        ]
+        flowables.append(KeepTogether(block))
+        drawn += 1
+    if drawn == 0:
+        flowables.append(
+            _pdf_callout(
+                "当前发布评分未覆盖这些候选导师，因此本报告不绘制雷达图；"
+                "评分经审核发布后会自动出现在后续报告中。",
+                styles,
+                warning=True,
+            )
+        )
+    return flowables
+
+
 def _render_match_report_pdf(
     profile: StudentPortrait,
     outcome: MatchApplicationOutcome,
@@ -919,6 +973,7 @@ def _render_match_report_pdf(
                 ),
             ]
         )
+    story.extend(_pdf_radar_section(outcome, styles))
     story.extend(
         [
             _pdf_paragraph("方法与边界", styles["h1"]),

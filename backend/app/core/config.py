@@ -2,7 +2,7 @@
 
 混合方案：
 - 开发期默认 SQLite + 内存 store，开箱即用
-- 生产期通过 .env 切换 PostgreSQL + Redis + Milvus
+- 生产期通过 .env 切换 PostgreSQL + Redis
 """
 
 from functools import lru_cache
@@ -64,10 +64,6 @@ class Settings(BaseSettings):
     REDIS_DATABASE: int = Field(default=0, ge=0, le=15)
     REDIS_PASSWORD_FILE: Optional[str] = None
 
-    # —— 向量数据库（可选；A4 默认使用透明词法回退，不伪装成 embedding）——
-    MILVUS_HOST: Optional[str] = None
-    MILVUS_PORT: int = 19530
-
     # Optional score evidence is a separate, fail-closed release from mentor
     # directory facts.  No file means the visualisation coverage gate is shut.
     MENTOR_SCORE_DATA_FILE: Optional[str] = None
@@ -111,6 +107,20 @@ class Settings(BaseSettings):
     MENTOR_CODE_RESEND_SECONDS: int = Field(default=60, ge=30, le=600)
     MENTOR_CODE_DAILY_LIMIT: int = Field(default=10, ge=3, le=50)
     MENTOR_CODE_MAX_ATTEMPTS: int = Field(default=5, ge=3, le=20)
+
+    # —— 学生评价（M1）——
+    # 同一评分主体每日提交上限（服务端确定性计数；IP 频控随 B-05 上线前补齐）
+    ADVISOR_RATING_DAILY_LIMIT: int = Field(default=5, ge=1, le=100)
+
+    # —— 招募评论区 ——
+    # 服务内确定性限频：同一评论主体每日上限 / 单帖每主体上限（超限 429）
+    COMMENT_DAILY_LIMIT: int = Field(default=10, ge=1, le=100)
+    COMMENT_PER_POST_LIMIT: int = Field(default=3, ge=1, le=20)
+    # 评论列表每父评论内嵌的回复条数
+    COMMENT_REPLY_PREVIEW_LIMIT: int = Field(default=3, ge=1, le=20)
+    # 敏感词表外置：逗号分隔内联词表 + 外部文件（每行一词），代码不硬编码词表
+    CONTENT_SENSITIVE_WORDS: str = ""
+    CONTENT_SENSITIVE_WORDS_FILE: Optional[str] = None
 
     # —— CORS ——
     CORS_ORIGINS: str = (

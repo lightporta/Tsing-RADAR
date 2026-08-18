@@ -32,17 +32,15 @@ EMPTY_MENTOR_SCORE_SHA256 = (
 )
 
 HOST_MEMORY_MIB = 7578
-DEFAULT_RESOLVED_LIMIT_MIB = 5184
+DEFAULT_RESOLVED_LIMIT_MIB = 3520
 PUBLIC_EDGE_BUDGET_MIB = 128
-DEFAULT_CAPACITY_BUDGET_MIB = 5312
+DEFAULT_CAPACITY_BUDGET_MIB = 3648
 EDGE_PLANNING_HEADROOM_MIB = HOST_MEMORY_MIB - DEFAULT_CAPACITY_BUDGET_MIB
 MIN_SUPPORTED_COMBINATION_HEADROOM_MIB = 1280
 
 SECRET_NAMES = (
     "database_password",
     "redis_password",
-    "milvus_minio_access_key",
-    "milvus_minio_secret_key",
     "admin_token",
     "session_hmac_secret",
     "artifact_signing_secret",
@@ -84,9 +82,6 @@ MUTATIONS = (
 EXPECTED_DEFAULT_SERVICES = {
     "postgres",
     "redis",
-    "etcd",
-    "milvus-minio",
-    "milvus",
     "clamav",
     "backend",
     "frontend",
@@ -464,9 +459,6 @@ def run_checks(
                 "BOOTSTRAP_SECRET_ROOT": str(bootstrap_secrets),
                 "POSTGRES_IMAGE": f"postgres@{digest}",
                 "REDIS_IMAGE": f"redis@{digest}",
-                "ETCD_IMAGE": f"etcd@{digest}",
-                "MINIO_IMAGE": f"minio@{digest}",
-                "MILVUS_IMAGE": f"milvus@{digest}",
                 "CLAMAV_IMAGE": f"clamav@{digest}",
                 "BACKEND_IMAGE": f"backend@{digest}",
                 "FRONTEND_IMAGE": f"frontend@{digest}",
@@ -475,7 +467,6 @@ def run_checks(
                 "PROD_DATABASE_NAME": "tsing_radar_prod",
                 "PROD_DATABASE_USER": "tsing_radar_prod",
                 "DATABASE_BOOTSTRAP_USER": "tsing_radar_bootstrap",
-                "MILVUS_BUCKET": "tsing-radar-milvus",
                 "PROD_COS_BUCKET": "tsing-radar-prod-1250000000",
                 "PROD_CORS_ORIGINS": "https://radar.invalid",
                 "MENTOR_SCORE_DATA_EXPECTED_SHA256": EMPTY_MENTOR_SCORE_SHA256,
@@ -592,17 +583,17 @@ def run_checks(
         )
         checks.append(
             _check(
-                "resources.default_resolved_5184_mib",
+                "resources.default_resolved_3520_mib",
                 resolved_memory == DEFAULT_RESOLVED_LIMIT_MIB,
                 "default resolved memory total differs",
             )
         )
         checks.append(
             _check(
-                "resources.capacity_budget_5312_mib",
+                "resources.capacity_budget_3648_mib",
                 resolved_memory + PUBLIC_EDGE_BUDGET_MIB
                 == DEFAULT_CAPACITY_BUDGET_MIB
-                and EDGE_PLANNING_HEADROOM_MIB == 2266,
+                and EDGE_PLANNING_HEADROOM_MIB == 3930,
                 "capacity or headroom arithmetic differs",
             )
         )
@@ -643,14 +634,12 @@ def run_checks(
         scanner_networks = set(stage_services["clamav"].get("networks", {}))
         checks.append(
             _check(
-                "isolation.stage_has_no_prod_app_or_milvus",
+                "isolation.stage_has_no_prod_app_network",
                 "prod-app" not in stage_networks
                 and "prod-data" not in stage_networks
-                and "vector-data" not in stage_networks
-                and "MILVUS_HOST" not in stage_environment
                 and "stage-app" not in prod_backend_networks
                 and stage_networks & scanner_networks == {"scanner-shared"},
-                "stage and prod application/vector networks overlap",
+                "stage and prod application networks overlap",
             )
         )
         checks.append(
@@ -700,7 +689,6 @@ def run_checks(
             for name in (
                 "database_password",
                 "redis_password",
-                "milvus_minio_secret_key",
                 "admin_token",
                 "session_hmac_secret",
                 "artifact_signing_secret",
@@ -945,24 +933,6 @@ def run_checks(
             (
                 default["services"]["redis"],
                 {"/run/secrets/redis_password": prod_secrets / "redis_password"},
-            ),
-            (
-                default["services"]["milvus-minio"],
-                {
-                    "/run/secrets/milvus_minio_access_key": prod_secrets
-                    / "milvus_minio_access_key",
-                    "/run/secrets/milvus_minio_secret_key": prod_secrets
-                    / "milvus_minio_secret_key",
-                },
-            ),
-            (
-                default["services"]["milvus"],
-                {
-                    "/run/secrets/milvus_minio_access_key": prod_secrets
-                    / "milvus_minio_access_key",
-                    "/run/secrets/milvus_minio_secret_key": prod_secrets
-                    / "milvus_minio_secret_key",
-                },
             ),
             (
                 database_setup["services"]["prod-db-provision"],

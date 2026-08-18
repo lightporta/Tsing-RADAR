@@ -58,7 +58,7 @@ export interface ResumeSubmitRequest {
   confirm_in_app_only: true
 }
 
-/** 招募项（列表用扁平结构） */
+/** 招募项（列表用扁平结构；立体化扩展字段缺省时后端不下发对应键） */
 export interface RecruitmentItem {
   recruit_id: string
   publisher_name: string
@@ -70,4 +70,11 @@ export interface RecruitmentItem {
   deadline: string
   is_urgent: boolean
   dept: string
+  location?: string
+  quota?: string
+  compensation?: string
+  duration?: string
+  apply_method?: string
+  tags?: string[]
+  advisor_id?: string
 }

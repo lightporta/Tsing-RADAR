@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '信息平台 · Tsing-RADAR' },
   },
   {
+    path: '/recruitment/:id',
+    name: 'recruitment-detail',
+    component: () => import('@/views/RecruitmentDetailView.vue'),
+    meta: { title: '招募详情 · Tsing-RADAR' },
+  },
+  {
     path: '/mentor/login',
     name: 'mentor-login',
     component: () => import('@/views/mentor/MentorLoginView.vue'),
@@ -86,7 +92,9 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/',
+    name: 'not-found',
+    component: () => import('@/views/NotFoundView.vue'),
+    meta: { title: '页面未找到 · Tsing-RADAR' },
   },
 ]
 

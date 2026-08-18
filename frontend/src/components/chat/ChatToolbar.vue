@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
+import { DArrowLeft, Clock, Plus } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/useChatStore'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
@@ -76,7 +77,7 @@ watch(confirmVisible, async (visible, wasVisible) => {
       :aria-expanded="!collapsed"
       @click="emit('toggle')"
     >
-      <el-icon aria-hidden="true">«</el-icon>
+      <el-icon aria-hidden="true"><DArrowLeft /></el-icon>
       <span class="btn-text">{{ collapsed ? '展开' : '收起' }}</span>
     </button>
     <div class="toolbar-actions">
@@ -87,11 +88,11 @@ watch(confirmVisible, async (visible, wasVisible) => {
         aria-haspopup="dialog"
         @click="historyVisible = true"
       >
-        <el-icon aria-hidden="true">◷</el-icon>
+        <el-icon aria-hidden="true"><Clock /></el-icon>
         <span class="btn-text">历史</span>
       </button>
       <button ref="newConversationButton" class="tool-btn primary" aria-label="开启新对话" @click="requestNewConversation">
-        <el-icon aria-hidden="true">＋</el-icon>
+        <el-icon aria-hidden="true"><Plus /></el-icon>
         <span class="btn-text">新对话</span>
       </button>
     </div>

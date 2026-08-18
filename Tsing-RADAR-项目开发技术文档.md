@@ -101,7 +101,7 @@
 | 隐私与安全 | 数据保密 | 严格遵守清华大学数据保密规定，学生敏感信息加密，导师未公开信息脱敏或权限控制 |
 | 响应性能 | 对话首字响应 | < 1.5s |
 | 响应性能 | 雷达图生成与渲染 | < 2s |
-| 高可用性 | LLM Fallback 机制 | GLM 服务异常时自动切换至 DeepSeek 模型 |
+| 高可用性 | LLM 超时与降级 | GLM 服务异常时按超时预算降级为本地规则模式，不伪造模型输出 |
 | 并发支持 | 并发用户数 | ≥ 500 并发用户 |
 | 可用率 | 系统可用率 | ≥ 99.5% |
 
@@ -191,9 +191,7 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 | :--- | :--- | :--- |
 | 前端表现层 | Vue 3 + TypeScript + ECharts | 响应式卡片列表、雷达图/散点图可视化 |
 | 业务逻辑层 | Python / FastAPI | 异步高性能 API 服务 |
-| 对话编排层 | LangChain + LangGraph | 多轮对话状态管理与 Agent 编排 |
-| 大模型层 | 智谱 GLM 系列 + DeepSeek 系列 | 语义分析、匹配推理、自然语言生成 |
-| 向量数据库 | Milvus / Qdrant | 导师研究方向向量索引与检索 |
+| 大模型层 | 智谱 GLM 系列 | 语义分析、匹配推理、自然语言生成（单 provider，文件型密钥） |
 | 关系数据库 | PostgreSQL | 学生、导师、业务流程结构化数据存储 |
 | 缓存层 | Redis | 对话上下文缓存、推荐结果缓存 |
 | 数据采集层 | Scrapy + Playwright | 师资页面抓取、个人主页信息采集 |
@@ -312,7 +310,7 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 
 ## 5. 数据库设计 (Database Design)
 
-采用关系型数据库（PostgreSQL/MySQL）结合向量数据库（Milvus/Qdrant）的混合存储方案，关系库存储结构化业务数据，向量库存储文本向量化索引。
+采用关系型数据库（PostgreSQL；本地开发默认 SQLite）存储结构化业务数据，匹配主链路为确定性词法召回与六维雷达多边形重合度计算。
 
 ### 5.1 核心基础数据表
 
@@ -448,7 +446,7 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 }
 ```
 
-- 说明：支持流式输出，用于对话问答、问卷生成、简历打磨、推荐理由生成等场景；GLM 异常时自动降级为 DeepSeek 系列模型。
+- 说明：支持流式输出，用于对话问答、问卷生成、简历打磨、推荐理由生成等场景；生产环境固定单 provider（智谱 GLM），密钥经只读文件注入。
 
 #### 6.1.2 向量嵌入接口
 
@@ -510,7 +508,7 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 
 - **宿主平台**：清华大学"清小搭"智能体广场（基于校园私有云/容器云）
 - **运行环境**：Python 3.10+, Node.js 18+（前端）, Docker
-- **基座模型**：智谱 GLM-5 系列 / DeepSeek-V4 系列（通过"清小搭"统一 API 网关调用）
+- **基座模型**：智谱 GLM 系列（生产经 `LLM_PROVIDER=glm` + 只读密钥文件注入）
 
 ### 8.2 部署步骤
 
@@ -520,10 +518,10 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 
 ```env
 APP_KEY=qingxiaoda-assigned-key
-LLM_API_TOKEN=token-from-gateway
+LLM_PROVIDER=glm
+LLM_API_KEY_FILE=/run/secrets/llm_api_key
 DATABASE_URL=postgresql://tsingradar:***@db:5432/tsingradar
 REDIS_URL=redis://redis:6379/0
-MILVUS_HOST=vector-db
 SMTP_HOST=smtp.tsinghua.edu.cn
 ```
 
@@ -538,11 +536,11 @@ python scripts/init_data.py
 
 #### 步骤三：知识库预热
 
-运行爬虫与向量化脚本，预加载全校核心院系导师公开信息：
+运行师资采集与治理导入脚本，预加载全校核心院系导师公开信息（默认发布 0 条，须通过发布审核流程导入）：
 
 ```bash
 python scripts/crawl_faculty.py --all-departments
-python scripts/vectorize_advisors.py
+python scripts/ingest_tsinghua_catalogs.py
 ```
 
 #### 步骤四：服务注册

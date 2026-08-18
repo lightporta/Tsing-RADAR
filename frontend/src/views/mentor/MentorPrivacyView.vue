@@ -11,6 +11,7 @@ import {
 } from '@/api/mentor'
 import type { MentorPrivacyStatus, MentorTakedownRecord } from '@/types/mentor'
 import { REVIEW_STATUS_LABELS, VISIBILITY_FIELD_META } from '@/types/mentor'
+import { displayTime } from '@/utils/format'
 
 // =====================================================================
 // 隐私控制页：字段展示策略（即时生效，仅导师端/管理端展示层）
@@ -90,10 +91,6 @@ async function submitTakedown() {
   } finally {
     submitting.value = false
   }
-}
-
-function displayTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
 }
 
 onMounted(() => {

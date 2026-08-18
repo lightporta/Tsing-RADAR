@@ -33,9 +33,6 @@ def test_l3_slot_set_is_exact_and_vendor_delivery_is_digest_pull():
     assert [item["slot"] for item in B.SLOT_SPECS] == [
         "POSTGRES_IMAGE",
         "REDIS_IMAGE",
-        "ETCD_IMAGE",
-        "MINIO_IMAGE",
-        "MILVUS_IMAGE",
         "CLAMAV_IMAGE",
         "BACKEND_IMAGE",
         "FRONTEND_IMAGE",
@@ -136,13 +133,14 @@ def test_oci_descriptor_size_and_digest_tamper_fail(tmp_path: Path, mutation: st
     bundle = C.synthetic_bundle(tmp_path)
     lock_path = bundle / "image-lock.json"
     lock = json.loads(lock_path.read_bytes())
+    slot = next(item for item in lock["slots"] if item["role"] == "backend")
     if mutation == "index_size":
-        lock["slots"][6]["index"]["size"] += 1
+        slot["index"]["size"] += 1
     elif mutation == "config_size":
-        lock["slots"][6]["config"]["size"] += 1
+        slot["config"]["size"] += 1
     else:
-        lock["slots"][6]["manifest"]["digest"] = "sha256:" + "0" * 64
-        lock["slots"][6]["compose_reference"] = (
+        slot["manifest"]["digest"] = "sha256:" + "0" * 64
+        slot["compose_reference"] = (
             "tsing-radar-offline/backend@sha256:" + "0" * 64
         )
     lock_path.write_bytes(B.canonical_json_bytes(lock))

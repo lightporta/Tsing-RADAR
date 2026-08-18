@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from app.db.session import SessionLocal
-from app.graph import GraphState, questionnaire_node
 from app.main import app
 from app.models.questionnaire_session import QuestionnaireSession
 from app.models.identity import ExternalIdentity, IdentitySession
@@ -458,22 +457,6 @@ def test_incomplete_profile_cannot_be_confirmed():
     )
     assert response.status_code == 409
     assert "尚未完成" in response.json()["detail"]
-
-
-def test_graph_compatibility_layer_cannot_bypass_confirmation_by_turn_count():
-    state = GraphState(
-        messages=[
-            {"role": "user", "content": "推荐"}
-            for _ in range(10)
-        ],
-        portrait={},
-        interview_status="in_progress",
-        recommend_ready=True,
-        matched_advisors=[],
-    )
-    assert questionnaire_node(state)["recommend_ready"] is False
-    state["interview_status"] = "confirmed"
-    assert questionnaire_node(state)["recommend_ready"] is True
 
 
 def test_internal_sse_returns_persisted_structured_state():

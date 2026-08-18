@@ -2,10 +2,13 @@
 import { computed } from 'vue'
 import type { MatchedAdvisor } from '@/types/advisor'
 import { TRAITS } from '@/types/advisor'
+import { displayTime } from '@/utils/format'
+import RatingPanel from './RatingPanel.vue'
+import RatingSummary from './RatingSummary.vue'
 
 // =====================================================================
 // 导师详情面板（卡片展开后显示，文档 §3.4 / §4.3.1）
-// 展示：六维特质明细 / 在研项目 / 招募信息 / 联系方式
+// 展示：六维特质明细 / 学生评价（M1）/ 在研项目 / 招募信息 / 联系方式
 // =====================================================================
 
 const props = defineProps<{ advisor: MatchedAdvisor }>()
@@ -44,7 +47,7 @@ const projects = computed(() => props.advisor.projects || [])
               来源
             </a>
             <span v-else>{{ citation.citation }}</span>
-            · {{ new Date(citation.captured_at).toLocaleDateString() }}
+            · {{ displayTime(citation.captured_at) }}
             · {{ (citation.confidence * 100).toFixed(0) }}%
           </span>
         </li>
@@ -75,6 +78,16 @@ const projects = computed(() => props.advisor.projects || [])
           <p class="trait-desc">{{ row.desc }}</p>
         </div>
       </div>
+    </div>
+
+    <!-- 学生评价（M1）：聚合摘要 + 匿名评分面板 -->
+    <div class="section">
+      <h4 class="section-title">🧑‍🎓 学生评价</h4>
+      <RatingSummary :advisor-id="advisor.advisor_id" />
+    </div>
+    <div class="section">
+      <h4 class="section-title">✍️ 我要评价（匿名）</h4>
+      <RatingPanel :advisor-id="advisor.advisor_id" />
     </div>
 
     <!-- 在研项目 -->

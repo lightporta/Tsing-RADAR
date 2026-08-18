@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, timedelta
 
 from app.db.session import SessionLocal
@@ -15,6 +16,11 @@ from tests.mentor_helpers import (
 )
 
 EMAIL = "mentor01@tsinghua.edu.cn"
+
+
+def _idem(headers: dict[str, str]) -> dict[str, str]:
+    """B-08：导师端写端点与学生侧对齐，强制 Idempotency-Key。"""
+    return {**headers, "Idempotency-Key": f"mentor-recruit:{uuid.uuid4()}"}
 
 
 def _payload(**overrides):
@@ -38,7 +44,7 @@ def test_mentor_publishes_then_review_makes_it_publicly_visible(
     auto_claim(client, headers)
 
     response = client.post(
-        "/api/mentor/recruitments", headers=headers, json=_payload()
+        "/api/mentor/recruitments", headers=_idem(headers), json=_payload()
     )
     assert response.status_code == 200, response.text
     recruit_id = response.json()["recruit_id"]
@@ -72,20 +78,20 @@ def test_mentor_updates_resubmits_and_withdraws(mentor_dataset, caplog):
     auto_claim(client, headers)
 
     response = client.post(
-        "/api/mentor/recruitments", headers=headers, json=_payload()
+        "/api/mentor/recruitments", headers=_idem(headers), json=_payload()
     )
     recruit_id = response.json()["recruit_id"]
 
     response = client.patch(
         f"/api/mentor/recruitments/{recruit_id}",
-        headers=headers,
+        headers=_idem(headers),
         json={**_payload(title="招收 2027 级博士生（更新）"), "submit_for_review": True},
     )
     assert response.status_code == 200
     assert response.json()["updated"] is True
 
     response = client.delete(
-        f"/api/mentor/recruitments/{recruit_id}", headers=headers
+        f"/api/mentor/recruitments/{recruit_id}", headers=_idem(headers)
     )
     assert response.status_code == 200
     assert response.json()["status"] == "withdrawn"
@@ -99,14 +105,14 @@ def test_mentor_cannot_touch_other_publishers_recruitment(mentor_dataset, caplog
     mentor_login(client_a, headers_a, caplog, email=EMAIL)
     auto_claim(client_a, headers_a)
     response = client_a.post(
-        "/api/mentor/recruitments", headers=headers_a, json=_payload()
+        "/api/mentor/recruitments", headers=_idem(headers_a), json=_payload()
     )
     recruit_id = response.json()["recruit_id"]
 
     client_b, headers_b = mentor_web_client()
     mentor_login(client_b, headers_b, caplog, email="mentor02@tsinghua.edu.cn")
     response = client_b.delete(
-        f"/api/mentor/recruitments/{recruit_id}", headers=headers_b
+        f"/api/mentor/recruitments/{recruit_id}", headers=_idem(headers_b)
     )
     assert response.status_code == 403
 

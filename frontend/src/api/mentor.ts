@@ -103,26 +103,33 @@ export function fetchMyMentorRecruitments() {
   return get<{ data: MentorRecruitmentItem[] }>('/api/mentor/recruitments')
 }
 
-export function publishMentorRecruitment(req: RecruitmentFormData) {
+export function publishMentorRecruitment(
+  req: RecruitmentFormData,
+  idempotencyKey: string,
+) {
   return post<{ recruit_id: string; status: string; publication_status: string }>(
     '/api/mentor/recruitments',
     req,
+    { headers: { 'Idempotency-Key': idempotencyKey } },
   )
 }
 
 export function updateMentorRecruitment(
   recruitId: string,
   req: RecruitmentFormData,
+  idempotencyKey: string,
 ) {
   return patch<{ recruit_id: string; status: string; publication_status: string }>(
     `/api/mentor/recruitments/${recruitId}`,
     { ...req, submit_for_review: true },
+    { headers: { 'Idempotency-Key': idempotencyKey } },
   )
 }
 
-export function withdrawMentorRecruitment(recruitId: string) {
+export function withdrawMentorRecruitment(recruitId: string, idempotencyKey: string) {
   return remove<{ status: 'withdrawn'; recruit_id: string }>(
     `/api/mentor/recruitments/${recruitId}`,
+    { headers: { 'Idempotency-Key': idempotencyKey } },
   )
 }
 

@@ -122,8 +122,6 @@ services:
       QXD_ATTACHMENTS_ENABLED: "false"
       PUBLIC_BASE_URL: ""
       CORS_ORIGINS: ${STAGE_CORS_ORIGINS:?Set exact stage CORS origins}
-      # No MILVUS_HOST: deterministic lexical fallback is mandatory until an
-      # isolated stage Milvus or verified server-side RBAC is provided.
     entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]

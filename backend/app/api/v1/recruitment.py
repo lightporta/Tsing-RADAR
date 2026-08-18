@@ -20,42 +20,21 @@ from app.schemas.recruitment import (
     RecruitmentCreateRequest,
     RecruitmentUpdateRequest,
 )
-from app.services.data_loader import load_mentors
 from app.services.idempotency import (
     begin_idempotency,
     complete_idempotency,
     fail_idempotency,
 )
 from app.services.identity import Principal
+from app.services.content_moderation import assert_apply_method_allowed
+from app.services.recruitment_public import (
+    advisor_brief,
+    get_public_recruitment,
+    list_public_recruitments,
+)
 
 router = APIRouter()
 PROJECT_TIMEZONE = ZoneInfo("Asia/Shanghai")
-
-
-def _deadline_is_past(value: object, *, today: date) -> bool:
-    try:
-        deadline = value if isinstance(value, date) else date.fromisoformat(str(value))
-    except (TypeError, ValueError):
-        return False
-    return deadline < today
-
-
-def _public_record(record: Recruitment) -> dict:
-    """数据库投稿只有审核发布后才调用；不暴露内部主体或 provenance。"""
-    return {
-        "recruit_id": record.recruit_id,
-        "publisher_name": "经审核发布者",
-        "publisher_type": record.publisher_type,
-        "type": record.type,
-        "title": record.title,
-        "req": record.req,
-        "major": record.major,
-        "deadline": record.deadline,
-        "is_urgent": record.is_urgent,
-        "dept": "",
-        "review_status": record.review_status,
-        "publication_status": record.publication_status,
-    }
 
 
 def _last_review_reason(record: Recruitment) -> str | None:
@@ -79,7 +58,7 @@ def _owner_record(db: Session, recruit_id: str, subject_id: str) -> Recruitment:
 
 
 def _mine_record(record: Recruitment) -> dict:
-    return {
+    data = {
         "recruit_id": record.recruit_id,
         "type": record.type,
         "title": record.title,
@@ -93,6 +72,18 @@ def _mine_record(record: Recruitment) -> dict:
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "updated_at": record.updated_at.isoformat() if record.updated_at else None,
     }
+    # 立体化扩展字段（作者视角全量返回，含 None 值便于编辑回填）
+    for field in (
+        "location",
+        "quota",
+        "compensation",
+        "duration",
+        "apply_method",
+        "tags",
+        "advisor_id",
+    ):
+        data[field] = getattr(record, field, None)
+    return data
 
 
 def _submission_values(request: RecruitmentCreateRequest) -> dict:
@@ -103,6 +94,13 @@ def _submission_values(request: RecruitmentCreateRequest) -> dict:
         "major": request.major,
         "deadline": request.deadline.isoformat(),
         "is_urgent": request.is_urgent,
+        "location": request.location,
+        "quota": request.quota,
+        "compensation": request.compensation,
+        "duration": request.duration,
+        "apply_method": request.apply_method,
+        "tags": request.tags,
+        "advisor_id": request.advisor_id,
     }
 
 
@@ -116,37 +114,18 @@ def _assert_current_deadline(deadline: date) -> datetime:
 @router.get("/recruitments")
 def list_recruitments(
     urgent: Optional[bool] = None,
+    tag: Optional[str] = None,
+    advisor_id: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    result = []
-    now = datetime.now(PROJECT_TIMEZONE)
-    for mentor in load_mentors():
-        for recruitment in mentor.get("recruitments", []) or []:
-            if _deadline_is_past(recruitment.get("deadline"), today=now.date()):
-                continue
-            if urgent is True and not recruitment.get("is_urgent", False):
-                continue
-            result.append(recruitment)
-    published_db = (
-        db.query(Recruitment)
-        .filter(
-            Recruitment.review_status == "verified",
-            Recruitment.publication_status == "published",
-            Recruitment.takedown_at.is_(None),
-        )
-        .all()
-    )
-    for record in published_db:
-        if _deadline_is_past(record.deadline, today=now.date()):
-            continue
-        if urgent is True and not record.is_urgent:
-            continue
-        result.append(_public_record(record))
-    withheld = (
-        db.query(Recruitment)
-        .filter(Recruitment.publication_status != "published")
-        .count()
-    )
+    result, withheld = list_public_recruitments(db, urgent_only=urgent is True)
+    # 可选筛选在公开口径之上叠加收窄，不改变既有过滤语义
+    if tag:
+        result = [item for item in result if tag in (item.get("tags") or [])]
+    if advisor_id:
+        result = [
+            item for item in result if item.get("advisor_id") == advisor_id
+        ]
     return {
         "data": result,
         "meta": {
@@ -174,6 +153,49 @@ def list_my_recruitments(
     return {"data": [_mine_record(item) for item in records]}
 
 
+def _related_recruitments(db: Session, current: dict) -> list[dict]:
+    """相关招募：同标签优先、同专业板块次之，取前 3 条（公开口径内）。"""
+    records, _ = list_public_recruitments(db)
+    current_tags = set(current.get("tags") or [])
+
+    def _score(item: dict) -> int | None:
+        if item.get("recruit_id") == current.get("recruit_id"):
+            return None
+        score = 2 * len(current_tags & set(item.get("tags") or []))
+        if item.get("major") and item.get("major") == current.get("major"):
+            score += 1
+        return score
+
+    scored = [
+        (score, item)
+        for item in records
+        if (score := _score(item)) is not None
+    ]
+    scored.sort(key=lambda pair: (-pair[0], str(pair[1].get("deadline") or "")))
+    return [item for _, item in scored[:3]]
+
+
+@router.get("/recruitments/{recruit_id}")
+def get_recruitment_detail(
+    recruit_id: str,
+    db: Session = Depends(get_db),
+):
+    """公开招募详情：与列表同一过滤口径（未过审/下架/过期一律 404）。"""
+    record = get_public_recruitment(db, recruit_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="招募不存在或未公开")
+    advisor = None
+    if record.get("advisor_id"):
+        advisor = advisor_brief(str(record["advisor_id"]))
+    return {
+        "data": {
+            **record,
+            "advisor": advisor,
+            "related": _related_recruitments(db, record),
+        }
+    }
+
+
 @router.post("/recruitments")
 def publish_recruitment(
     request: RecruitmentCreateRequest,
@@ -182,6 +204,7 @@ def publish_recruitment(
     idempotency_key: str = Depends(get_idempotency_key),
 ):
     now = _assert_current_deadline(request.deadline)
+    assert_apply_method_allowed(request.apply_method)
     payload = _submission_values(request)
     claim = begin_idempotency(
         db,
@@ -249,6 +272,7 @@ def update_and_resubmit_recruitment(
 ):
     _owner_record(db, recruit_id, principal.subject_id)
     now = _assert_current_deadline(request.deadline)
+    assert_apply_method_allowed(request.apply_method)
     payload = {"recruit_id": recruit_id, **_submission_values(request)}
     claim = begin_idempotency(
         db,
@@ -278,6 +302,13 @@ def update_and_resubmit_recruitment(
         record.major = request.major
         record.deadline = request.deadline
         record.is_urgent = request.is_urgent
+        record.location = request.location
+        record.quota = request.quota
+        record.compensation = request.compensation
+        record.duration = request.duration
+        record.apply_method = request.apply_method
+        record.tags = request.tags
+        record.advisor_id = request.advisor_id
         record.expires_at = datetime.combine(request.deadline, time.max, tzinfo=PROJECT_TIMEZONE)
         record.review_status = "pending_review"
         record.publication_status = "restricted"

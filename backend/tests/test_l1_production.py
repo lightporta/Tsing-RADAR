@@ -324,7 +324,7 @@ def test_default_artifacts_do_not_mount_or_route_qxd_or_media():
 
 def test_stage_has_no_prod_milvus_or_prod_application_network_contract():
     stage = (DEPLOY / "compose.stage.yml").read_text(encoding="utf-8")
-    assert "No MILVUS_HOST" in stage
+    assert "MILVUS" not in stage
     assert "vector-data" not in stage
     assert "prod-app" not in stage
     assert "${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/redis_password" in stage
@@ -689,16 +689,16 @@ def test_l1_artifact_checker_passes_with_dummy_secrets_only():
     assert report["mode"] == "offline_dummy_secrets_only"
     assert report["resource_budget"] == {
         "host_memory_mib": 7578,
-        "default_resolved_limit_mib": 5184,
+        "default_resolved_limit_mib": 3520,
         "public_edge_capacity_reserve_mib": 128,
-        "default_capacity_budget_mib": 5312,
-        "default_non_swap_headroom_mib": 2394,
-        "edge_planning_non_swap_headroom_mib": 2266,
+        "default_capacity_budget_mib": 3648,
+        "default_non_swap_headroom_mib": 4058,
+        "edge_planning_non_swap_headroom_mib": 3930,
         "minimum_supported_combination_headroom_mib": 1280,
     }
     matrix = {item["name"]: item for item in report["resource_matrix"]}
-    assert matrix["restore-check"]["resolved_limit_mib"] == 6080
-    assert matrix["restore-check"]["non_swap_headroom_mib"] == 1498
+    assert matrix["restore-check"]["resolved_limit_mib"] == 4416
+    assert matrix["restore-check"]["non_swap_headroom_mib"] == 3162
     assert matrix["prod-stage"]["allowed"] is False
     assert report["real_credentials_used"] is False
     assert report["cloud_changes_performed"] is False

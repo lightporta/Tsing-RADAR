@@ -119,6 +119,14 @@ export interface MentorRecruitmentItem {
   review_reason?: string | null
   created_at?: string | null
   updated_at?: string | null
+  // 立体化扩展（全部选填）
+  location?: string | null
+  quota?: string | null
+  compensation?: string | null
+  duration?: string | null
+  apply_method?: string | null
+  tags?: string[] | null
+  advisor_id?: string | null
 }
 
 /** 隐私状态（GET /api/mentor/privacy） */

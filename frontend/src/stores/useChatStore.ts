@@ -20,7 +20,6 @@ import {
   editInterviewProfile,
   retryInterviewEnhancement as retryInterviewEnhancementApi,
 } from '@/api/interview'
-import * as mockApi from '@/mock'
 import {
   CHAT_HISTORY_STORAGE_KEY,
   readVersionedLocalData,
@@ -33,7 +32,6 @@ import {
 // 对话消息 / 会话状态 / 流式输出
 // =====================================================================
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 const MAX_LOCAL_SESSIONS = 20
 const LEGACY_ENHANCEMENT_NOTICE = '_提示：GLM 增强回复本轮不可用，结构化访谈仍已正常继续。_'
 
@@ -339,22 +337,6 @@ export const useChatStore = defineStore('chat', () => {
       .filter((m) => m.id !== assistantMsg.id)
       .map((m) => ({ role: m.role, content: m.content }))
 
-    // Mock 模式：本地模拟流式
-    if (USE_MOCK) {
-      const reply = mockApi.mockChatReply(content, userTurns.value)
-      await mockStream(reply, (delta) => {
-        assistantMsg.content += delta
-      })
-      assistantMsg.content = assistantMsg.content.trim()
-      assistantMsg.content +=
-        '\n\n_持久化访谈与画像确认在 Mock 模式下不可用，请连接后端进行 A3 流程。_'
-      recommendReady.value = false
-      needsConfirmation.value = false
-      assistantMsg.streaming = false
-      streaming.value = false
-      return
-    }
-
     // 真实 SSE 流式
     controller = streamChat(
       { messages: payloadMessages, session_id: sessionId.value },
@@ -615,12 +597,3 @@ export const useChatStore = defineStore('chat', () => {
     newConversation,
   }
 })
-
-/** Mock 流式输出：模拟逐字显示 */
-async function mockStream(text: string, onDelta: (delta: string) => void) {
-  const chunks = text.match(/.{1,4}/g) || [text]
-  for (const chunk of chunks) {
-    onDelta(chunk)
-    await new Promise((r) => setTimeout(r, 20))
-  }
-}

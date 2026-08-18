@@ -8,6 +8,7 @@ import StatusChip from '@/components/mentor/StatusChip.vue'
 import { fetchMentorClaimEligible, fetchMentorClaimHistory } from '@/api/mentor'
 import type { MentorCandidate, MentorClaimRecord } from '@/types/mentor'
 import { REVIEW_STATUS_LABELS } from '@/types/mentor'
+import { displayTime } from '@/utils/format'
 
 // =====================================================================
 // 档案认领页：搜索公开候选 → 认领。
@@ -64,10 +65,6 @@ async function loadClaims() {
   } finally {
     claimsLoading.value = false
   }
-}
-
-function displayTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
 }
 
 onMounted(loadClaims)

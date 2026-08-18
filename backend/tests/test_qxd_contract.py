@@ -8,6 +8,7 @@ import hmac
 import logging
 import threading
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +20,10 @@ from app.db.session import SessionLocal
 from app.models.questionnaire_session import QuestionnaireSession
 from app.models.identity import ExternalIdentity
 from app.schemas.qxd import SodaAttachment
+from app.services.artifact_delivery import issue_radar_chart_token
+from app.services.match_application import MatchApplicationOutcome
 from app.services.qxd_media import FetchedMedia
+from app.services.radar_chart import ADVISOR_TRAIT_COLOR, RadarSeries
 
 client = TestClient(app)
 AUTH = {"Authorization": "Bearer test-qxd-key"}
@@ -845,3 +849,376 @@ def test_file_id_is_accepted_without_url_fetch(monkeypatch):
         },
     )
     assert response.status_code == 200
+
+
+def _qxd_session_id_from_session_id(claim: str, gateway_session_id: str) -> str:
+    """按网关 sessionId 派生持久访谈会话键（与 chat.py 的 uuid5 规则一致）。"""
+    fingerprint = hmac.new(
+        QXD_CLAIM_SECRET.encode(),
+        f"identity-map:{claim}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    with SessionLocal() as db:
+        mapping = (
+            db.query(ExternalIdentity)
+            .filter(ExternalIdentity.claim_fingerprint == fingerprint)
+            .one()
+        )
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            (
+                "tsing-radar:qxd-session:"
+                f"{mapping.subject_id}:{gateway_session_id}"
+            ),
+        )
+    )
+
+
+def _user_turn_count(session_id: str) -> int:
+    with SessionLocal() as db:
+        session = db.get(QuestionnaireSession, session_id)
+        assert session is not None
+        return sum(
+            1 for item in (session.messages or []) if item.get("role") == "user"
+        )
+
+
+def test_qxd_session_id_continues_same_conversation_across_requests():
+    claim = f"qxd-sid-continue-{uuid.uuid4()}"
+    headers = _qxd_headers(claim)
+    gateway_session = f"gw-{uuid.uuid4().hex[:16]}"
+
+    first = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "sessionId": gateway_session,
+            "messages": [{"role": "user", "content": "自然语言处理"}],
+        },
+    )
+    assert first.status_code == 200
+    assert "工程与落地" in first.json()["choices"][0]["message"]["content"]
+
+    # 平台每轮回传全量历史；相同 sessionId 必须命中同一会话并推进。
+    second = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "sessionId": gateway_session,
+            "messages": [
+                {"role": "user", "content": "自然语言处理"},
+                {"role": "user", "content": "工程落地"},
+            ],
+        },
+    )
+    assert second.status_code == 200
+    second_content = second.json()["choices"][0]["message"]["content"]
+    assert "高频具体指导" in second_content
+
+    session_id = _qxd_session_id_from_session_id(claim, gateway_session)
+    assert _user_turn_count(session_id) == 2
+
+
+def test_qxd_session_id_isolates_conversations_between_ids_and_subjects():
+    claim_a = f"qxd-sid-iso-a-{uuid.uuid4()}"
+    claim_b = f"qxd-sid-iso-b-{uuid.uuid4()}"
+    session_one = f"gw-one-{uuid.uuid4().hex[:12]}"
+    session_two = f"gw-two-{uuid.uuid4().hex[:12]}"
+
+    advanced = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim_a),
+        json={
+            "sessionId": session_one,
+            "messages": [
+                {"role": "user", "content": "自然语言处理"},
+                {"role": "user", "content": "工程落地"},
+            ],
+        },
+    )
+    assert advanced.status_code == 200
+    assert "高频具体指导" in advanced.json()["choices"][0]["message"]["content"]
+
+    # 同用户、不同 sessionId：新会话从头开始，不透出旧会话进度。
+    fresh_same_user = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim_a),
+        json={
+            "sessionId": session_two,
+            "messages": [{"role": "user", "content": "自然语言处理"}],
+        },
+    )
+    assert fresh_same_user.status_code == 200
+    fresh_same_user_content = fresh_same_user.json()["choices"][0]["message"][
+        "content"
+    ]
+    assert "工程与落地" in fresh_same_user_content
+    assert "高频具体指导" not in fresh_same_user_content
+
+    # 不同用户、相同 sessionId：会话键与主体绑定，互不串扰。
+    fresh_other_user = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim_b),
+        json={
+            "sessionId": session_one,
+            "messages": [{"role": "user", "content": "自然语言处理"}],
+        },
+    )
+    assert fresh_other_user.status_code == 200
+    fresh_other_user_content = fresh_other_user.json()["choices"][0]["message"][
+        "content"
+    ]
+    assert "工程与落地" in fresh_other_user_content
+    assert "高频具体指导" not in fresh_other_user_content
+
+    key_a1 = _qxd_session_id_from_session_id(claim_a, session_one)
+    key_a2 = _qxd_session_id_from_session_id(claim_a, session_two)
+    key_b1 = _qxd_session_id_from_session_id(claim_b, session_one)
+    assert len({key_a1, key_a2, key_b1}) == 3
+    assert _user_turn_count(key_a1) == 2
+    assert _user_turn_count(key_a2) == 1
+    assert _user_turn_count(key_b1) == 1
+
+
+@pytest.mark.parametrize(
+    "bad_session_id",
+    ["含 空格的会话", "中文会话编号", "   ", "id with spaces"],
+)
+def test_qxd_malformed_session_id_is_treated_as_missing(bad_session_id):
+    claim = f"qxd-sid-bad-{uuid.uuid4()}"
+    conversation = f"conv-{uuid.uuid4().hex[:12]}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={
+            "user": conversation,
+            "sessionId": bad_session_id,
+            "messages": [{"role": "user", "content": "自然语言处理"}],
+        },
+    )
+    assert response.status_code == 200
+    assert "工程与落地" in response.json()["choices"][0]["message"]["content"]
+    # 非法 sessionId 按缺失处理：回退到 user 字段派生的访谈会话键。
+    fallback_session_id = _qxd_session_id(claim, conversation)
+    assert _user_turn_count(fallback_session_id) == 1
+
+
+def test_stream_reasoning_frames_precede_content_and_nonstream_omits_reasoning(
+    monkeypatch,
+):
+    async def fake_reply(_request, _principal):
+        return qxd_chat.AgentReply(
+            content="带思考过程的回答",
+            reasoning=("正在检索匹配导师…", "正在核实证据与置信度…"),
+        )
+
+    monkeypatch.setattr(qxd_chat, "generate_agent_reply", fake_reply)
+    streamed = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={
+            "messages": [{"role": "user", "content": "你好"}],
+            "stream": True,
+        },
+    )
+    assert streamed.status_code == 200
+    data_lines = [
+        line.removeprefix("data:").strip()
+        for line in streamed.text.splitlines()
+        if line.startswith("data:")
+    ]
+    assert data_lines[-1] == "[DONE]"
+    frames = [json.loads(line) for line in data_lines[:-1]]
+
+    kinds = []
+    for frame in frames:
+        if frame["choices"][0]["finish_reason"] is not None:
+            kinds.append("stop")
+            continue
+        delta = frame["choices"][0]["delta"]
+        if delta.get("role") == "assistant":
+            kinds.append("role")
+        elif "reasoning" in delta:
+            kinds.append("reasoning")
+        elif "content" in delta:
+            kinds.append("content")
+    assert kinds[0] == "role"
+    reasoning_at = [index for index, kind in enumerate(kinds) if kind == "reasoning"]
+    assert len(reasoning_at) == 2
+    content_at = [index for index, kind in enumerate(kinds) if kind == "content"]
+    assert content_at and min(content_at) > max(reasoning_at)
+    assert kinds[-1] == "stop"
+    assert frames[-1]["choices"][0]["delta"] == {}
+    assert frames[-1]["usage"] == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    non_stream = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={
+            "messages": [{"role": "user", "content": "你好"}],
+            "stream": False,
+        },
+    )
+    assert non_stream.status_code == 200
+    assert "reasoning" not in non_stream.text
+
+
+def _matched_outcome() -> MatchApplicationOutcome:
+    return MatchApplicationOutcome(
+        status="matched",
+        items=[
+            {
+                "advisor_id": "T00001",
+                "name": "测试导师",
+                "dept": "自动化系",
+                "score": 87.25,
+                "fit_score": 91.5,
+                "evidence_coverage": 0.75,
+                "evidence_confidence": 0.8,
+                "explanation": {
+                    "supporting_evidence": [
+                        {
+                            "statement": "近三年在 NLP 顶会发表论文 12 篇",
+                            "citations": [{"citation": "导师主页·2025"}],
+                        },
+                    ],
+                    "counter_evidence": [],
+                    "uncertainties": [],
+                    "questions_to_verify": [],
+                },
+            }
+        ],
+        meta={},
+        message="基于已确认画像找到 1 个证据化候选。",
+        questions=[],
+    )
+
+
+def _patch_recommend_ready(monkeypatch, outcome: MatchApplicationOutcome) -> None:
+    """把对话主链路桩到 recommend_ready 状态，专注断言意图分支行为。"""
+    monkeypatch.setattr(
+        qxd_chat, "sync_user_transcript", lambda *_args, **_kwargs: object()
+    )
+    monkeypatch.setattr(
+        qxd_chat,
+        "state_response",
+        lambda _session: SimpleNamespace(
+            recommend_ready=True,
+            assistant_message="画像已确认。",
+        ),
+    )
+    monkeypatch.setattr(
+        qxd_chat, "run_confirmed_match", lambda *_args, **_kwargs: outcome
+    )
+    monkeypatch.setattr(
+        qxd_chat, "confirmed_portrait", lambda *_args, **_kwargs: None
+    )
+
+
+def test_qxd_recruitment_intent_honest_empty_state(monkeypatch):
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    claim = f"qxd-recruit-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "有招募信息吗"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    assert "暂无通过审核" in content
+    assert "https://www.tsingradar.com.cn/recruitment" in content
+    assert "x_soda" not in payload
+
+
+def test_qxd_radar_intent_without_approved_scores_is_honest_and_attachmentless(
+    monkeypatch,
+):
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    monkeypatch.setattr(qxd_chat, "public_score_bundles", lambda: ({}, {}))
+    claim = f"qxd-radar-empty-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "雷达图"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    assert "暂无候选导师的已审核六维评分" in content
+    assert "x_soda" not in payload
+
+
+def test_qxd_radar_intent_issues_signed_svg_attachment(monkeypatch):
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    bundle = {
+        "values": {f"trait_{key}": 80 for key in qxd_chat.TRAIT_KEYS}
+    }
+    monkeypatch.setattr(
+        qxd_chat,
+        "public_score_bundles",
+        lambda: ({"T00001": bundle}, {"release_version": "v-test"}),
+    )
+    series = RadarSeries(
+        name="导师特质（已审核评分）",
+        values=[80.0] * 6,
+        color=ADVISOR_TRAIT_COLOR,
+    )
+    monkeypatch.setattr(
+        qxd_chat,
+        "build_radar_series_for_advisor",
+        lambda _advisor_id, _bundles=None: series,
+    )
+    claim = f"qxd-radar-attach-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "雷达图"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    attachment = payload["x_soda"]["attachments"][0]
+    assert attachment["fileType"] == "image"
+    assert attachment["mimeType"] == "image/svg+xml"
+    assert "/v1/radar/" in attachment["fileUrl"]
+    assert attachment["fileUrl"].startswith(
+        "https://agent.example.edu/v1/radar/"
+    )
+    assert attachment["fileName"].endswith(".svg")
+    assert "已生成 测试导师 的导师特质雷达图" in payload["choices"][0]["message"][
+        "content"
+    ]
+
+
+def test_radar_chart_endpoint_serves_deterministic_svg_and_rejects_tampering(
+    monkeypatch,
+):
+    series = RadarSeries(
+        name="导师特质（已审核评分）",
+        values=[80.0, 60.0, 90.0, 70.0, 50.0, 85.0],
+        color=ADVISOR_TRAIT_COLOR,
+    )
+    monkeypatch.setattr(
+        qxd_chat,
+        "build_radar_series_for_advisor",
+        lambda _advisor_id, _bundles=None: series,
+    )
+    token, _expires_at = issue_radar_chart_token("T00001")
+
+    first = client.get(f"/v1/radar/{token}")
+    assert first.status_code == 200
+    assert first.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in first.text
+
+    second = client.get(f"/v1/radar/{token}")
+    assert second.status_code == 200
+    assert second.content == first.content
+
+    flipped = "0" if not token.endswith("0") else "1"
+    tampered = f"{token[:-1]}{flipped}"
+    assert client.get(f"/v1/radar/{tampered}").status_code == 404

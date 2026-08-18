@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { MentorInboundMatches } from '@/types/mentor'
+import { displayTime } from '@/utils/format'
 
 // =====================================================================
 // 意向中心列表：展示匹配意向摘要；学生身份信息不下发（后端已匿名化）。
@@ -9,10 +10,6 @@ defineProps<{
   matches: MentorInboundMatches
   loading: boolean
 }>()
-
-function displayTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
-}
 </script>
 
 <template>

@@ -14,8 +14,6 @@ PLACEHOLDERS = {"admin", "secret", "changeme", "change-me"}
 PROD_FILES = (
     "database_password",
     "redis_password",
-    "milvus_minio_access_key",
-    "milvus_minio_secret_key",
     "admin_token",
     "session_hmac_secret",
     "artifact_signing_secret",
@@ -26,7 +24,6 @@ PROD_FILES = (
 PROD_SECRET_MATERIAL = (
     "database_password",
     "redis_password",
-    "milvus_minio_secret_key",
     "admin_token",
     "session_hmac_secret",
     "artifact_signing_secret",

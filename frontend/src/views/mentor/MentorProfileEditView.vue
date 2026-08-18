@@ -6,6 +6,7 @@ import StatusChip from '@/components/mentor/StatusChip.vue'
 import { fetchMentorProfile, fetchMyMentorEdits } from '@/api/mentor'
 import type { MentorEditRecord, MentorProfile } from '@/types/mentor'
 import { SELF_CLAIM_FIELD_META, REVIEW_STATUS_LABELS } from '@/types/mentor'
+import { displayTime } from '@/utils/format'
 
 // =====================================================================
 // 档案编辑页：查看公开字段与过审自述；提交字段级编辑申请（审批流）。
@@ -53,10 +54,6 @@ async function loadEdits() {
 function handleSaved() {
   void loadEdits()
   void loadProfile()
-}
-
-function displayTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
 }
 
 onMounted(() => {

@@ -30,7 +30,7 @@ QXD gateway, media gateway or public edge. Optional overlay inclusion is the
 single atomic enable operation; those overlays deliberately have no profiles
 that could leave an override half-enabled. QXD must be combined with edge, and
 media must be combined with both QXD and edge. `PUBLIC_BASE_URL` is empty and
-stage has no Milvus endpoint.
+recall stays on the deterministic lexical path in every composition.
 
 ## First deployment
 
@@ -137,7 +137,7 @@ Contract/cleanup migrations are separate batches after the rollback window.
 
 - Stage uses a distinct PostgreSQL role/database, Redis container/volume/network
   and COS bucket/CAM identity. It never joins `prod-app` and never receives a
-  production Milvus endpoint or credential.
+  production-only endpoint or credential.
 - Stage setup order is infra healthy -> `stage-db-provision` -> verify both
   stage-to-prod and prod-to-stage connection denial -> start stage backend.
   Stage backend holds the same kernel job lock for its complete lifetime, so it
@@ -206,13 +206,10 @@ well-formed but stale or substituted SHA-256 is not accepted.
 
 ## Container exceptions pending cloud verification
 
-- Vendor PostgreSQL, Redis, etcd, MinIO, Milvus and ClamAV images retain their
+- Vendor PostgreSQL, Redis and ClamAV images retain their
   vendor entrypoint users until each pinned digest is verified on the server.
 - The current frontend Nginx image needs a minimal capability set to bind port
   80 internally; it has no host port in the default composition.
-- Milvus reads its MinIO-only credential from mounted files in a wrapper and
-  exports it only inside that process. Real image behavior and absence from
-  inspect/logs remain a cloud gate.
 - No container exception authorizes host ports, privileged mode, Docker socket,
   host PID/network or production secret values in environment declarations.
 
@@ -231,8 +228,8 @@ The bundle has exactly eight regular files and a hard 2 GiB total budget:
 `bundle-manifest.json`, its detached SHA-256 file, `image-lock.json`, the L2
 release manifest, a credential-free Compose image environment, deterministic
 `source.tar`, and exactly two OCI archives for backend and frontend. It never
-contains PostgreSQL, Redis, etcd, MinIO, Milvus, ClamAV, Caddy or unprivileged
-Nginx archives. Those eight vendor slots use `delivery_mode=digest_pull`; a
+contains PostgreSQL, Redis, ClamAV, Caddy or unprivileged
+Nginx archives. Those five vendor slots use `delivery_mode=digest_pull`; a
 future separately approved cloud batch must pull each exact
 `repository@linux/amd64-manifest`, inspect it and prove the locked
 manifest/config/layer chain. Adding a vendor archive is a contract failure, not
@@ -259,7 +256,7 @@ carry hidden data even if an attacker recomputes the tar checksum.
 
 The embedded L2 manifest is validated with the same strict portable structure
 contract as L2 itself: exact top-level fields, base-image relationships,
-backend/frontend roles and local references, ten Compose slots, four cloud
+backend/frontend roles and local references, seven Compose slots, four cloud
 gates, normalized source entries and prohibited paths. Its two engine-specific
 image IDs must equal the informational engine observations captured into the
 corresponding L3 application slots. The observed Docker `Id` is not interpreted
