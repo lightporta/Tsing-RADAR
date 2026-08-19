@@ -1242,3 +1242,139 @@ def test_radar_chart_endpoint_serves_deterministic_svg_and_rejects_tampering(
     flipped = "0" if not token.endswith("0") else "1"
     tampered = f"{token[:-1]}{flipped}"
     assert client.get(f"/v1/radar/{tampered}").status_code == 404
+
+
+def test_expression_layer_rewrites_interviewee_reply_when_available(monkeypatch):
+    async def fake_render(_fact_pack):
+        return SimpleNamespace(
+            text="那我们继续聊聊：你更偏好算法理论研究，还是实际应用？",
+            provider="glm",
+            status="available",
+        )
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", fake_render)
+    response = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={"messages": [{"role": "user", "content": "我对强化学习感兴趣"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert content == "那我们继续聊聊：你更偏好算法理论研究，还是实际应用？"
+
+
+def test_expression_layer_falls_back_to_fixed_reply_when_disabled(monkeypatch):
+    async def fake_render(_fact_pack):
+        return SimpleNamespace(text=None, provider=None, status="disabled")
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", fake_render)
+    response = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={"messages": [{"role": "user", "content": "我对强化学习感兴趣"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    # 降级：固定模板（首轮访谈题）非空，且绝不含表达层文本
+    assert content
+    assert "那我们继续聊聊" not in content
+
+
+def test_expression_layer_skipped_for_platform_probe(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("连接探测请求不应触发表达层")
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", boom)
+    response = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={
+            "messages": [{"role": "user", "content": "你好"}],
+            "stream": True,
+            "max_tokens": 1,
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_expression_layer_skipped_on_confirmation_gate_and_match(monkeypatch):
+    """诚实性红线：画像确认门与匹配结果保持确定性原文，不进入表达层。"""
+
+    async def fake_render(_fact_pack):
+        return SimpleNamespace(
+            text="[GLM-增强] 自然重写内容",
+            provider="glm",
+            status="available",
+        )
+
+    render_calls = []
+    monkeypatch.setattr(
+        qxd_chat,
+        "render_interview_reply",
+        lambda fp: render_calls.append(fp) or fake_render(fp),
+    )
+
+    user_id = f"qxd-gate-{uuid.uuid4()}"
+    headers = _qxd_headers(user_id)
+    user_turns = [
+        "自然语言处理、对话系统",
+        "工程落地",
+        "高频具体指导",
+        "产业就业",
+        "愿意探索高风险新方向",
+        "只能北京",
+    ]
+    # 提问轮（IN_PROGRESS）：表达层生效
+    for n in range(1, len(user_turns) + 1):
+        resp = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "user": user_id,
+                "messages": [
+                    {"role": "user", "content": turn} for turn in user_turns[:n]
+                ],
+                "stream": False,
+            },
+        )
+        assert resp.status_code == 200
+        assert (
+            resp.json()["choices"][0]["message"]["content"]
+            == "[GLM-增强] 自然重写内容"
+        )
+    assert len(render_calls) == 6
+
+    # 确认硬性条件草案 → 画像总结轮（AWAITING_CONFIRMATION）：不增强
+    user_turns.append("确认")
+    resp = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "user": user_id,
+            "messages": [
+                {"role": "user", "content": turn} for turn in user_turns
+            ],
+            "stream": False,
+        },
+    )
+    summary = resp.json()["choices"][0]["message"]["content"]
+    assert "确认画像" in summary  # 确定性确认引导保留
+    assert "[GLM-增强]" not in summary
+    assert len(render_calls) == 6  # 总结轮未调用表达层
+
+    # 确认画像 → 匹配结果（recommend_ready）：不增强
+    user_turns.append("确认画像")
+    resp = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "user": user_id,
+            "messages": [
+                {"role": "user", "content": turn} for turn in user_turns
+            ],
+            "stream": False,
+        },
+    )
+    outcome = resp.json()["choices"][0]["message"]["content"]
+    assert "[GLM-增强]" not in outcome
+    assert len(render_calls) == 6  # 匹配轮未调用表达层

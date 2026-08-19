@@ -41,6 +41,10 @@ from app.services.artifact_delivery import (
     redeem_radar_chart_token,
 )
 from app.services.artifact_generation import create_match_report_artifact
+from app.services.chat_expression import (
+    build_interview_fact_pack,
+    render_interview_reply,
+)
 from app.services.interview import (
     InterviewAccessError,
     InterviewConflictError,
@@ -421,6 +425,19 @@ async def generate_agent_reply(
                 )
             state = state_response(session)
             visible = state.assistant_message
+            # 表达层：LLM 基于确定性事实包整段重写；任何失败降级回固定模板。
+            # 诚实性红线：画像确认门（needs_confirmation）与匹配结果
+            # （recommend_ready）不增强，保持确定性原文（确认指令/匹配证据）。
+            # 推荐结果优先短路，避免对非完整状态桩的字段依赖。
+            if not probe and not state.recommend_ready and not state.needs_confirmation:
+                expression = await render_interview_reply(
+                    build_interview_fact_pack(
+                        state,
+                        user_messages[-1].strip() if user_messages else "",
+                    )
+                )
+                if expression.text:
+                    visible = expression.text
             if state.recommend_ready:
                 outcome = run_confirmed_match(
                     db,
