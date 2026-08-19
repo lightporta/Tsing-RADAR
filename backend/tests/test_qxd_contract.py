@@ -1222,3 +1222,56 @@ def test_radar_chart_endpoint_serves_deterministic_svg_and_rejects_tampering(
     flipped = "0" if not token.endswith("0") else "1"
     tampered = f"{token[:-1]}{flipped}"
     assert client.get(f"/v1/radar/{tampered}").status_code == 404
+
+
+def test_expression_layer_rewrites_interviewee_reply_when_available(monkeypatch):
+    async def fake_render(_fact_pack):
+        return SimpleNamespace(
+            text="那我们继续聊聊：你更偏好算法理论研究，还是实际应用？",
+            provider="glm",
+            status="available",
+        )
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", fake_render)
+    response = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={"messages": [{"role": "user", "content": "我对强化学习感兴趣"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert content == "那我们继续聊聊：你更偏好算法理论研究，还是实际应用？"
+
+
+def test_expression_layer_falls_back_to_fixed_reply_when_disabled(monkeypatch):
+    async def fake_render(_fact_pack):
+        return SimpleNamespace(text=None, provider=None, status="disabled")
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", fake_render)
+    response = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={"messages": [{"role": "user", "content": "我对强化学习感兴趣"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    # 降级：固定模板（首轮访谈题）非空，且绝不含表达层文本
+    assert content
+    assert "那我们继续聊聊" not in content
+
+
+def test_expression_layer_skipped_for_platform_probe(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("连接探测请求不应触发表达层")
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", boom)
+    response = client.post(
+        "/v1/chat/completions",
+        headers=AUTH,
+        json={
+            "messages": [{"role": "user", "content": "你好"}],
+            "stream": True,
+            "max_tokens": 1,
+        },
+    )
+    assert response.status_code == 200
