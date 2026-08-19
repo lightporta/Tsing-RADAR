@@ -477,6 +477,11 @@ def run_checks(
                 "STAGE_COS_BUCKET": "tsing-radar-stage-1250000000",
                 "STAGE_CORS_ORIGINS": "https://stage.invalid",
                 "WEB_HOST": "radar.invalid",
+                # compose.prod.yml 强制必填（MAIL_MODE=smtp 契约）：检查器必须
+                # 同步提供，否则 docker compose config 插值失败、18 项 L1 用例回归。
+                "MAIL_USER": "l1-check@example.edu",
+                "MAIL_FROM": "Tsing-RADAR <no-reply@example.edu>",
+                "MAIL_HOST": "smtp.example.edu",
                 "QXD_HOST": "qxd.invalid",
                 "MEDIA_HOST": "media.invalid",
                 "BACKUP_FILE": "verified-backup.dump",
