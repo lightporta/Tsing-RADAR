@@ -239,43 +239,57 @@ def test_qxd_claim_is_separate_from_bearer_and_forgery_fails_closed(caplog):
 
 
 def test_unverified_qxd_user_is_request_isolated_and_web_cannot_read_qxd_session():
+    # P-A：body user 字段由平台 Bearer 保护并稳定映射持久主体；
+    # 不同 user 相互隔离，Web 会话无法读取清小搭会话。
     client = TestClient(app)
-    before: set[str]
-    with SessionLocal() as db:
-        before = {
-            row.session_id
-            for row in db.query(QuestionnaireSession)
-            .filter(QuestionnaireSession.student_id.like("qreq_%"))
-            .all()
-        }
-    payload = {
-        "user": "self-asserted-user",
+
+    def _subject(user: str) -> str:
+        fingerprint = hashlib.sha256(
+            f"qxd-user:{user}".encode("utf-8")
+        ).hexdigest()
+        with SessionLocal() as db:
+            return (
+                db.query(ExternalIdentity)
+                .filter(
+                    ExternalIdentity.provider == "qxd_user",
+                    ExternalIdentity.claim_fingerprint == fingerprint,
+                )
+                .one()
+                .subject_id
+            )
+
+    payload_a = {
+        "user": "self-asserted-user-a",
         "messages": [{"role": "user", "content": "你好"}],
         "stream": False,
     }
+    payload_b = {**payload_a, "user": "self-asserted-user-b"}
     assert client.post(
         "/v1/chat/completions",
         headers=_qxd_headers(),
-        json=payload,
+        json=payload_a,
     ).status_code == 200
     assert client.post(
         "/v1/chat/completions",
         headers=_qxd_headers(),
-        json=payload,
+        json=payload_b,
     ).status_code == 200
+
+    subject_a = _subject("self-asserted-user-a")
+    subject_b = _subject("self-asserted-user-b")
+    assert subject_a != subject_b
+
     with SessionLocal() as db:
-        created = [
-            row
-            for row in db.query(QuestionnaireSession)
-            .filter(QuestionnaireSession.student_id.like("qreq_%"))
+        sessions = (
+            db.query(QuestionnaireSession)
+            .filter(QuestionnaireSession.student_id.in_([subject_a, subject_b]))
             .all()
-            if row.session_id not in before
-        ]
-    assert len(created) == 2
-    assert created[0].student_id != created[1].student_id
+        )
+    assert len(sessions) == 2
+    assert {row.student_id for row in sessions} == {subject_a, subject_b}
 
     web, _ = _web_client()
-    assert web.get(f"/api/interviews/{created[0].session_id}").status_code == 403
+    assert web.get(f"/api/interviews/{sessions[0].session_id}").status_code == 403
 
 
 def test_private_docx_and_pdf_validation_sanitization_and_object_authorization():

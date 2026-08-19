@@ -20,6 +20,7 @@ from app.models.private_document import (
 from app.models.mentor_account import MentorAccount
 from app.models.email_verification_code import EmailVerificationCode
 from app.models.mentor_claim import MentorClaim
+from app.models.mentor_campus_card import MentorCampusCard
 from app.models.mentor_profile_edit import MentorProfileEdit
 from app.models.takedown_request import TakedownRequest
 from app.models.mentor_profile import MentorProfile
@@ -49,6 +50,7 @@ __all__ = [
     "MentorAccount",
     "EmailVerificationCode",
     "MentorClaim",
+    "MentorCampusCard",
     "MentorProfileEdit",
     "TakedownRequest",
     "MentorProfile",

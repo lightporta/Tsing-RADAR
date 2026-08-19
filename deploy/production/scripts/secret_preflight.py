@@ -17,6 +17,8 @@ PROD_FILES = (
     "admin_token",
     "session_hmac_secret",
     "artifact_signing_secret",
+    "llm_api_key",
+    "mail_password",
     "cos_access_key_id",
     "cos_secret_access_key",
     "restore_check_password",
@@ -27,6 +29,8 @@ PROD_SECRET_MATERIAL = (
     "admin_token",
     "session_hmac_secret",
     "artifact_signing_secret",
+    "llm_api_key",
+    "mail_password",
     "cos_secret_access_key",
     "restore_check_password",
 )

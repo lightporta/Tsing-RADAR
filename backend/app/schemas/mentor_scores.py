@@ -1,8 +1,10 @@
-"""Governed evidence for optional mentor score visualisations.
+"""Governed evidence for the objective mentor radar.
 
 This dataset is deliberately separate from the mentor directory.  Directory
-facts can never be promoted into personality, funding, popularity, sector or
-compatibility claims by inference.
+facts can never be promoted into objective breadth or completeness claims by
+inference.  The four dimensions are computed only from independently audited
+public evidence; anonymous subjective ratings live in a strictly separate
+pipeline (advisor ratings) and never enter this file.
 """
 
 from __future__ import annotations
@@ -23,55 +25,16 @@ def _aware(value: datetime, name: str) -> datetime:
 
 
 class ScoreDimension(str, Enum):
-    TRAIT_ACUMEN = "trait_acumen"
-    TRAIT_NETWORK = "trait_network"
-    TRAIT_MENTORSHIP = "trait_mentorship"
-    TRAIT_TOLERANCE = "trait_tolerance"
-    TRAIT_FUNDING = "trait_funding"
-    TRAIT_EFFICIENCY = "trait_efficiency"
-    POPULARITY_INDEX = "popularity_index"
-    SECTOR_ATTRIBUTE = "sector_attribute"
-    COMPATIBILITY_RESEARCH_MODE = "compatibility_research_mode"
-    COMPATIBILITY_MENTORSHIP_STYLE = "compatibility_mentorship_style"
-    COMPATIBILITY_CAREER_ORIENTATION = "compatibility_career_orientation"
-    COMPATIBILITY_INNOVATION_RISK = "compatibility_innovation_risk"
+    """客观雷达四维：全部来自公开证据的计数/完整度，非主观评价。"""
+
+    PROJECT_BREADTH = "project_breadth"
+    TOPIC_BREADTH = "topic_breadth"
+    CONTACT_COMPLETENESS = "contact_completeness"
+    MATERIAL_COMPLETENESS = "material_completeness"
 
 
 REQUIRED_SCORE_DIMENSIONS = frozenset(ScoreDimension)
-NUMERIC_SCORE_DIMENSIONS = frozenset(
-    {
-        ScoreDimension.TRAIT_ACUMEN,
-        ScoreDimension.TRAIT_NETWORK,
-        ScoreDimension.TRAIT_MENTORSHIP,
-        ScoreDimension.TRAIT_TOLERANCE,
-        ScoreDimension.TRAIT_FUNDING,
-        ScoreDimension.TRAIT_EFFICIENCY,
-        ScoreDimension.POPULARITY_INDEX,
-    }
-)
-COMPATIBILITY_VALUES = {
-    ScoreDimension.COMPATIBILITY_RESEARCH_MODE: {
-        "theory",
-        "engineering",
-        "mixed",
-    },
-    ScoreDimension.COMPATIBILITY_MENTORSHIP_STYLE: {
-        "high_guidance",
-        "balanced",
-        "autonomous",
-    },
-    ScoreDimension.COMPATIBILITY_CAREER_ORIENTATION: {
-        "academic",
-        "industry",
-        "national_mission",
-        "mixed",
-    },
-    ScoreDimension.COMPATIBILITY_INNOVATION_RISK: {
-        "pioneering",
-        "balanced",
-        "mature",
-    },
-}
+NUMERIC_SCORE_DIMENSIONS = frozenset(ScoreDimension)
 
 
 class ClaimReviewStatus(str, Enum):
@@ -117,22 +80,11 @@ class ScoreEvidenceClaim(BaseModel):
         parsed = urlsplit(self.source_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("source_url 必须是绝对 HTTP(S) URL")
-        if self.dimension in NUMERIC_SCORE_DIMENSIONS:
-            if isinstance(self.value, bool) or not isinstance(self.value, (int, float)):
-                raise ValueError("评分维度必须提供 0—100 数值")
-            if not 0 <= float(self.value) <= 100:
-                raise ValueError("评分必须在 0—100 之间")
-        elif self.dimension == ScoreDimension.SECTOR_ATTRIBUTE:
-            if self.value not in {"state", "private"}:
-                raise ValueError("sector_attribute 只能是 state/private")
-        else:
-            allowed = COMPATIBILITY_VALUES[self.dimension]
-            if not isinstance(self.value, list) or not self.value:
-                raise ValueError("契合维度必须提供非空的已核验类别列表")
-            normalized = {str(item) for item in self.value}
-            if not normalized <= allowed:
-                raise ValueError("契合维度包含未定义类别")
-            self.value = sorted(normalized)
+        # 客观四维全部为 0—100 数值（证据计数/完整度归一化，非主观打分）
+        if isinstance(self.value, bool) or not isinstance(self.value, (int, float)):
+            raise ValueError("客观维度必须提供 0—100 数值")
+        if not 0 <= float(self.value) <= 100:
+            raise ValueError("客观维度评分必须在 0—100 之间")
         if self.source_kind == "authorized_aggregate":
             if (
                 self.sample_size is None

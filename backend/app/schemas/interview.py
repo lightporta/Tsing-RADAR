@@ -150,6 +150,8 @@ class StudentPortrait(BaseModel):
 
     research_interests: list[str] = Field(default_factory=list, max_length=8)
     interest_statement: str | None = Field(default=None, max_length=1000)
+    # 兴趣探索（活动兴趣题）选择的活动键；仅用于回显，不参与匹配计算
+    activity_interests: list[str] = Field(default_factory=list, max_length=8)
     research_mode: Literal["theory", "engineering", "mixed", "undecided"] | None = None
     mentorship_style: Literal[
         "high_guidance", "balanced", "autonomous", "undecided"
@@ -221,6 +223,7 @@ class StudentPortraitPatch(BaseModel):
     expected_version: int = Field(ge=1)
     research_interests: list[str] | None = Field(default=None, max_length=8)
     interest_statement: str | None = Field(default=None, max_length=1000)
+    activity_interests: list[str] | None = Field(default=None, max_length=8)
     research_mode: Literal["theory", "engineering", "mixed", "undecided"] | None = None
     mentorship_style: Literal[
         "high_guidance", "balanced", "autonomous", "undecided"

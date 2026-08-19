@@ -31,6 +31,7 @@ from app.schemas.qxd import (
 )
 from app.db.session import SessionLocal
 from app.db.session import get_db
+from app.services.identity import resolve_qxd_user_principal
 from app.services.artifact_delivery import (
     artifact_download_response,
     assert_qxd_delivery_ready,
@@ -56,8 +57,8 @@ from app.services.match_application import (
 from app.services.mentor_score_governance import public_score_bundles
 from app.services.radar_chart import (
     ADVISOR_TRAIT_COLOR,
+    OBJECTIVE_DIMENSION_KEYS,
     RADAR_DIMENSION_LABELS,
-    TRAIT_KEYS,
     RadarSeries,
     build_radar_series_for_advisor,
     render_radar_svg,
@@ -570,7 +571,7 @@ async def generate_agent_reply(
 
 
 def _radar_available_for_items(items: list[dict]) -> bool:
-    """匹配候选中是否至少有一位导师具有已审核六维评分（用于自动提示）。"""
+    """匹配候选中是否至少有一位导师具有已审核客观评分（用于自动提示）。"""
     try:
         bundles, _status = public_score_bundles()
     except Exception:  # noqa: BLE001 —— 评分数据异常时按"无雷达"处理，不影响对话主链路
@@ -594,11 +595,11 @@ def _select_radar_item(
 
 
 def _radar_text_table(name: str, values_by_key: dict[str, float]) -> str:
-    lines = [f"{name} 六维评分（已审核，满分 100）："]
-    for key in TRAIT_KEYS:
+    lines = [f"{name} 客观四维（已审核公开证据，满分 100）："]
+    for key in OBJECTIVE_DIMENSION_KEYS:
         value = values_by_key.get(key)
         if value is None:
-            lines.append(f"- {RADAR_DIMENSION_LABELS[key]}：暂无已审核评分")
+            lines.append(f"- {RADAR_DIMENSION_LABELS[key]}：暂无已审核证据")
         else:
             lines.append(f"- {RADAR_DIMENSION_LABELS[key]}：{value:.0f}")
     return "\n".join(lines)
@@ -630,7 +631,7 @@ def _radar_intent_reply(
         name = str(first.get("name") or "该导师")
         values = {}
         return (
-            "暂无候选导师的已审核六维评分，不能诚实地绘制雷达图"
+            "暂无候选导师的已审核客观评分，不能诚实地绘制雷达图"
             "（评分门控状态：未开放或未覆盖）。\n\n"
             f"{_radar_text_table(name, values)}\n\n"
             f"交互式雷达图与完整证据 👉 {_SITE_HOME_URL}",
@@ -642,7 +643,7 @@ def _radar_intent_reply(
     series = build_radar_series_for_advisor(advisor_id, bundles)
     if series is None:
         return (
-            f"{name} 暂无完整的已审核六维评分，不伪造雷达图。\n\n"
+            f"{name} 暂无完整的已审核客观评分，不伪造雷达图。\n\n"
             f"交互式雷达图与完整证据 👉 {_SITE_HOME_URL}",
             None,
         )
@@ -653,8 +654,8 @@ def _radar_intent_reply(
             else "样本来源：已审核评分发布"
         )
         return (
-            "雷达图附件当前未启用；文本版六维数据如下。\n\n"
-            f"{_radar_text_table(name, dict(zip(TRAIT_KEYS, series.values)))}\n\n"
+            "雷达图附件当前未启用；文本版客观四维数据如下。\n\n"
+            f"{_radar_text_table(name, dict(zip(OBJECTIVE_DIMENSION_KEYS, series.values)))}\n\n"
             f"{release_note}\n交互式雷达图 👉 {_SITE_HOME_URL}",
             None,
         )
@@ -663,8 +664,8 @@ def _radar_intent_reply(
     except HTTPException as exc:
         logger.warning("radar_delivery_not_ready status=%s", exc.status_code)
         return (
-            "雷达图附件交付尚未配置公网地址；文本版六维数据如下。\n\n"
-            f"{_radar_text_table(name, dict(zip(TRAIT_KEYS, series.values)))}\n\n"
+            "雷达图附件交付尚未配置公网地址；文本版客观四维数据如下。\n\n"
+            f"{_radar_text_table(name, dict(zip(OBJECTIVE_DIMENSION_KEYS, series.values)))}\n\n"
             f"交互式雷达图 👉 {_SITE_HOME_URL}",
             None,
         )
@@ -687,8 +688,9 @@ def _radar_intent_reply(
         else ""
     )
     text = (
-        f"已生成 {name} 的导师特质雷达图（已审核评分，短时签名链接）：\n"
-        "- 六维：学术敏锐度、人脉资源、指导意愿、性格包容度、经费实力、产出效率"
+        f"已生成 {name} 的客观证据雷达图（已审核公开证据，短时签名链接）：\n"
+        "- 四维：项目广度、研究主题广度、联系信息完整度、研究资料完整度\n"
+        "- 客观指标与匿名主观评价严格分离，本图不含学生评价"
         f"{extra}\n\n"
         f"完整对比与交互式雷达图 👉 {_SITE_HOME_URL}"
     )
@@ -706,7 +708,7 @@ def download_radar_chart(token: str):
     if series is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="该导师暂无已审核六维评分",
+            detail="该导师暂无已审核客观评分",
         )
     svg = _render_radar_svg_cached(advisor_id, tuple(series.values))
     return Response(
@@ -836,8 +838,13 @@ async def chat(
         default=None,
         alias="X-Tsing-Radar-QXD1-Trial",
     ),
+    db: Session = Depends(get_db),
 ):
     """同时支持非流式 JSON 与严格顺序的 OpenAI-compatible SSE。"""
+    # P-A：平台 Bearer 已验签时，body 里的稳定 user 字段映射持久终端用户
+    # 主体；header 签名 claim（优先）缺位时启用，单人试聊模式不受影响。
+    if not principal.persistent and request.user:
+        principal = resolve_qxd_user_principal(db, user_id=request.user)
     if (
         settings.QXD_TRIAL_SINGLE_USER_MODE
         and not principal.persistent

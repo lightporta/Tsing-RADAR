@@ -18,6 +18,15 @@ from fastapi.testclient import TestClient
 from app.main import app
 import app.services.data_loader as data_loader
 
+ADMIN_HEADERS = {"X-Admin-Token": "test-admin-token-not-for-production"}
+
+# 最小合法 1x1 PNG（校园卡上传测试用）
+PNG_1PX = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000d4944415478da63fcffff3f030005fe02fea72d1e480000000049454e44"
+    "ae426082"
+)
+
 
 def _record(advisor_id: str, name: str, dept: str, title: str) -> dict:
     now = "2026-08-17T00:00:00+08:00"
@@ -141,7 +150,8 @@ def auto_claim(
     name: str = "张伟",
     department: str = "计算机科学与技术系",
 ) -> None:
-    """以唯一候选路径完成档案认领（auto_unique 自动绑定）。"""
+    """校园卡审核通过后，以唯一候选路径完成档案认领（auto_unique 自动绑定）。"""
+    verify_campus_card(client, headers)
     response = client.post(
         "/api/mentor/claim",
         headers=headers,
@@ -153,3 +163,45 @@ def auto_claim(
     )
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "claimed"
+
+
+def upload_campus_card(
+    client: TestClient,
+    headers: dict[str, str],
+    *,
+    payload: bytes = PNG_1PX,
+    filename: str = "card.png",
+    media_type: str = "image/png",
+):
+    """上传校园卡材料（默认最小合法 PNG）。"""
+    return client.post(
+        "/api/mentor/verification/campus-card",
+        headers=headers,
+        files={"upload": (filename, payload, media_type)},
+    )
+
+
+def review_campus_card(
+    client: TestClient,
+    card_id: str,
+    *,
+    action: str = "approve",
+    reviewer: str = "ops-admin",
+    note: str = "已核实",
+):
+    """管理员审核校园卡。"""
+    return client.post(
+        f"/api/admin/mentor/campus-cards/{card_id}/review",
+        headers=ADMIN_HEADERS,
+        json={"action": action, "reviewer": reviewer, "note": note},
+    )
+
+
+def verify_campus_card(client: TestClient, headers: dict[str, str]) -> None:
+    """上传校园卡并让管理员审核通过（认领的前置条件）。"""
+    response = upload_campus_card(client, headers)
+    assert response.status_code == 200, response.text
+    card_id = response.json()["card_id"]
+    response = review_campus_card(client, card_id)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "approved"

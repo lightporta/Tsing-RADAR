@@ -5,7 +5,6 @@ import { ElMessage } from 'element-plus'
 import MiniRadar from '@/components/charts/MiniRadar.vue'
 import AdvisorDetail from './AdvisorDetail.vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
-import { useUserStore } from '@/stores/useUserStore'
 import { submitFeedback } from '@/api/feedback'
 import { useRatingSummary } from '@/composables/useRatingSummary'
 import { deptColor } from '@/utils/format'
@@ -15,7 +14,7 @@ import type { MatchedAdvisor } from '@/types/advisor'
 // 单张导师卡片（文档 §3.4）
 // 左：头像 + 姓名 + 院系职称
 // 中：研究方向标签 + 契合度百分比
-// 右：迷你双轨雷达图
+// 右：迷你客观四维雷达图（无数据时灰色虚线视觉基准）
 // 点击：选中态高亮 + 触发右栏切换大雷达图
 // 二次点击/展开按钮：向下展开详情面板
 // =====================================================================
@@ -25,7 +24,6 @@ const props = defineProps<{ advisor: MatchedAdvisor; selected?: boolean }>()
 const deptColorAvatar = computed(() => deptColor(props.advisor.dept) + '22')
 
 const advisorStore = useAdvisorStore()
-const userStore = useUserStore()
 const router = useRouter()
 const expanded = ref(false)
 const feedbackGiven = ref<1 | -1 | null>(null)
@@ -121,27 +119,19 @@ async function giveFeedback(rating: 1 | -1) {
             <span class="synergy-label">保守排序</span>
             <span class="synergy-value">{{ advisor.score.toFixed(1) }}</span>
           </div>
-          <span
-            v-if="typeof advisor.popularity === 'number'"
-            class="popularity-tag"
-            :class="{ hot: advisor.popularity > 60 }"
-          >
-            {{ advisor.popularity > 60 ? '🔥 热门' : '❄️ 冷门' }}
-          </span>
           <span v-if="ratingTotalN" class="rating-badge">
             🧑‍🎓 {{ ratingTotalN }} 评价
           </span>
         </div>
       </div>
 
-      <!-- 右：迷你雷达 -->
+      <!-- 右：迷你客观雷达 -->
       <div class="card-right">
         <MiniRadar
-          :advisor-traits="advisor.radar_traits"
-          :student-weights="userStore.profile.weights"
+          :objective-radar="advisor.objective_radar"
           :size="80"
         />
-        <span v-if="!advisor.radar_traits" class="evidence-mini dim">基准示意</span>
+        <span v-if="!advisor.objective_radar" class="evidence-mini dim">基准示意</span>
         <button class="expand-btn" :class="{ open: expanded }" aria-label="展开详情" @click="toggleExpand">
           <el-icon><ArrowDown /></el-icon>
         </button>

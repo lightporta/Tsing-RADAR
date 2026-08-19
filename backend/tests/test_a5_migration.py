@@ -120,7 +120,7 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0011"
+    assert revision == "0012"
     engine.dispose()
 
 

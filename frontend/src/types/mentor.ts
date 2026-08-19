@@ -161,6 +161,38 @@ export interface AdminMentorClaimItem {
   created_at?: string | null
 }
 
+/** 校园卡材料视图（不含对象键与文件正文） */
+export interface MentorCampusCard {
+  card_id: string
+  status: string
+  media_type: string
+  size_bytes: number
+  uploaded_at?: string | null
+  reviewed_at?: string | null
+  review_note?: string | null
+  material_cleared: boolean
+  email: string
+}
+
+/** 校园卡状态（GET /api/mentor/verification/campus-card） */
+export interface MentorCampusCardStatus {
+  status: 'none' | 'pending' | 'approved' | 'rejected'
+  eligible_to_claim: boolean
+  card: MentorCampusCard | null
+}
+
+/** 管理端：校园卡审核列表项 */
+export interface AdminCampusCardItem {
+  card_id: string
+  status: string
+  media_type: string
+  size_bytes: number
+  sha256: string
+  uploaded_at?: string | null
+  email: string
+  account_status: string
+}
+
 /** 导师自述字段白名单（与后端 SELF_CLAIM_FIELDS 一致） */
 export const SELF_CLAIM_FIELD_META: Record<
   string,
@@ -206,5 +238,13 @@ export const MENTOR_STATUS_LABELS: Record<string, string> = {
 export const REVIEW_STATUS_LABELS: Record<string, string> = {
   pending: '待处理',
   approved: '已通过',
+  rejected: '已驳回',
+}
+
+/** 校园卡审核状态标签 */
+export const CAMPUS_CARD_STATUS_LABELS: Record<string, string> = {
+  none: '未上传',
+  pending: '待审核',
+  approved: '审核通过',
   rejected: '已驳回',
 }

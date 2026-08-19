@@ -13,6 +13,7 @@ from tests.mentor_helpers import (
     mentor_dataset,
     mentor_login,
     mentor_web_client,
+    verify_campus_card,
 )
 
 EMAIL = "mentor01@tsinghua.edu.cn"
@@ -22,6 +23,7 @@ ADMIN = {"X-Admin-Token": "test-admin-token-not-for-production"}
 def test_admin_claims_listing_and_review(mentor_dataset, caplog):
     client, headers = mentor_web_client()
     mentor_login(client, headers, caplog, email=EMAIL)
+    verify_campus_card(client, headers)
     response = client.post(
         "/api/mentor/claim",
         headers=headers,
@@ -121,6 +123,7 @@ def test_admin_takedown_listing_and_review(mentor_dataset, caplog):
 def test_double_review_is_rejected(mentor_dataset, caplog):
     client, headers = mentor_web_client()
     mentor_login(client, headers, caplog, email=EMAIL)
+    verify_campus_card(client, headers)
     response = client.post(
         "/api/mentor/claim",
         headers=headers,

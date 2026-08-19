@@ -34,6 +34,7 @@ from app.services.mentor_resources import (
     _normalized_identity,
     grouped_mentor_resources,
 )
+from app.services.mentor_verification import campus_card_approved
 
 
 def _now() -> datetime:
@@ -128,6 +129,14 @@ def submit_claim(
         raise HTTPException(status_code=409, detail="已有待审批的认领申请")
     if not candidate_id:
         raise HTTPException(status_code=422, detail="必须指定认领的候选档案")
+
+    # 校园卡人工审核是认领的前置条件：邮箱验证码只用于登录，
+    # 不再视为导师身份认证（修改说明 §1）。
+    if not campus_card_approved(db, account_id=account.account_id):
+        raise HTTPException(
+            status_code=403,
+            detail="需先上传校园卡并通过管理员人工审核，才能认领导师档案",
+        )
 
     # 按姓名全量匹配（跨院系），判定唯一候选；
     # 若院系非空则与所选候选校验一致，防止误选重名他人。

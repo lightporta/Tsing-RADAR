@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Menu } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/useUserStore'
+import { fetchWebTestMode, type WebTestModeStatus } from '@/api/request'
 import AppLogo from './AppLogo.vue'
 
 // =====================================================================
@@ -26,6 +27,25 @@ const avatarUrl = computed(() => userStore.profile.avatarUrl?.trim() || '')
 const avatarInitial = computed(() => {
   const name = userStore.profile.name.trim()
   return name ? Array.from(name)[0].toUpperCase() : '我'
+})
+
+// —— 网页免认证测试模式标注（模块级缓存，避免多个 Header 实例重复请求）——
+const testMode = ref<WebTestModeStatus | null>(null)
+let testModeLoaded = false
+
+onMounted(async () => {
+  if (testModeLoaded) return
+  testModeLoaded = true
+  try {
+    testMode.value = await fetchWebTestMode()
+  } catch {
+    // 状态端点不可用时不阻塞页面，仅不显示标注
+  }
+})
+
+const testModeText = computed(() => {
+  if (!testMode.value || !testMode.value.enabled) return ''
+  return testMode.value.active ? testMode.value.label : '网页测试模式已到期'
 })
 
 function goProfile() {
@@ -79,6 +99,11 @@ function handleProfileClick() {
 
     <!-- 右侧：清晰的文字入口 + 当前用户头像 -->
     <div class="header-right">
+      <span
+        v-if="testModeText"
+        class="test-mode-badge"
+        :class="{ expired: testMode && !testMode.active }"
+      >{{ testModeText }}</span>
       <slot name="right" />
       <button class="nav-btn mentors" aria-label="导师数据" @click="goMentors">
         导师数据
@@ -141,6 +166,24 @@ function handleProfileClick() {
   display: flex;
   align-items: center;
   gap: $spacing-sm;
+}
+
+.test-mode-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 4px;
+  color: #b45309;
+  background: rgba(230, 162, 60, 0.12);
+  border: 1px solid rgba(230, 162, 60, 0.45);
+  white-space: nowrap;
+
+  &.expired {
+    color: #b91c1c;
+    background: rgba(245, 108, 108, 0.1);
+    border-color: rgba(245, 108, 108, 0.45);
+  }
 }
 
 .icon-btn {

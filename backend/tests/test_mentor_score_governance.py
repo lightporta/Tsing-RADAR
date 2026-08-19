@@ -21,16 +21,7 @@ VALID_UNTIL = datetime(2027, 8, 1, tzinfo=timezone.utc)
 
 
 def _value(dimension: ScoreDimension):
-    if dimension == ScoreDimension.SECTOR_ATTRIBUTE:
-        return "state"
-    if dimension == ScoreDimension.COMPATIBILITY_RESEARCH_MODE:
-        return ["theory", "mixed"]
-    if dimension == ScoreDimension.COMPATIBILITY_MENTORSHIP_STYLE:
-        return ["balanced"]
-    if dimension == ScoreDimension.COMPATIBILITY_CAREER_ORIENTATION:
-        return ["academic"]
-    if dimension == ScoreDimension.COMPATIBILITY_INNOVATION_RISK:
-        return ["mature"]
+    # 客观四维全部为 0—100 数值
     return 60.0
 
 
@@ -67,7 +58,7 @@ def _dataset() -> MentorScoreDataset:
 
 
 def test_claims_reject_raw_student_text_and_under_threshold_aggregate():
-    payload = _claim("advisor-a", ScoreDimension.TRAIT_ACUMEN).model_dump()
+    payload = _claim("advisor-a", ScoreDimension.PROJECT_BREADTH).model_dump()
     payload["raw_student_text"] = "不得入库的可识别原文"
     with pytest.raises(ValidationError, match="Extra inputs"):
         ScoreEvidenceClaim.model_validate(payload)
@@ -79,6 +70,17 @@ def test_claims_reject_raw_student_text_and_under_threshold_aggregate():
         privacy_threshold=5,
     )
     with pytest.raises(ValidationError, match="隐私样本阈值"):
+        ScoreEvidenceClaim.model_validate(payload)
+
+
+def test_claims_reject_non_numeric_and_out_of_range_values():
+    payload = _claim("advisor-a", ScoreDimension.TOPIC_BREADTH).model_dump()
+    payload["value"] = "很多项目"
+    with pytest.raises(ValidationError, match="0—100 数值"):
+        ScoreEvidenceClaim.model_validate(payload)
+
+    payload["value"] = 101
+    with pytest.raises(ValidationError, match="0—100 之间"):
         ScoreEvidenceClaim.model_validate(payload)
 
 
@@ -103,10 +105,38 @@ def test_coverage_gate_requires_complete_current_approved_dimensions(
     bundles, opened = score_service.public_score_bundles(candidates, now=REVIEWED)
     assert opened["gate_open"] is True
     assert set(bundles) == {"advisor-a"}
-    assert bundles["advisor-a"]["values"]["trait_acumen"] == 60.0
+    assert bundles["advisor-a"]["values"]["project_breadth"] == 60.0
     serialized = str(bundles)
     assert "reviewer-fixture" not in serialized
     assert "source_url" in serialized
+
+    # 客观指标与主观评价分离：bundle 中不出现任何主观六维键
+    values = bundles["advisor-a"]["values"]
+    assert set(values) == {
+        "project_breadth",
+        "topic_breadth",
+        "contact_completeness",
+        "material_completeness",
+    }
+
+    # score_enriched_resources 走模块级 load_match_candidates；替换为测试候选
+    monkeypatch.setattr(
+        score_service,
+        "load_match_candidates",
+        lambda: candidates,
+    )
+    enriched, _ = score_service.score_enriched_resources(
+        [{"advisor_id": "advisor-a", "radar_traits": {"acumen": 99}, "popularity": 88}]
+    )
+    assert enriched[0]["objective_radar"] == {
+        "project_breadth": 60.0,
+        "topic_breadth": 60.0,
+        "contact_completeness": 60.0,
+        "material_completeness": 60.0,
+    }
+    # 历史主观/推断字段被剥离，不随客观证据下发
+    assert "radar_traits" not in enriched[0]
+    assert "popularity" not in enriched[0]
 
     expired = score_service.score_coverage_status(
         candidates,

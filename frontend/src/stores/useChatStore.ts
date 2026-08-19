@@ -16,6 +16,7 @@ import type {
 import { genId } from '@/utils/format'
 import { streamChat } from '@/api/chat'
 import {
+  applyDirections,
   confirmInterviewProfile as confirmInterviewProfileApi,
   editInterviewProfile,
   retryInterviewEnhancement as retryInterviewEnhancementApi,
@@ -89,6 +90,8 @@ function isStoredPortrait(value: unknown) {
   return (
     Array.isArray(value.research_interests) && value.research_interests.every((item) => typeof item === 'string') &&
     (value.interest_statement === null || typeof value.interest_statement === 'string') &&
+    (value.activity_interests === undefined || value.activity_interests === null ||
+      (Array.isArray(value.activity_interests) && value.activity_interests.every((item) => typeof item === 'string'))) &&
     (value.research_mode === null || ['theory', 'engineering', 'mixed', 'undecided'].includes(String(value.research_mode))) &&
     (value.mentorship_style === null || ['high_guidance', 'balanced', 'autonomous', 'undecided'].includes(String(value.mentorship_style))) &&
     (value.career_orientation === null || ['academic', 'industry', 'national_mission', 'mixed', 'undecided'].includes(String(value.career_orientation))) &&
@@ -435,6 +438,24 @@ export const useChatStore = defineStore('chat', () => {
     applyInterviewState(state)
   }
 
+  /** 兴趣探索：把选定候选方向写回画像（确定性映射，不走模型） */
+  async function applyInterestDirections(
+    directionKeys: string[],
+    activities: string[] = [],
+  ) {
+    if (!sessionId.value || profileVersion.value === null) {
+      throw new Error('请先开始访谈')
+    }
+    const state = await applyDirections(
+      sessionId.value,
+      profileVersion.value,
+      directionKeys,
+      activities,
+    )
+    applyInterviewState(state)
+    return state
+  }
+
   /** 中断当前流式 */
   function abort() {
     controller?.abort()
@@ -586,6 +607,7 @@ export const useChatStore = defineStore('chat', () => {
     appendToLast,
     updateInterviewProfile,
     confirmInterviewProfile,
+    applyInterestDirections,
     send,
     retryLastSend,
     retryEnhancement,

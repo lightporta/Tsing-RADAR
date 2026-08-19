@@ -20,6 +20,10 @@ from app.services.recruitment_comments import (
     list_review_queue,
     review_comment,
 )
+from app.services.mentor_verification import (
+    list_campus_cards,
+    review_campus_card,
+)
 
 router = APIRouter(prefix="/admin/mentor", dependencies=[Depends(verify_admin)])
 
@@ -76,6 +80,32 @@ def admin_takedowns(
     db: Session = Depends(get_db),
 ):
     return {"data": list_takedowns(db, status_filter=status)}
+
+
+# —— 校园卡人工审核（认领导师档案的前置身份审核）——
+
+
+@router.get("/campus-cards")
+def admin_campus_cards(
+    status: str | None = None,
+    db: Session = Depends(get_db),
+):
+    return {"data": list_campus_cards(db, status_filter=status)}
+
+
+@router.post("/campus-cards/{card_id}/review")
+def admin_review_campus_card(
+    card_id: str,
+    request: MentorReviewRequest,
+    db: Session = Depends(get_db),
+):
+    return review_campus_card(
+        db,
+        card_id=card_id,
+        action=request.action,
+        reviewer=request.reviewer,
+        note=request.note or "",
+    )
 
 
 @router.post("/takedowns/{req_id}/review")

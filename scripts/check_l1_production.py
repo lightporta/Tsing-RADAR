@@ -45,6 +45,7 @@ SECRET_NAMES = (
     "session_hmac_secret",
     "artifact_signing_secret",
     "llm_api_key",
+    "mail_password",
     "cos_access_key_id",
     "cos_secret_access_key",
     "restore_check_password",
@@ -693,6 +694,7 @@ def run_checks(
                 "session_hmac_secret",
                 "artifact_signing_secret",
                 "llm_api_key",
+                "mail_password",
                 "cos_secret_access_key",
                 "restore_check_password",
                 "qxd_api_key",
@@ -752,6 +754,7 @@ def run_checks(
                         / "artifact_signing_secret",
                         "/run/secrets/llm_api_key": prod_secrets
                         / "llm_api_key",
+                        "/run/secrets/mail_password": prod_secrets / "mail_password",
                         "/run/secrets/cos_access_key_id": prod_secrets
                         / "cos_access_key_id",
                         "/run/secrets/cos_secret_access_key": prod_secrets
@@ -834,6 +837,7 @@ def run_checks(
                         / "artifact_signing_secret",
                         "/run/secrets/llm_api_key": prod_secrets
                         / "llm_api_key",
+                        "/run/secrets/mail_password": prod_secrets / "mail_password",
                         "/run/secrets/cos_access_key_id": prod_secrets
                         / "cos_access_key_id",
                         "/run/secrets/cos_secret_access_key": prod_secrets

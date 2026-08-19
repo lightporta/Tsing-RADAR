@@ -28,9 +28,8 @@ class MatchedAdvisorOut(BaseModel):
     tags: list[str] = []
     score: float
     reason: str
-    radar_traits: dict[str, float]
-    popularity: float
-    sector: str
+    # 客观四维（来自已审核公开证据；主观六维评价走 ratings 管线）
+    objective_radar: Optional[dict[str, float]] = None
     synergy: float = 0
     projects: list[dict] = []
     recruitments: list[dict] = []
@@ -45,9 +44,7 @@ class AdvisorOut(BaseModel):
     tags: list[str] = []
     score: float
     reason: str
-    radar_traits: dict[str, float]
-    popularity: float
-    sector: str
+    objective_radar: Optional[dict[str, float]] = None
     projects: list[dict] = []
     recruitments: list[dict] = []
     contact_email: Optional[str] = None

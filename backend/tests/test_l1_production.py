@@ -6,6 +6,7 @@ import json
 import importlib.util
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -89,6 +90,9 @@ def _production_settings(tmp_path: Path, monkeypatch) -> Settings:
         ),
         LLM_PROVIDER="glm",
         LLM_API_KEY_FILE=_secret(tmp_path, "llm", "llm"),
+        # 生产基线：邮件验证码强制 SMTP，密码走文件挂载（拒绝 console 泄漏）
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(tmp_path, "mail", "mail"),
         S3_ADDRESSING_STYLE="virtual",
         S3_SERVER_SIDE_ENCRYPTION="AES256",
         FILE_SCAN_MODE="clamav",
@@ -97,6 +101,11 @@ def _production_settings(tmp_path: Path, monkeypatch) -> Settings:
         QXD_REMOTE_MEDIA_FETCH_ENABLED=False,
         QXD_ATTACHMENTS_ENABLED=False,
         PUBLIC_BASE_URL=None,
+        # 生产基线：网页测试模式开启但必须配置明确到期时间
+        WEB_TEST_MODE_ENABLED=True,
+        WEB_TEST_MODE_EXPIRES_AT=datetime(
+            2026, 12, 31, 23, 59, 59, tzinfo=timezone(timedelta(hours=8))
+        ),
     )
 
 

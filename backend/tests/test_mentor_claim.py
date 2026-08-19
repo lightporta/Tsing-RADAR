@@ -14,6 +14,7 @@ from tests.mentor_helpers import (
     mentor_dataset,
     mentor_login,
     mentor_web_client,
+    verify_campus_card,
 )
 
 EMAIL = "mentor01@tsinghua.edu.cn"
@@ -95,6 +96,7 @@ def test_unique_candidate_auto_claims_and_creates_profile(
 def test_multi_candidate_claim_goes_to_manual_review(mentor_dataset, caplog):
     client, headers = mentor_web_client()
     mentor_login(client, headers, caplog, email=EMAIL)
+    verify_campus_card(client, headers)
 
     response = client.post(
         "/api/mentor/claim",
@@ -126,6 +128,7 @@ def test_multi_candidate_claim_goes_to_manual_review(mentor_dataset, caplog):
 def test_claim_rejects_mismatched_department(mentor_dataset, caplog):
     client, headers = mentor_web_client()
     mentor_login(client, headers, caplog, email=EMAIL)
+    verify_campus_card(client, headers)
     response = client.post(
         "/api/mentor/claim",
         headers=headers,
@@ -145,6 +148,7 @@ def test_claim_rejects_already_claimed_advisor(mentor_dataset, caplog):
 
     client_b, headers_b = mentor_web_client()
     mentor_login(client_b, headers_b, caplog, email="mentor02@tsinghua.edu.cn")
+    verify_campus_card(client_b, headers_b)
     response = client_b.post(
         "/api/mentor/claim",
         headers=headers_b,
@@ -160,6 +164,7 @@ def test_claim_rejects_already_claimed_advisor(mentor_dataset, caplog):
 def test_admin_rejects_and_approves_manual_claim(mentor_dataset, caplog):
     client, headers = mentor_web_client()
     mentor_login(client, headers, caplog, email=EMAIL)
+    verify_campus_card(client, headers)
     response = client.post(
         "/api/mentor/claim",
         headers=headers,

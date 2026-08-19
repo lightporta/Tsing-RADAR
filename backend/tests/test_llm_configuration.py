@@ -31,6 +31,11 @@ def test_production_resolves_file_backed_glm(tmp_path):
         PRODUCTION_DEPLOYMENT=True,
         LLM_PROVIDER="glm",
         LLM_API_KEY_FILE=path,
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(
+            tmp_path / "mail_password",
+            "synthetic-mail-credential-not-live",
+        ),
     )
 
     assert configured.configured_llm_providers == ("glm",)
@@ -57,11 +62,13 @@ def test_interview_enhancement_timeout_is_bounded(timeout):
         )
 
 
-def test_production_can_explicitly_disable_llm_without_credentials():
+def test_production_can_explicitly_disable_llm_without_credentials(tmp_path):
     configured = Settings(
         _env_file=None,
         PRODUCTION_DEPLOYMENT=True,
         LLM_ENABLED=False,
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(tmp_path / "mail_password"),
     )
 
     assert configured.configured_llm_providers == ()
@@ -161,6 +168,8 @@ def test_llm_secret_permissions_reject_group_or_other_access(tmp_path):
         PRODUCTION_DEPLOYMENT=True,
         LLM_PROVIDER="glm",
         LLM_API_KEY_FILE=str(path),
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(tmp_path / "mail_password"),
     )
     assert configured.llm_secret_file_permissions_valid is False
 

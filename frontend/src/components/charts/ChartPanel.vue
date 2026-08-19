@@ -5,14 +5,12 @@ import MentorDistributionChart from './MentorDistributionChart.vue'
 import RadarChartLarge from './RadarChartLarge.vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
 import { useUserStore } from '@/stores/useUserStore'
-import { TRAITS } from '@/types/advisor'
-import { topTraits } from '@/utils/synergy'
-import { TRAIT_LABEL_MAP } from '@/types/advisor'
+import { OBJECTIVE_DIMENSIONS } from '@/types/advisor'
 
 // =====================================================================
 // 可视化看板栏（文档 §3.5）
 // 默认状态：已发布导师资源的真实院系分布
-// 选中导师状态：大雷达图 + 契合指数 + 匹配理由 + 返回按钮
+// 选中导师状态：客观+主观双雷达图 + 保守排序分 + 匹配理由 + 返回按钮
 // =====================================================================
 
 const advisorStore = useAdvisorStore()
@@ -25,15 +23,15 @@ const resourceTypeLabels: Record<string, string> = {
   advisor_group_catalog_entry: '目录导师组资源',
 }
 
-// 大雷达图下方的 3 条核心匹配理由
+// 大雷达图下方的 3 条核心客观证据亮点（来自已审核公开证据，非主观评价）
 const matchReasons = computed<string[]>(() => {
-  const traits = selected.value?.radar_traits
-  if (!traits) return []
-  const tops = topTraits(traits, 3)
-  return tops.map((k) => {
-    const score = traits[k]
-    return `${TRAIT_LABEL_MAP[k]}：${score} 分 — ${TRAITS.find((t) => t.key === k)?.description}`
-  })
+  const objective = selected.value?.objective_radar
+  if (!objective) return []
+  return [...OBJECTIVE_DIMENSIONS]
+    .map((d) => ({ ...d, score: Number(objective[d.key] ?? 0) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((d) => `${d.label}：${d.score.toFixed(0)} 分 — ${d.description}`)
 })
 </script>
 
@@ -80,13 +78,13 @@ const matchReasons = computed<string[]>(() => {
           :advisor="selected"
           :student-weights="userStore.profile.weights"
         />
-        <div v-if="!selected.radar_traits" class="evidence-overview">
-          <strong>仅展示你的六维需求轮廓</strong>
+        <div v-if="!selected.objective_radar" class="evidence-overview">
+          <strong>该导师暂无已审核客观证据</strong>
           <p>
             证据覆盖 {{ ((selected.evidence_coverage ?? 0) * 100).toFixed(0) }}% ·
             置信度 {{ ((selected.evidence_confidence ?? 0) * 100).toFixed(0) }}%
           </p>
-          <p>导师暂缺已审核六维特质，因此不绘制导师侧橙色轮廓。</p>
+          <p>客观雷达显示灰色虚线视觉基准（无数据、非评分）；主观侧仅展示你的需求轮廓。</p>
         </div>
       </div>
 

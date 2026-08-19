@@ -3,84 +3,70 @@ import { computed, ref, watch } from 'vue'
 import { useEChart } from '@/composables/useEChart'
 import {
   buildRadarOption,
-  traitToArray,
-  defaultTraitArray,
-  STUDENT_SERIES_NAME,
-  ADVISOR_SERIES_NAME,
-  ADVISOR_DEFAULT_SERIES_NAME,
-  STUDENT_RADAR,
-  ADVISOR_RADAR,
-  ADVISOR_DEFAULT_RADAR,
+  defaultObjectiveArray,
+  objectiveToArray,
+  OBJECTIVE_SERIES_NAME,
+  OBJECTIVE_BASELINE_SERIES_NAME,
+  OBJECTIVE_RADAR,
+  OBJECTIVE_DEFAULT_RADAR,
+  OBJECTIVE_RADAR_INDICATORS,
   type RadarSeries,
 } from '@/composables/useRadarOption'
-import type { RadarTraits } from '@/types/advisor'
-import type { TraitKey } from '@/types/advisor'
+import type { ObjectiveRadar } from '@/types/advisor'
 
 // =====================================================================
-// 迷你双轨雷达图（卡片内，80px，无坐标轴标签）
-// 学生需求半透明蓝 + 导师特质实橙
-// 无导师数据时：使用默认基准值50（浅灰虚线）
+// 迷你客观雷达图（卡片内，80px，无坐标轴标签）
+// 橙实线 = 已审核客观证据（objective_radar，四维）
+// 无数据 = 灰色虚线 50 视觉基准（无数据、非评分）
+// 客观指标与学生主观评价严格分离，主观数据不在本图展示
 // =====================================================================
 
 const props = withDefaults(
   defineProps<{
-    advisorTraits?: RadarTraits
-    studentWeights?: Record<TraitKey, number>
+    objectiveRadar?: ObjectiveRadar
     size?: number
   }>(),
   {
     size: 80,
-    advisorTraits: undefined,
-    studentWeights: () => ({
-      acumen: 0,
-      network: 0,
-      mentorship: 0,
-      tolerance: 0,
-      funding: 0,
-      efficiency: 0,
-    }),
+    objectiveRadar: undefined,
   },
 )
 
 const el = ref<HTMLElement | null>(null)
 
-const hasRealTraits = computed(() => {
-  if (!props.advisorTraits) return false
-  const values = Object.values(props.advisorTraits)
-  return values.length === 6 && values.every((v) => typeof v === 'number' && v > 0)
+const hasObjectiveEvidence = computed(() => {
+  if (!props.objectiveRadar) return false
+  const values = Object.values(props.objectiveRadar)
+  return values.length === 4 && values.every((v) => typeof v === 'number' && v >= 0)
 })
 
 const option = computed(() => {
-  const series: RadarSeries[] = [
-      {
-        name: STUDENT_SERIES_NAME,
-        values: traitToArray(props.studentWeights || ({} as Record<TraitKey, number>)),
-        ...STUDENT_RADAR,
-      },
-  ]
+  const series: RadarSeries[] = []
 
-  if (hasRealTraits.value && props.advisorTraits) {
-    // 有真实数据：深色实线
+  if (hasObjectiveEvidence.value && props.objectiveRadar) {
+    // 有已审核客观证据：橙色实线
     series.push({
-      name: ADVISOR_SERIES_NAME,
-      values: traitToArray(props.advisorTraits),
-      ...ADVISOR_RADAR,
+      name: OBJECTIVE_SERIES_NAME,
+      values: objectiveToArray(props.objectiveRadar),
+      ...OBJECTIVE_RADAR,
       lineType: 'solid' as const,
       lineWidth: 2,
     })
   } else {
-    // 无数据：默认基准50，浅色虚线
+    // 无数据：视觉基准 50，浅色虚线（无数据、非评分）
     series.push({
-      name: ADVISOR_DEFAULT_SERIES_NAME,
-      values: defaultTraitArray(),
-      ...ADVISOR_DEFAULT_RADAR,
+      name: OBJECTIVE_BASELINE_SERIES_NAME,
+      values: defaultObjectiveArray(),
+      ...OBJECTIVE_DEFAULT_RADAR,
     })
   }
 
-  return buildRadarOption(
-    series,
-    { showAxisLabel: false, showLegend: false, radius: '62%' },
-  )
+  return buildRadarOption(series, {
+    showAxisLabel: false,
+    showLegend: false,
+    radius: '62%',
+    indicators: OBJECTIVE_RADAR_INDICATORS,
+  })
 })
 
 const { refresh } = useEChart(el, () => option.value)

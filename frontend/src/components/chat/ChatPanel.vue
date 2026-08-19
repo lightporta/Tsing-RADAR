@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import ChatToolbar from './ChatToolbar.vue'
 import ChatMessage from './ChatMessage.vue'
 import InterviewProfileCard from './InterviewProfileCard.vue'
+import InterestExplorationCard from './InterestExplorationCard.vue'
 import QuestionOptions from './QuestionOptions.vue'
 import ChatInput from './ChatInput.vue'
 import { useChatStore } from '@/stores/useChatStore'
@@ -131,6 +132,9 @@ onBeforeUnmount(() => {
 
     <!-- 交互式问题选项（single_choice 时显示） -->
     <QuestionOptions v-if="!chatStore.needsConfirmation" />
+
+    <!-- 兴趣探索入口（研究方向未填写时显示） -->
+    <InterestExplorationCard v-if="!chatStore.needsConfirmation" />
 
     <!-- 底部输入区 -->
     <ChatInput />

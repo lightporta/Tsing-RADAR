@@ -12,8 +12,18 @@ export type TraitKey =
   | 'funding' // 经费实力
   | 'efficiency' // 产出效率
 
-/** 六维雷达特质得分（0-100） */
+/** 六维主观评价得分（0-100，仅来自学生匿名评分聚合） */
 export type RadarTraits = Record<TraitKey, number>
+
+/** 客观雷达四维键（与后端 OBJECTIVE_DIMENSION_KEYS 一一对应） */
+export type ObjectiveDimensionKey =
+  | 'project_breadth' // 项目广度
+  | 'topic_breadth' // 研究主题广度
+  | 'contact_completeness' // 联系信息完整度
+  | 'material_completeness' // 研究资料完整度
+
+/** 客观四维得分（0-100，仅来自已审核公开证据） */
+export type ObjectiveRadar = Record<ObjectiveDimensionKey, number>
 
 /** 行业性质：国 = 国有机构方向，私 = 私营企业方向 */
 export type Sector = '国' | '私'
@@ -43,9 +53,8 @@ export interface Advisor {
   tags: string[]
   score: number
   reason: string
-  radar_traits?: RadarTraits
-  popularity?: number // 仅在有已审核证据时存在
-  sector?: Sector // 仅在有已审核证据时存在
+  /** 客观四维（仅在有已审核公开证据时存在；主观评价走 ratings 管线） */
+  objective_radar?: ObjectiveRadar
   projects: AdvisorProject[]
   recruitments: Recruitment[]
   contact_email?: string
@@ -163,11 +172,11 @@ export interface EvidenceClaim {
   citations: PublicCitation[]
 }
 
-/** 散点图单个数据点 */
+/** 散点图单个数据点（x=项目广度, y=研究主题广度，均来自已审核客观证据） */
 export interface ScatterPoint {
   name: string
-  x: number // 热门指数 0-100
-  y: number // 行业性质 0=国 / 1=私
+  x: number // 项目广度 0-100
+  y: number // 研究主题广度 0-100
   color: string // 院系颜色
   dept: string
   value?: number // 契合度（散点半径映射）
@@ -214,6 +223,28 @@ export const TRAIT_LABEL_MAP: Record<TraitKey, string> = TRAITS.reduce(
   (acc, t) => ({ ...acc, [t.key]: t.label }),
   {} as Record<TraitKey, string>,
 )
+
+/** 客观雷达四维元数据（公开证据支撑，与主观评价严格分离） */
+export interface ObjectiveDimensionMeta {
+  key: ObjectiveDimensionKey
+  label: string
+  description: string
+}
+
+/** 客观四维常量定义（前端单点真相，与后端 OBJECTIVE_DIMENSION_KEYS 对齐） */
+export const OBJECTIVE_DIMENSIONS: ObjectiveDimensionMeta[] = [
+  { key: 'project_breadth', label: '项目广度', description: '在研/历史公开项目的数量与跨度' },
+  { key: 'topic_breadth', label: '研究主题广度', description: '公开研究方向与主题的覆盖面' },
+  { key: 'contact_completeness', label: '联系信息完整度', description: '公开联系渠道的完整程度' },
+  { key: 'material_completeness', label: '研究资料完整度', description: '公开研究资料（论文/主页等）的完整程度' },
+]
+
+/** 客观四维中文键映射 */
+export const OBJECTIVE_LABEL_MAP: Record<ObjectiveDimensionKey, string> =
+  OBJECTIVE_DIMENSIONS.reduce(
+    (acc, d) => ({ ...acc, [d.key]: d.label }),
+    {} as Record<ObjectiveDimensionKey, string>,
+  )
 
 // =====================================================================
 // 学生评价体系 M1（六维匿名评分，纯分数不含文字依据）

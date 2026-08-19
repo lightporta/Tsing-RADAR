@@ -28,6 +28,13 @@ shutil.rmtree(PRIVATE_UPLOAD_ROOT, ignore_errors=True)
 os.environ["PRIVATE_UPLOAD_ROOT"] = str(PRIVATE_UPLOAD_ROOT)
 os.environ["OBJECT_STORAGE_LOCAL_ROOT"] = str(PRIVATE_UPLOAD_ROOT)
 
+# 本地 macOS 开发环境：为 PDF/DOCX 生成测试自动提供 CJK 字体
+# （生产镜像内置字体；其他环境需自行配置 DOCUMENT_CJK_FONT_PATH）
+if not os.environ.get("DOCUMENT_CJK_FONT_PATH"):
+    _mac_cjk_font = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+    if Path(_mac_cjk_font).is_file():
+        os.environ["DOCUMENT_CJK_FONT_PATH"] = _mac_cjk_font
+
 # 干净检出不得依赖本机未跟踪的导师 evidence。测试显式使用仓库中经过
 # 发布门校验的 0 记录治理种子；缺失/损坏文件仍由聚焦负向测试覆盖。
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -90,6 +97,7 @@ def isolate_mentor_service_records():
     from app.models.email_verification_code import EmailVerificationCode
     from app.models.mentor_account import MentorAccount
     from app.models.mentor_claim import MentorClaim
+    from app.models.mentor_campus_card import MentorCampusCard
     from app.models.mentor_profile import MentorProfile
     from app.models.mentor_profile_edit import MentorProfileEdit
     from app.models.takedown_request import TakedownRequest
@@ -97,6 +105,7 @@ def isolate_mentor_service_records():
     with SessionLocal() as db:
         db.query(MentorProfileEdit).delete(synchronize_session=False)
         db.query(TakedownRequest).delete(synchronize_session=False)
+        db.query(MentorCampusCard).delete(synchronize_session=False)
         db.query(MentorClaim).delete(synchronize_session=False)
         db.query(MentorProfile).delete(synchronize_session=False)
         db.query(EmailVerificationCode).delete(synchronize_session=False)

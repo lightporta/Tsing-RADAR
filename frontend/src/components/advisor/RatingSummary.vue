@@ -3,10 +3,12 @@ import { computed, onMounted } from 'vue'
 import { TRAITS } from '@/types/advisor'
 import { displayTime } from '@/utils/format'
 import { useRatingSummary } from '@/composables/useRatingSummary'
+import { RATING_MIN_DIMENSION_N } from '@/composables/useRadarOption'
 
 // =====================================================================
 // 学生评价聚合摘要（M1）
 // 维度分布条 + 样本量 + 采集时间；N=0 诚实空态「暂无学生评价」
+// 单维不足 8 份评价不展示数值（防低样本暴露与操纵）
 // =====================================================================
 
 const props = defineProps<{ advisorId: string }>()
@@ -24,12 +26,17 @@ const rows = computed(() => {
   if (!current) return []
   return TRAITS.map((trait) => {
     const dimension = current.dimensions[trait.key]
-    const value = dimension?.value ?? null
     const n = dimension?.n ?? 0
+    // 门槛内才展示数值；不足时 value 视为不可展示（与后端门槛一致）
+    const value =
+      dimension?.value != null && n >= RATING_MIN_DIMENSION_N
+        ? dimension.value
+        : null
     return {
       label: trait.label,
       value,
       n,
+      insufficient: n > 0 && n < RATING_MIN_DIMENSION_N,
       percent: value != null ? (value / 5) * 100 : 0,
     }
   })
@@ -51,7 +58,10 @@ const rows = computed(() => {
             <span class="summary-label">{{ row.label }}</span>
             <span v-if="row.value != null" class="summary-value">
               {{ row.value.toFixed(1) }}
-              <small v-if="row.n < 3" class="insufficient">样本不足</small>
+            </span>
+            <span v-else-if="row.insufficient" class="summary-value dim">
+              样本不足
+              <small class="insufficient">不足 {{ RATING_MIN_DIMENSION_N }} 份不展示</small>
             </span>
             <span v-else class="summary-value dim">暂无</span>
           </div>
@@ -60,7 +70,7 @@ const rows = computed(() => {
           </div>
         </div>
       </div>
-      <p class="summary-disclaimer">社区主观评价，非官方事实</p>
+      <p class="summary-disclaimer">社区主观评价，非官方事实；单维不足 {{ RATING_MIN_DIMENSION_N }} 份评价不展示</p>
     </template>
   </div>
 </template>

@@ -18,6 +18,7 @@ from app.schemas.mentor_scores import (
     ScoreReleaseStatus,
 )
 from app.services.data_loader import load_match_candidates
+from app.services.radar_chart import OBJECTIVE_DIMENSION_KEYS
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -191,38 +192,30 @@ def public_score_bundles(
 def score_enriched_resources(
     records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Strip legacy score fields and overlay only gate-released evidence."""
+    """Strip legacy score fields and overlay only gate-released objective evidence.
+
+    客观指标与匿名主观评价严格分离：本函数只叠加客观四维（objective_radar）
+    与逐维证据引用；主观六维评价走 advisor_ratings 管线，永不来自评分文件。
+    """
     bundles, status = public_score_bundles()
     enriched: list[dict[str, Any]] = []
     for source in records:
         item = copy.deepcopy(source)
-        for field in ("radar_traits", "popularity", "sector", "synergy"):
+        # 剥离历史主观/推断字段（含旧六维特质与热门度/体制属性）
+        for field in (
+            "radar_traits",
+            "popularity",
+            "sector",
+            "synergy",
+            "compatibility_evidence",
+            "objective_radar",
+        ):
             item.pop(field, None)
         bundle = bundles.get(str(item.get("advisor_id")))
         if bundle:
             values = bundle["values"]
-            item["radar_traits"] = {
-                key: values[f"trait_{key}"]
-                for key in (
-                    "acumen",
-                    "network",
-                    "mentorship",
-                    "tolerance",
-                    "funding",
-                    "efficiency",
-                )
-            }
-            item["popularity"] = values["popularity_index"]
-            item["sector"] = (
-                "国" if values["sector_attribute"] == "state" else "私"
-            )
-            item["compatibility_evidence"] = {
-                "research_mode": values["compatibility_research_mode"],
-                "mentorship_style": values["compatibility_mentorship_style"],
-                "career_orientation": values[
-                    "compatibility_career_orientation"
-                ],
-                "innovation_risk": values["compatibility_innovation_risk"],
+            item["objective_radar"] = {
+                key: float(values[key]) for key in OBJECTIVE_DIMENSION_KEYS
             }
             item["score_evidence"] = bundle["citations"]
         enriched.append(item)

@@ -1,4 +1,4 @@
-"""四象限散点图数据路由。"""
+"""散点图数据路由（客观数据驱动，与主观评价严格分离）。"""
 
 from fastapi import APIRouter
 
@@ -11,18 +11,21 @@ router = APIRouter()
 
 @router.get("/scatter")
 def scatter():
-    """返回散点图数据：x=popularity, y=sector(0=国,1=私), color 按院系分配。"""
+    """返回散点图数据：x=项目广度, y=研究主题广度（已审核客观证据），color 按院系分配。"""
     resources, gate = enriched_mentor_resources(load_mentors())
     points = []
     for m in resources:
-        if m.get("popularity") is None or m.get("sector") not in {"国", "私"}:
+        objective = m.get("objective_radar") or {}
+        x = objective.get("project_breadth")
+        y = objective.get("topic_breadth")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
             continue
         dept = m.get("dept", "")
         points.append(
             {
                 "name": m.get("name", ""),
-                "x": float(m["popularity"]),
-                "y": 0 if m["sector"] == "国" else 1,
+                "x": float(x),
+                "y": float(y),
                 "color": DEPT_COLORS.get(dept, DEPT_FALLBACK_COLOR),
                 "dept": dept,
             }
@@ -32,6 +35,8 @@ def scatter():
         "meta": {
             **mentor_data_summary(),
             "score_evidence_gate": gate,
+            "x_dimension": "project_breadth",
+            "y_dimension": "topic_breadth",
             "omitted_without_axis_evidence": (
                 len(resources) - len(points)
             ),

@@ -6,6 +6,7 @@
 import { get, patch, post, remove } from './request'
 import type {
   MentorAuthStatus,
+  MentorCampusCardStatus,
   MentorCandidate,
   MentorClaimRecord,
   MentorClaimResult,
@@ -38,6 +39,22 @@ export function mentorLogin(email: string, code: string) {
 
 export function mentorLogout() {
   return post<{ logged_in: false }>('/api/mentor/auth/logout')
+}
+
+// ---------------------------------------------------------------- 校园卡
+// 认领导师档案的前置身份审核：邮箱验证码只用于登录
+
+export function fetchCampusCardStatus() {
+  return get<MentorCampusCardStatus>('/api/mentor/verification/campus-card')
+}
+
+export function uploadCampusCard(file: File) {
+  const form = new FormData()
+  form.append('upload', file)
+  return post<{ status: string; card_id: string; scan_method: string }>(
+    '/api/mentor/verification/campus-card',
+    form,
+  )
 }
 
 // ---------------------------------------------------------------- 认领

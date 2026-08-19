@@ -1,10 +1,14 @@
-"""全局常量（六维雷达键、院系颜色、排序指标）。"""
+"""全局常量（六维主观评价键、院系颜色、排序指标）。
 
-# 六维雷达特质顺序（与 radar_traits 字段一一对应）
+注意：六维特质键（TRAIT_KEYS）只用于学生匿名主观评价体系（advisor ratings），
+客观雷达四维见 services/radar_chart.py 的 OBJECTIVE_DIMENSION_KEYS。
+"""
+
+# 六维主观评价顺序（与 advisor ratings 的 scores 字段一一对应）
 TRAIT_KEYS = ["acumen", "network", "mentorship", "tolerance", "funding", "efficiency"]
 
-# 排序支持的指标键
-SORT_METRICS = {"acumen", "network", "mentorship", "tolerance", "funding", "efficiency", "popularity"}
+# 排序支持的指标键（主观六维；客观维度不提供无证据排序）
+SORT_METRICS = {"acumen", "network", "mentorship", "tolerance", "funding", "efficiency"}
 
 # 院系 → 散点颜色（hex）
 DEPT_COLORS = {

@@ -201,8 +201,8 @@ def test_submit_aggregate_summary_closed_loop():
     assert summary_resp.status_code == 200
     summary = summary_resp.json()
     assert summary["total_n"] == 1
-    # (15+4)/6 ≈ 3.167
-    assert summary["dimensions"]["acumen"] == {"value": 3.167, "n": 1}
+    # 展示门槛：n=1 < ADVISOR_RATING_MIN_SAMPLES(8)，API 不下发数值（防低样本暴露）
+    assert summary["dimensions"]["acumen"] == {"value": None, "n": 1}
     assert summary["last_collected_at"] is not None
 
     # 脱敏列表：不暴露打分人、不返回单人分数
@@ -288,6 +288,54 @@ def test_summary_empty_state_is_honest():
     listed = client.get("/api/advisors/ADV_EMPTY_0/ratings")
     assert listed.status_code == 200
     assert listed.json()["data"] == []
+
+
+def test_summary_display_threshold_hides_low_sample_dimensions():
+    """展示门槛：单维 n<8 时 API 不下发数值；n>=8 正常下发。
+
+    服务层 get_summary 保留原始聚合（物化表不为展示门槛妥协），
+    门槛仅在公开 API 层过滤（防低样本暴露与操纵）。
+    """
+    with SessionLocal() as db:
+        # 8 份全维评分 → 各维 n=8，达门槛
+        for index in range(8):
+            submit_rating(
+                db,
+                advisor_id="ADV_THRESHOLD_FULL",
+                rater_principal=f"usr_thr_full_{index}",
+                scores=_scores(4),
+                period_in_group=None,
+            )
+        # 2 份评分 → 各维 n=2，不达门槛
+        for index in range(2):
+            submit_rating(
+                db,
+                advisor_id="ADV_THRESHOLD_LOW",
+                rater_principal=f"usr_thr_low_{index}",
+                scores=_scores(5),
+                period_in_group=None,
+            )
+        db.commit()
+        # 服务层原始聚合：低样本导师的 value 照常物化
+        raw = get_summary(db, "ADV_THRESHOLD_LOW")
+        assert raw is not None
+        assert raw["dimensions"]["acumen"]["value"] is not None
+
+    client, _headers = _web_client()
+    full = client.get("/api/advisors/ADV_THRESHOLD_FULL/ratings/summary")
+    assert full.status_code == 200
+    full_body = full.json()
+    assert full_body["total_n"] == 8
+    for key in TRAIT_KEYS:
+        assert full_body["dimensions"][key]["n"] == 8
+        assert full_body["dimensions"][key]["value"] is not None
+
+    low = client.get("/api/advisors/ADV_THRESHOLD_LOW/ratings/summary")
+    assert low.status_code == 200
+    low_body = low.json()
+    assert low_body["total_n"] == 2
+    for key in TRAIT_KEYS:
+        assert low_body["dimensions"][key] == {"value": None, "n": 2}
 
 
 def test_submit_writes_audit_event_without_payload():

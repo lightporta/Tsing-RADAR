@@ -7,6 +7,7 @@
 
 from functools import lru_cache
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
 from urllib.parse import quote
@@ -95,7 +96,9 @@ class Settings(BaseSettings):
     # —— 导师服务邮件（邮箱验证码登录）——
     # MAIL_MODE=console：验证码仅打印到服务端日志（开发/测试默认，不发送）；
     # MAIL_MODE=smtp：走 SMTP 发送（生产，须配置 MAIL_HOST/USER/PASSWORD/MAIL_FROM）。
+    # 生产禁止 console（验证码不得进日志）；SMTP 密码用 MAIL_PASSWORD_FILE 文件挂载。
     MAIL_MODE: str = "console"
+    MAIL_PASSWORD_FILE: Optional[str] = None
     MAIL_HOST: Optional[str] = "smtp.tsinghua.edu.cn"
     MAIL_PORT: int = Field(default=465, ge=1, le=65535)
     MAIL_USER: Optional[str] = None
@@ -111,6 +114,16 @@ class Settings(BaseSettings):
     # —— 学生评价（M1）——
     # 同一评分主体每日提交上限（服务端确定性计数；IP 频控随 B-05 上线前补齐）
     ADVISOR_RATING_DAILY_LIMIT: int = Field(default=5, ge=1, le=100)
+    # 主观雷达展示门槛：单维样本量低于该值时 API 不下发该维数值
+    # （防低样本暴露与操纵；与前端 RATING_MIN_DIMENSION_N 保持一致）
+    ADVISOR_RATING_MIN_SAMPLES: int = Field(default=8, ge=1, le=100)
+
+    # —— 网页免认证测试模式（未实名认证测试身份）——
+    # 接入清华统一身份认证之前，网页通道整体是临时测试模式；到期后端
+    # 自动停止该通道的云端功能（fail-closed）。生产 preflight 要求显式
+    # 配置到期时间；未配置时不做到期拦截（本地开发默认）。
+    WEB_TEST_MODE_ENABLED: bool = True
+    WEB_TEST_MODE_EXPIRES_AT: Optional[datetime] = None
 
     # —— 招募评论区 ——
     # 服务内确定性限频：同一评论主体每日上限 / 单帖每主体上限（超限 429）
@@ -248,6 +261,7 @@ class Settings(BaseSettings):
             ("ARTIFACT_SIGNING_SECRET", "ARTIFACT_SIGNING_SECRET_FILE"),
             ("S3_ACCESS_KEY_ID", "S3_ACCESS_KEY_ID_FILE"),
             ("S3_SECRET_ACCESS_KEY", "S3_SECRET_ACCESS_KEY_FILE"),
+            ("MAIL_PASSWORD", "MAIL_PASSWORD_FILE"),
         )
         for target_name, file_name in mappings:
             secret_path = getattr(self, file_name)
@@ -346,6 +360,18 @@ class Settings(BaseSettings):
         else:
             credentials = direct_credentials
         object.__setattr__(self, "_llm_credentials", credentials)
+
+        if self.PRODUCTION_DEPLOYMENT:
+            if self.MAIL_MODE != "smtp":
+                raise ValueError(
+                    "production deployment requires MAIL_MODE=smtp "
+                    "(console mode would leak verification codes to logs)"
+                )
+            if self.MAIL_MODE == "smtp" and not self.MAIL_PASSWORD_FILE:
+                raise ValueError(
+                    "production deployment requires MAIL_PASSWORD_FILE "
+                    "(direct SMTP passwords are not accepted)"
+                )
         return self
 
     @property
@@ -378,6 +404,7 @@ class Settings(BaseSettings):
                 self.QXD_API_KEY_FILE,
                 self.QXD_END_USER_SIGNING_SECRET_FILE,
                 self.LLM_API_KEY_FILE,
+                self.MAIL_PASSWORD_FILE,
             )
             if value
         )

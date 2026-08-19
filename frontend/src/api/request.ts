@@ -148,5 +148,17 @@ export function bootstrapSession() {
   )
 }
 
+/** 网页免认证测试模式公开状态（未实名认证测试身份标注）。 */
+export interface WebTestModeStatus {
+  enabled: boolean
+  label: string
+  expires_at: string | null
+  active: boolean
+}
+
+export function fetchWebTestMode() {
+  return service.get<unknown, WebTestModeStatus>('/api/web-test-mode')
+}
+
 export type { ApiResponse }
 export default service

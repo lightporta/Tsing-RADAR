@@ -1,9 +1,11 @@
-"""确定性雷达图渲染（SVG + reportlab Drawing）。
+"""确定性客观雷达图渲染（SVG + reportlab Drawing）。
 
 设计约定（与前端 useRadarOption.ts / variables.scss 对齐）：
 - 输出确定性：固定尺寸/坐标/文本，无时间戳、无随机值，可直接做字节级合同测试；
-- 数据源仅为 mentor_score_governance.public_score_bundles 输出的已审核评分（公开数据）；
-- 视觉语义：导师特质 = 橙色实线（#FF9500），网格/文字沿用前端设计令牌色。
+- 数据源仅为 mentor_score_governance.public_score_bundles 输出的已审核客观评分；
+- 客观四维与匿名主观评价严格分离：本渲染器只画公开证据支撑的客观维度，
+  学生主观六维评价走 advisor_ratings 管线，不进入本图；
+- 视觉语义：客观证据 = 橙色实线（#FF9500），网格/文字沿用前端设计令牌色。
 """
 
 from __future__ import annotations
@@ -12,19 +14,20 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.constants import TRAIT_KEYS
+# 客观雷达四维（顺序即渲染轴序）
+OBJECTIVE_DIMENSION_KEYS: list[str] = [
+    "project_breadth",
+    "topic_breadth",
+    "contact_completeness",
+    "material_completeness",
+]
 
 RADAR_DIMENSION_LABELS: dict[str, str] = {
-    "acumen": "学术敏锐度",
-    "network": "人脉资源",
-    "mentorship": "指导意愿",
-    "tolerance": "性格包容度",
-    "funding": "经费实力",
-    "efficiency": "产出效率",
+    "project_breadth": "项目广度",
+    "topic_breadth": "研究主题广度",
+    "contact_completeness": "联系信息完整度",
+    "material_completeness": "研究资料完整度",
 }
-
-# public_score_bundles 的 values 键名（trait_* 前缀）
-TRAIT_VALUE_KEYS: list[str] = [f"trait_{key}" for key in TRAIT_KEYS]
 
 ADVISOR_TRAIT_COLOR = "#FF9500"
 ADVISOR_TRAIT_FILL_OPACITY = 0.45
@@ -40,7 +43,7 @@ GRID_STEPS = (20, 40, 60, 80, 100)
 
 @dataclass(frozen=True)
 class RadarSeries:
-    """单条雷达系列；values 顺序与 TRAIT_KEYS 对齐，取值 0~100。"""
+    """单条雷达系列；values 顺序与 OBJECTIVE_DIMENSION_KEYS 对齐，取值 0~100。"""
 
     name: str
     values: list[float]
@@ -65,12 +68,12 @@ def _vertex(cx: float, cy: float, radius: float, index: int, count: int) -> tupl
 def radar_series_from_bundle(
     bundle: dict[str, Any],
     *,
-    name: str = "导师特质（已审核评分）",
+    name: str = "客观证据（已审核）",
 ) -> RadarSeries | None:
-    """从 public_score_bundles 的单个 bundle 提取六维系列；缺任一维度返回 None。"""
+    """从 public_score_bundles 的单个 bundle 提取客观四维系列；缺任一维度返回 None。"""
     values_raw = bundle.get("values") or {}
     values: list[float] = []
-    for key in TRAIT_VALUE_KEYS:
+    for key in OBJECTIVE_DIMENSION_KEYS:
         raw = values_raw.get(key)
         if not isinstance(raw, (int, float)) or isinstance(raw, bool):
             return None
@@ -85,7 +88,7 @@ def build_radar_series_for_advisor(
     advisor_id: str,
     bundles: dict[str, dict[str, Any]] | None = None,
 ) -> RadarSeries | None:
-    """按 advisor_id 取已审核六维评分；门控关闭或无该导师数据时返回 None（诚实空态）。"""
+    """按 advisor_id 取已审核客观四维评分；门控关闭或无数据时返回 None（诚实空态）。"""
     if bundles is None:
         from app.services.mentor_score_governance import public_score_bundles
 
@@ -99,15 +102,15 @@ def build_radar_series_for_advisor(
 def render_radar_svg(
     *,
     series: list[RadarSeries],
-    title: str = "导师特质雷达图",
+    title: str = "导师客观证据雷达图",
     sample_note: str | None = None,
     width: int = 640,
     height: int = 480,
 ) -> str:
-    """确定性 SVG 字符串：标题 + 六轴雷达 + 图例 + 样本说明。"""
+    """确定性 SVG 字符串：标题 + 四轴客观雷达 + 图例 + 样本说明。"""
     cx, cy = width / 2.0, height / 2.0 + 10
     radius = min(width, height) * 0.30
-    axis_count = len(TRAIT_KEYS)
+    axis_count = len(OBJECTIVE_DIMENSION_KEYS)
     parts: list[str] = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
@@ -142,7 +145,7 @@ def render_radar_svg(
         )
 
     # 轴标签
-    for i, key in enumerate(TRAIT_KEYS):
+    for i, key in enumerate(OBJECTIVE_DIMENSION_KEYS):
         lx, ly = _vertex(cx, cy, radius + 22, i, axis_count)
         anchor = "middle"
         if lx < cx - 4:
@@ -215,7 +218,7 @@ def render_radar_drawing(
     drawing = Drawing(width, height)
     cx, cy = width / 2.0, height / 2.0 + 6
     radius = min(width, height) * 0.30
-    axis_count = len(TRAIT_KEYS)
+    axis_count = len(OBJECTIVE_DIMENSION_KEYS)
     stroke_color = colors.HexColor(ADVISOR_TRAIT_COLOR)
     grid_color = colors.HexColor(GRID_COLOR)
     axis_color = colors.HexColor(AXIS_COLOR)
@@ -252,7 +255,7 @@ def render_radar_drawing(
             Line(cx, cy, x, y, strokeColor=axis_color, strokeWidth=0.5)
         )
 
-    for i, key in enumerate(TRAIT_KEYS):
+    for i, key in enumerate(OBJECTIVE_DIMENSION_KEYS):
         lx, ly = _vertex(cx, cy, radius + 16, i, axis_count)
         drawing.add(
             String(

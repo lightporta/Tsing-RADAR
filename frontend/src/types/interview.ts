@@ -65,6 +65,8 @@ export interface DraftHardConstraint {
 export interface InterviewPortrait {
   research_interests: string[]
   interest_statement: string | null
+  /** 兴趣探索（活动兴趣题）选择的活动键；仅用于回显，不参与匹配 */
+  activity_interests?: string[]
   research_mode: 'theory' | 'engineering' | 'mixed' | 'undecided' | null
   mentorship_style: 'high_guidance' | 'balanced' | 'autonomous' | 'undecided' | null
   career_orientation:
@@ -78,6 +80,43 @@ export interface InterviewPortrait {
   hard_constraints: HardConstraint[] | null
   draft_hard_constraints: DraftHardConstraint[]
   unresolved_hard_constraints: string[] | null
+}
+
+// =====================================================================
+// 兴趣探索（活动兴趣题 → 候选研究方向；确定性映射，GLM 不改变结果）
+// =====================================================================
+
+/** 研究场景活动选项（O*NET Interest Profiler 思路改写） */
+export interface ActivityOption {
+  value: string
+  label: string
+  description: string
+}
+
+/** 活动兴趣选择题定义 */
+export interface ActivityQuestion {
+  version: 'activity-interests-v1'
+  prompt: string
+  options: ActivityOption[]
+  min_selections: number
+  max_selections: number
+}
+
+/** 候选研究方向（含详细介绍与命中活动） */
+export interface DirectionCandidate {
+  key: string
+  label: string
+  description: string
+  matched_activities: ActivityOption[]
+  match_score: number
+}
+
+/** 候选方向建议响应 */
+export interface InterestExplorationSuggestions {
+  version: 'activity-interests-v1'
+  basis: 'deterministic_activity_mapping'
+  candidates: DirectionCandidate[]
+  hint: string
 }
 
 export interface InterviewQuestionOption {

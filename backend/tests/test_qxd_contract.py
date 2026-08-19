@@ -396,8 +396,27 @@ def test_qxd_metadata_log_excludes_user_value_message_and_session(monkeypatch, c
     serialized = "\n".join(record.getMessage() for record in caplog.records)
     assert raw_user not in serialized
     assert raw_message not in serialized
-    assert qxd_chat._trial_state.session_id not in serialized
-    assert qxd_chat._trial_state.subject_id not in serialized
+    # P-A：body user 字段映射为持久主体；日志同样不得出现主体与派生会话 ID
+    fingerprint = hashlib.sha256(
+        f"qxd-user:{raw_user}".encode("utf-8")
+    ).hexdigest()
+    with SessionLocal() as db:
+        mapping = (
+            db.query(ExternalIdentity)
+            .filter(
+                ExternalIdentity.provider == "qxd_user",
+                ExternalIdentity.claim_fingerprint == fingerprint,
+            )
+            .one()
+        )
+    assert mapping.subject_id not in serialized
+    derived_session = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"tsing-radar:qxd-interview:{mapping.subject_id}:{raw_user}",
+        )
+    )
+    assert derived_session not in serialized
     qxd_chat._reset_trial_state_for_tests()
 
 
@@ -1150,14 +1169,14 @@ def test_qxd_radar_intent_without_approved_scores_is_honest_and_attachmentless(
     assert response.status_code == 200
     payload = response.json()
     content = payload["choices"][0]["message"]["content"]
-    assert "暂无候选导师的已审核六维评分" in content
+    assert "暂无候选导师的已审核客观评分" in content
     assert "x_soda" not in payload
 
 
 def test_qxd_radar_intent_issues_signed_svg_attachment(monkeypatch):
     _patch_recommend_ready(monkeypatch, _matched_outcome())
     bundle = {
-        "values": {f"trait_{key}": 80 for key in qxd_chat.TRAIT_KEYS}
+        "values": {key: 80 for key in qxd_chat.OBJECTIVE_DIMENSION_KEYS}
     }
     monkeypatch.setattr(
         qxd_chat,
@@ -1165,8 +1184,8 @@ def test_qxd_radar_intent_issues_signed_svg_attachment(monkeypatch):
         lambda: ({"T00001": bundle}, {"release_version": "v-test"}),
     )
     series = RadarSeries(
-        name="导师特质（已审核评分）",
-        values=[80.0] * 6,
+        name="客观证据（已审核）",
+        values=[80.0] * 4,
         color=ADVISOR_TRAIT_COLOR,
     )
     monkeypatch.setattr(
@@ -1190,17 +1209,18 @@ def test_qxd_radar_intent_issues_signed_svg_attachment(monkeypatch):
         "https://agent.example.edu/v1/radar/"
     )
     assert attachment["fileName"].endswith(".svg")
-    assert "已生成 测试导师 的导师特质雷达图" in payload["choices"][0]["message"][
-        "content"
-    ]
+    content = payload["choices"][0]["message"]["content"]
+    assert "已生成 测试导师 的客观证据雷达图" in content
+    # 客观与主观分离声明
+    assert "客观指标与匿名主观评价严格分离" in content
 
 
 def test_radar_chart_endpoint_serves_deterministic_svg_and_rejects_tampering(
     monkeypatch,
 ):
     series = RadarSeries(
-        name="导师特质（已审核评分）",
-        values=[80.0, 60.0, 90.0, 70.0, 50.0, 85.0],
+        name="客观证据（已审核）",
+        values=[80.0, 60.0, 90.0, 70.0],
         color=ADVISOR_TRAIT_COLOR,
     )
     monkeypatch.setattr(
