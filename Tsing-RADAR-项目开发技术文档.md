@@ -2,8 +2,8 @@
 ## Research Advisor Dimension Analysis Radar / 清研寻师雷达
 
 > 部署平台：清华大学"清小搭"智能体广场
-> 文档版本：v2.1
-> 更新日期：2026年7月
+> 文档版本：v3.0
+> 更新日期：2026年8月
 
 ---
 
@@ -18,6 +18,7 @@
 7. 测试计划
 8. 部署与运维
 9. 模型训练与迭代闭环
+10. v3.0 导师服务与表达层增强
 
 ---
 
@@ -93,6 +94,32 @@
 
 - 导师卡片开放点赞/点踩评价与评论输入。
 - 反馈数据统一入库，用于模型迭代与效果优化。
+
+#### 2.1.10 导师服务门户（v3.0）
+
+- 导师以清华邮箱接收验证码登录，支持校园卡身份核验。
+- 导师认领治理档案后可对个人主页字段（研究方向、联系方式等）发起字段级编辑，进入管理员审批队列。
+- 意向中心：导师查看学生站内投递意向，管理已读/拒绝状态。
+- 招募管理：导师发布、编辑、下架自己的招募信息。
+- 隐私控制：导师可申请隐藏联系方式或申请档案下架（takedown）。
+
+#### 2.1.11 导师评分社区（v3.0）
+
+- 学生对导师六维特质（学术敏锐度/人脉资源/指导意愿/性格包容度/经费实力/产出效率）提交主观评分。
+- 聚合展示设 ≥8 样本阈值：任一维度样本数不足时不出值，避免小样本误导。
+- 招募详情页支持评论、点赞与举报，内容经审核后展示。
+
+#### 2.1.12 兴趣探索（v3.0）
+
+- 面向研究方向不明确的学生：从 8 个研究场景（"想做什么样的活动"）多选入手。
+- 经静态映射表确定性推导候选研究方向（10 方向池，取 top-5），零 LLM 依赖、结果可复现。
+- 选定方向写回画像 `research_interests`，进入后续匹配链路。
+
+#### 2.1.13 访谈回复表达层增强（v3.0）
+
+- LLM 基于确定性事实包（访谈状态投影）整段自然重写访谈回复，提升对话体验。
+- 诚实性红线：画像确认门（needs_confirmation）与匹配结果（recommend_ready）不增强，保持确定性原文。
+- 平台探测请求跳过；无凭据或任何失败（超时/校验不过）完全降级回固定模板，fail-closed。
 
 ### 2.2 非功能需求 (Non-Functional Requirements)
 
@@ -425,6 +452,102 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 | label | FLOAT | 契合度标签 |
 | created_at | TIMESTAMP | 创建时间 |
 
+### 5.3 v3.0 新增业务数据表
+
+#### 表 10：mentor_accounts（导师账户表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| mentor_id | UUID | 主键 |
+| email | VARCHAR(100) | 唯一，清华邮箱（仅机构邮箱） |
+| display_name | VARCHAR(50) | 姓名 |
+| status | VARCHAR(20) | 账户状态 |
+| created_at | TIMESTAMP | 注册时间 |
+
+#### 表 11：mentor_claims（导师档案认领表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| claim_id | UUID | 主键 |
+| mentor_id | UUID | 外键，导师账户 |
+| advisor_id | VARCHAR(20) | 外键，治理档案导师 ID |
+| status | VARCHAR(20) | 认领状态（pending/approved/rejected） |
+| evidence | JSON | 认领证据 |
+| created_at | TIMESTAMP | 申请时间 |
+
+#### 表 12：mentor_profiles（导师公开档案表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| advisor_id | VARCHAR(20) | 主键，治理档案导师 ID |
+| verified_profile | JSON | 已验证字段（含研究方向、联系方式） |
+| publication_status | VARCHAR(20) | restricted / published |
+| updated_at | TIMESTAMP | 最后更新时间 |
+
+#### 表 13：mentor_profile_edits（导师档案编辑审批表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| edit_id | UUID | 主键 |
+| mentor_id | UUID | 外键，发起编辑的导师 |
+| field_name | VARCHAR(50) | 编辑字段名 |
+| new_value | TEXT | 新值（diff 存档） |
+| review_status | VARCHAR(20) | pending_review / approved / rejected |
+| reviewed_by | VARCHAR(50) | 审批管理员 |
+| created_at | TIMESTAMP | 提交时间 |
+
+#### 表 14：mentor_campus_cards（导师校园卡核验表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| verification_id | UUID | 主键 |
+| mentor_id | UUID | 外键，导师账户 |
+| card_last4 | VARCHAR(8) | 校园卡号后 4 位（脱敏） |
+| verification_status | VARCHAR(20) | 核验状态 |
+| verified_at | TIMESTAMP | 核验时间 |
+
+#### 表 15：advisor_ratings（导师评分表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| rating_id | UUID | 主键 |
+| advisor_id | VARCHAR(20) | 外键，导师 ID |
+| student_id | VARCHAR(20) | 外键，学生学号 |
+| acumen…efficiency | SMALLINT | 六维评分（0-10） |
+| created_at | TIMESTAMP | 评分时间 |
+
+#### 表 16：advisor_rating_summary（导师评分聚合表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| advisor_id | VARCHAR(20) | 主键 |
+| {dim}_value / {dim}_n | FLOAT / INT | 各维度聚合值与样本数（服务层保留原始聚合，API 层过滤 n<8） |
+| last_collected_at | TIMESTAMP | 最后收集时间 |
+
+#### 表 17：recruitment_comments（招募评论表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| comment_id | UUID | 主键 |
+| recruit_id | UUID | 外键，招募 ID |
+| student_id | VARCHAR(20) | 评论学生 |
+| content | TEXT | 评论内容（经内容审核） |
+| moderation_status | VARCHAR(20) | 审核状态 |
+| created_at | TIMESTAMP | 评论时间 |
+
+#### 表 18：takedown_requests（档案下架申请表）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| request_id | UUID | 主键 |
+| mentor_id | UUID | 外键，发起导师 |
+| advisor_id | VARCHAR(20) | 目标档案 |
+| reason | TEXT | 下架理由 |
+| status | VARCHAR(20) | 处理状态 |
+| created_at | TIMESTAMP | 申请时间 |
+
+> 完整迁移链见 `backend/alembic/versions/`（0001-0012）；以上为业务语义摘要，字段以 ORM 模型为准。
+
 ---
 
 ## 6. API 接口文档 (API Documentation)
@@ -471,11 +594,28 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 | 导师列表查询 | GET | /api/mentors | 返回导师基础信息，含热门指数、行业性质扩展字段 |
 | 导师排序 | GET | /api/mentors/sort?metric={indicator} | 按指定指标降序重排导师列表，支持7项指标 |
 | 散点图数据 | GET | /api/scatter | 返回散点图所需的热门指数与行业性质数据 |
+| 动态访谈（OpenAI 协议） | POST | /api/v1/chat/completions | 清小搭入口；含表达层增强（失败降级） |
+| 兴趣探索 | GET/POST | /api/interest-exploration/* | 研究场景问卷 + 候选方向 apply |
 | 招募信息 | GET/POST | /api/recruitments | 获取招募列表 / 发布新招募 |
+| 招募评论 | GET/POST/DELETE | /api/recruitments/{id}/comments | 评论 + 点赞 + 举报 |
+| 导师评分 | GET/POST | /api/advisors/{id}/ratings | 六维主观评分与聚合（≥8 样本阈值） |
 | 简历生成打磨 | POST | /api/resume/generate | 调用大模型生成或优化简历内容 |
 | 简历投递 | POST | /api/resume/submit | 向指定招募投递简历 |
 | 评价反馈 | POST | /api/feedback | 提交导师评价与反馈，入库用于迭代 |
 | 模型训练触发 | POST | /api/train/trigger | 管理员触发模型重训练，更新匹配算法权重 |
+
+### 6.4 导师服务接口（v3.0）
+
+| 接口名称 | 方法 | 接口路径 | 说明 |
+| :--- | :--- | :--- | :--- |
+| 验证码登录 | POST | /api/mentor/auth/* | 清华邮箱验证码登录/登出/会话 |
+| 校园卡核验 | POST | /api/mentor/verification/* | 导师身份核验（脱敏卡号） |
+| 档案认领 | POST | /api/mentor/claim/* | 认领治理档案 |
+| 档案读写 | GET/PATCH | /api/mentor/* | 档案查看、字段级编辑（进审批） |
+| 意向中心 | GET | /api/mentor/inbound | 学生站内投递收件箱 |
+| 导师招募 | GET/POST | /api/mentor/recruitments | 导师侧招募管理 |
+| 隐私控制 | GET/POST | /api/mentor/privacy/* | 隐私设置 / 下架申请 |
+| 管理审批 | GET/POST | /api/admin/mentor/* | 档案编辑与发布审批（管理员鉴权） |
 
 ---
 
@@ -487,7 +627,10 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 | :--- | :--- | :--- |
 | 单元测试 | pytest | 雷达图面积计算算法、权重归一化逻辑、数据清洗正则表达式 |
 | 集成测试 | pytest + httpx | SSO 登录流程、大模型 API 超时重试机制、邮件发送网关连通性 |
-| Agent 幻觉测试 | 注入测试集 | 验证回答严格基于 RAG 检索结果，不编造导师联系方式、招生名额等信息 |
+| 契约测试 | pytest | OpenAI 协议兼容（QXD 入口）、统一响应封装、鉴权注入 |
+| 治理与合规测试 | pytest | 证据治理门（0 记录诚实空态）、私域信息不泄露、secret 治理 |
+| Agent 幻觉测试 | 注入测试集 | 验证回答严格基于检索结果，不编造导师联系方式、招生名额等信息 |
+| 表达层专项测试 | pytest | LLM 重写生效/降级/探测跳过/确认门与匹配不增强（17 用例） |
 | 端到端测试 | Playwright | 完整用户流程自动化验证，覆盖匹配、追问、投递全链路 |
 
 ### 7.2 核心测试用例
@@ -499,6 +642,11 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 | TC-03 | 点击"联系导师"按钮 | 成功唤起邮件客户端，收件人为导师邮箱，发件人为当前登录学生邮箱 |
 | TC-04 | 切换移动端视口访问 | 页面自动适配移动端布局，核心功能入口可正常访问 |
 | TC-05 | 提交导师评价反馈 | 反馈数据成功入库，对应导师的推荐排序权重同步更新 |
+| TC-06 | 访谈进行中，LLM 可用（配 key） | 表达层整段重写回复，输出通过校验闸门（≤400 字、禁词、选项覆盖） |
+| TC-07 | 无 LLM key 或 LLM 超时 | 访谈回复逐字降级回固定模板，不伪造模型输出 |
+| TC-08 | 画像确认门或匹配结果轮 | 表达层不介入，确定性原文原样返回（诚实性红线） |
+| TC-09 | 导师评分样本数不足 8 | 聚合不出值，前端显示"样本不足"，服务层保留原始聚合 |
+| TC-10 | 兴趣探索场景多选 | 确定性映射输出稳定 top-5 候选，两次请求结果一致 |
 
 ---
 
@@ -578,3 +726,53 @@ python scripts/ingest_tsinghua_catalogs.py
 
 - 核心指标：推荐准确率（学生最终选择TopN推荐导师的比例）、点赞率、反馈好评率
 - 辅助指标：平均对话轮次、简历投递转化率、导师回复率
+
+---
+
+## 10. v3.0 导师服务与表达层增强
+
+### 10.1 版本概览
+
+v3.0 在 v2.2 审计基线之上完成两侧能力整合（`integration/final-20260819`）：
+
+| 能力域 | 内容 | 关键实现 |
+| :--- | :--- | :--- |
+| 导师服务门户 | 登录/核验/认领/编辑/意向/招募/隐私 | `app/api/v1/mentor_*` 7 个路由模块 + 前端 `/mentor/*` 7 页面 |
+| 评分社区 | 六维评分 + ≥8 样本阈值聚合 | `advisor_ratings.py`（API 层过滤）+ `RatingSummary.vue` |
+| 兴趣探索 | 8 场景 → 10 方向池 top-5 | `interest_exploration.py` 纯静态映射 |
+| 客观四维雷达 | 证据治理数据驱动展示 | `ChartPanel.vue`，无证据不出值 |
+| 表达层增强 | LLM 整段重写访谈回复 | `chat_expression.py`，fail-closed 降级 |
+
+### 10.2 表达层增强设计（chat_expression）
+
+```
+访谈状态(state) ──build_interview_fact_pack()──▶ 确定性事实包(fact pack)
+                                                        │
+用户消息 ────────────────────────────────────────────────┤
+                                                        ▼
+                                            render_interview_reply()
+                                            （复用 _llm_complete_result 唯一入口，4s 超时）
+                                                        │
+                        ┌─────────────────────────────────┼─────────────────────┐
+                        ▼                                 ▼                     ▼
+                   校验闸门通过                    校验失败/超时/无凭据      诚实性红线轮次
+                   （重写文本生效）                 （逐字降级固定模板）   （确认门/匹配不增强）
+```
+
+**校验闸门**：非空 / ≤400 字 / 禁词（画像已确认、匹配完成等）/ 全部选项 label 覆盖 / 题面核心片段（≥6 字）覆盖。任何一项不过即降级，保证不改变访谈语义结构。
+
+**红线**：`needs_confirmation`（画像确认门）与 `recommend_ready`（匹配结果）不进入表达层；平台探测请求（`max_tokens:1`）跳过；零新增配置（复用 GLM_*/LLM_TIMEOUT）。
+
+### 10.3 评分聚合样本阈值
+
+- 服务层（`advisor_rating.py`）物化聚合保留原始 `{dim}_value/{dim}_n`，不做样本过滤。
+- API 层（`advisor_ratings.py`，`ADVISOR_RATING_MIN_SAMPLES=8`）过滤 `n < 8` 的维度值。
+- 前端（`RatingSummary.vue`）统一以 8 为阈值口径展示"样本不足"。
+- 该分层保证：阈值调整不动数据层；原始聚合始终可审计。
+
+### 10.4 生产部署要点（v3.0 增量）
+
+- 生产强制 `MAIL_MODE=smtp`，邮件密码仅经 `MAIL_PASSWORD_FILE` 挂载（禁止环境变量明文）。
+- 边缘路由白名单（`public-route-allowlist.json` + `web-api.caddy`）需覆盖导师服务与评分/兴趣探索全部新路由。
+- 清小搭三层链路：`qxd.tsingradar.com.cn` → Caddy edge → qxd-gateway(nginx) → backend:8000；OpenAI 兼容入口 `https://qxd.tsingradar.com.cn/v1`。
+- 迁移链至 0012（mentor_campus_card）；升级前按 RUNBOOK 完成数据库备份与 advisory lock 流程。

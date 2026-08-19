@@ -8,7 +8,7 @@
 
 从"被动求职"到"主动寻找学术合伙人"
 
-![Version](https://img.shields.io/badge/version-2.1.0-409EFF?style=flat-square)
+![Version](https://img.shields.io/badge/version-3.0.0-409EFF?style=flat-square)
 ![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?style=flat-square)
@@ -26,12 +26,16 @@ Tsing-RADAR 是一款基于**多维空间向量重合度计算**的导师匹配�
 
 | 模块 | 说明 |
 | :--- | :--- |
-| 🎯 **六维雷达匹配** | 学术敏锐度 / 人脉资源 / 指导意愿 / 性格包容度 / 经费实力 / 产出效率 |
+| 🎯 **多维雷达匹配** | 客观四维雷达（证据治理数据）+ 学生需求雷达，多边形重叠面积量化契合度 |
 | 💬 **LLM 多轮对话** | 高考志愿测评式动态问卷，挖掘学生真实需求画像 |
+| ✨ **表达层增强** | LLM 基于确定性事实包整段重写访谈回复；画像确认门与匹配结果不增强，失败完全降级回固定模板 |
+| 🔭 **兴趣探索** | 确定性映射（8 研究场景 → 10 方向池，取 top-5 候选），零 LLM 依赖、结果可复现 |
 | 📊 **四象限散点图** | 横轴冷热门 × 纵轴国/私，散点大小映射契合度 |
 | 🤖 **双轨雷达对比** | 学生需求（半透明蓝）vs 导师特质（实橙），重叠面积即契合指数 |
+| 👨‍🏫 **导师服务门户** | 邮箱验证码登录 / 校园卡核验 / 档案认领与字段级编辑 / 意向中心 / 招募管理 / 隐私控制 |
+| ⭐ **导师评分社区** | 六维主观评分（≥8 样本阈值聚合）+ 评论 + 内容审核 |
+| 📢 **招募信息平台** | 导师/学长发布招募，含急需榜置顶、评论互动、详情页 |
 | 📄 **简历智能管理** | LLM 自动打磨 + 定向导师个性化包装 + 一键投递 |
-| 📢 **招募信息平台** | 导师/学长发布招募，含急需榜置顶 |
 | 🔄 **模型迭代闭环** | 反馈 + 问卷样本聚合，梯度下降迭代匹配权重 |
 
 ---
@@ -203,12 +207,23 @@ Bucket 必须为 `bucketname-appid` 格式，访问身份仍只通过独立 `*_F
 | 导师排序 | GET | `/api/mentors/sort?metric=` | 7 项指标降序 |
 | 散点图数据 | GET | `/api/scatter` | 四象限散点 |
 | 综合匹配 | POST | `/api/match` | 关键词 + 画像向量 + Synergy |
+| 动态访谈 | POST | `/api/v1/chat/completions` | OpenAI 协议兼容；含表达层增强 |
 | LLM 对话 | POST | `/api/v1/llm/chat` | SSE 流式（问卷追问） |
 | 文本向量化 | POST | `/api/v1/llm/embeddings` | GLM embedding / hash 兜底 |
-| 招募列表 | GET/POST | `/api/recruitments` | 含急需榜 |
+| 兴趣探索 | GET/POST | `/api/interest-exploration/*` | 8 研究场景 → 10 候选方向（确定性映射） |
+| 招募列表 | GET/POST | `/api/recruitments` | 含急需榜、详情页 |
+| 招募评论 | GET/POST | `/api/recruitments/{id}/comments` | 评论 + 点赞 |
+| 导师评分 | GET/POST | `/api/advisors/{id}/ratings` | 五维主观评分，≥8 样本阈值聚合 |
 | 简历生成 | POST | `/api/resume/generate` | LLM 打磨 |
 | 简历投递 | POST | `/api/resume/submit` | 投递至招募 |
 | 评价反馈 | POST | `/api/feedback` | 点赞/点踩 + 评论 |
+| 导师登录 | POST | `/api/mentor/auth/*` | 邮箱验证码登录 |
+| 校园卡核验 | POST | `/api/mentor/verification/*` | 导师身份核验 |
+| 导师档案 | GET/PATCH | `/api/mentor/*` | 认领（`/mentor/claim`）、字段级编辑（进入审批） |
+| 导师意向 | GET | `/api/mentor/inbound` | 意向中心（站内投递收件箱） |
+| 导师招募 | GET/POST | `/api/mentor/recruitments` | 导师侧招募管理 |
+| 导师隐私 | GET/POST | `/api/mentor/privacy/*` | 隐私控制 / 下架申请 |
+| 管理审批 | GET/POST | `/api/admin/mentor/*` | 档案编辑与发布审批 |
 | 训练触发 | POST | `/api/train/trigger` | 管理员，模型迭代闭环 |
 | 校内 SSO | GET | `/api/tsinghua/auth/verify` | 清小搭对接占位 |
 
@@ -221,30 +236,30 @@ Tsing-RADAR/
 ├── frontend/                  # Vue 3 + TypeScript 前端
 │   ├── src/
 │   │   ├── api/               # Axios 封装 + 各模块 API
-│   │   ├── components/        # chat / advisor / charts / common / profile / recruitment
+│   │   ├── components/        # chat / advisor / charts / common / mentor / profile / recruitment
 │   │   ├── composables/       # useEChart / useResponsive / useInfiniteScroll / useRadarOption
 │   │   ├── layouts/           # PCLayout（三栏）/ MobileLayout / SubPageLayout
-│   │   ├── router/            # Vue Router（/ /profile /recruitment /mentor/*）
+│   │   ├── router/            # Vue Router（/ /mentors /profile /recruitment /mentor/* /admin/*）
 │   │   ├── stores/            # Pinia（chat / advisor / user）
 │   │   ├── types/             # TypeScript 类型（无 any）
 │   │   ├── utils/             # synergy / markdown / format
-│   │   └── views/             # HomeView / ProfileView / RecruitmentView
+│   │   └── views/             # Home / MentorLibrary / Profile / Recruitment(详情) / mentor/* / AdminReview / 404
 │   ├── Dockerfile             # 多阶段构建 + nginx
 │   └── package.json
 │
 ├── backend/                   # FastAPI 模块化后端
 │   ├── app/
-│   │   ├── api/v1/            # 25 个路由模块
-│   │   ├── core/              # config / deps
-│   │   ├── models/            # SQLAlchemy ORM
+│   │   ├── api/v1/            # 30 个路由模块（导师服务 7 个 / 评分 / 评论 / 兴趣探索 / 审批）
+│   │   ├── core/              # config / deps / qxd_auth / 安全校验
+│   │   ├── models/            # SQLAlchemy ORM（27 张表）
 │   │   ├── schemas/           # Pydantic 请求/响应模型
-│   │   ├── services/          # matching / llm / interview / radar_chart / mentor_* / recruitment_*
+│   │   ├── services/          # matching / llm / interview / chat_expression / mentor_* / recruitment_*
 │   │   ├── db/                # session / base / redis_client
 │   │   └── main.py            # FastAPI 入口
 │   ├── data/                  # 运行时只读挂载治理数据；仓库不内置导师记录
-│   ├── alembic/               # 数据库迁移（0001-0011 迁移链）
+│   ├── alembic/               # 数据库迁移（0001-0012 迁移链）
 │   ├── scripts/               # init_data / crawl / ingest / audit / export / 治理工具
-│   ├── tests/                 # pytest
+│   ├── tests/                 # pytest（43 个测试文件，540+ 用例）
 │   ├── Dockerfile
 │   └── requirements.txt
 │
@@ -268,6 +283,14 @@ synergy = area(学生需求多边形 ∩ 导师特质多边形) / area(学生需
 - **实现**：极坐标 60° 扇区映射 + Shoelace 多边形面积 + per-dim min 近似交集
 - **代码**：`backend/app/services/matching.py`（前端镜像 `frontend/src/utils/synergy.ts`）
 
+### 客观四维雷达（证据治理）
+
+导师客观维度仅展示通过证据治理（来源、授权、字段质量、发布审核）的数据，无证据时不渲染具体数值，只显示"暂无证据"提示。主观评分聚合同理：任一维度样本数 `n < 8` 时不出值（API 层过滤），避免小样本误导。
+
+### 兴趣探索确定性映射
+
+用户多选 8 个研究场景（如"从大量数据里找规律"）后，经静态映射表（方向 → 触发活动键）命中数排序，从 10 方向池中取 top-5 候选。全程零 LLM 调用，结果可复现；选定方向经 apply 写回画像 `research_interests`。
+
 ### 热门指数（Popularity）
 
 ```
@@ -285,8 +308,8 @@ popularity = 0.4×norm(论文频次) + 0.3×norm(招生帖频次) + 0.3×norm(�
 ## 🧪 测试与质量
 
 ```bash
-# 后端单元 + 集成测试
-cd backend && python -m pytest tests/ -v
+# 后端单元 + 集成测试（43 个文件，540+ 用例；含表达层 17 项专项）
+python -m pytest backend/tests/ -q
 
 # 前端类型检查（TypeScript 严格模式，无 any）
 cd frontend && npm run type-check
@@ -353,7 +376,7 @@ provider Key；生产部署必须由只读文件提供密钥，并同时设置
 
 ## 📄 文档
 
-- 📋 [项目开发技术文档 v2.1](./Tsing-RADAR-项目开发技术文档.md) — 完整需求规格、数据库设计、API 清单
+- 📋 [项目开发技术文档 v3.0](./Tsing-RADAR-项目开发技术文档.md) — 完整需求规格、数据库设计、API 清单
 - 📚 API 交互文档 — 启动后端访问 `/docs`
 - 🗄️ 数据库设计 — 技术文档第 5 章
 - 🚀 生产部署手册 — [deploy/production/RUNBOOK.md](./deploy/production/RUNBOOK.md)
@@ -364,6 +387,8 @@ provider Key；生产部署必须由只读文件提供密钥，并同时设置
 
 | 版本 | 日期 | 说明 |
 | :--- | :--- | :--- |
+| v3.0.0 | 2026-08 | 导师服务门户（登录/认领/意向中心/招募管理/隐私控制）+ 六维评分社区（≥8 样本阈值）+ 兴趣探索确定性映射 + 客观四维雷达 + 访谈表达层增强（LLM 重写、失败降级）+ 迁移链 0012 |
+| v2.2.0 | 2026-07 | 审计补丁基线：OpenAI 协议兼容、统一响应封装、鉴权注入、x_soda 附件协议 |
 | v2.1.0 | 2026-07 | 工程化重构：Vue3+TS 前端 + FastAPI 模块化后端 + Docker 部署 |
 | v1.0 | 2026-06 | 单文件原型（HTML + FastAPI）|
 

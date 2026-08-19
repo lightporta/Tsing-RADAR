@@ -1,3 +1,37 @@
+# Tsing-RADAR 变更日志
+
+---
+
+## v3.0.0（2026-08-19）
+
+> 整合分支 `integration/final-20260819`：导师服务 Web 前端 + 平台接入（PA）+ 客观雷达数据 + 访谈表达层增强，两侧历史完整合并（merge，非 squash）。
+
+### 新增
+
+- **导师服务门户**：清华邮箱验证码登录、校园卡核验（脱敏卡号）、治理档案认领、字段级编辑（进管理员审批）、意向中心（站内投递收件箱）、导师侧招募管理、隐私控制与下架申请。前端 `/mentor/*` 7 个页面 + `mentor/` 组件目录。
+- **导师评分社区**：六维主观评分（学术敏锐度/人脉/指导意愿/包容度/经费/产出），服务层物化聚合保留原始数据，API 层 `ADVISOR_RATING_MIN_SAMPLES=8` 过滤小样本维度值，前端 `RatingSummary.vue` 统一阈值口径。
+- **兴趣探索**：8 个研究场景多选 → 静态映射表确定性推导候选方向（10 方向池取 top-5），零 LLM 依赖；选定方向写回画像 `research_interests`。前端 `InterestExplorationCard.vue`。
+- **招募社区增强**：招募详情页、评论 + 点赞 + 举报（内容审核）、404 页。
+- **客观四维雷达**：`ChartPanel.vue` 以证据治理数据展示客观维度 top3，无证据只显示"暂无证据"提示（替代原六维特质条）。
+- **访谈表达层增强**（`chat_expression.py`，+570 行/4 文件）：LLM 基于确定性事实包整段重写访谈回复；校验闸门（非空/≤400 字/禁词/选项 label 全覆盖/题面核心片段覆盖）；无凭据 `disabled`、失败超时 `unavailable` 完全降级回固定模板；诚实性红线（画像确认门与匹配结果不增强）；平台探测跳过。专项测试 17 用例。
+- **迁移 0012**：mentor_campus_card 表。
+- **路由白名单同步**：`public-route-allowlist.json` + `web-api.caddy` 覆盖全部新路由；生产强制 `MAIL_MODE=smtp`、密码仅经 `MAIL_PASSWORD_FILE` 挂载。
+
+### 变更
+
+- 清理 legacy/mock/milvus 遗留代码。
+- **测试去冗余**：删除 3 个零引用的 dep3 验证脚本（`dep3_s3_tamper_helper.py` / `dep3_verify_postgres_concurrency.py` / `dep3_verify_real_s3.py`，其场景已被单测覆盖）；`test_api.py` 剔除 6 个已被更深层测试覆盖的重复用例（导师列表空态/散点空态/招募列表/招募提交/训练触发×2），保留 14 个唯一守门用例；移除与 conftest 冲突的误导性 `DATABASE_URL` 覆盖。
+
+### 验证
+
+- 后端全量：540 passed（19 项 docker 依赖用例在无 docker 环境失败，与基线一致）。
+- 表达层专项：`test_chat_expression.py` 13 用例 + `test_qxd_contract.py` 表达层 4 用例全过。
+- 前端：vue-tsc / eslint 干净，生产构建成功。
+
+---
+
+## v2.2.0（2026-07-27，审计补丁基线）
+
 # Tsing-RADAR 审计补丁变更日志
 
 > 日期：2026-07-27
