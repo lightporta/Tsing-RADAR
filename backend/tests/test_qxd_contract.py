@@ -1275,3 +1275,86 @@ def test_expression_layer_skipped_for_platform_probe(monkeypatch):
         },
     )
     assert response.status_code == 200
+
+
+def test_expression_layer_skipped_on_confirmation_gate_and_match(monkeypatch):
+    """诚实性红线：画像确认门与匹配结果保持确定性原文，不进入表达层。"""
+
+    async def fake_render(_fact_pack):
+        return SimpleNamespace(
+            text="[GLM-增强] 自然重写内容",
+            provider="glm",
+            status="available",
+        )
+
+    render_calls = []
+    monkeypatch.setattr(
+        qxd_chat,
+        "render_interview_reply",
+        lambda fp: render_calls.append(fp) or fake_render(fp),
+    )
+
+    user_id = f"qxd-gate-{uuid.uuid4()}"
+    headers = _qxd_headers(user_id)
+    user_turns = [
+        "自然语言处理、对话系统",
+        "工程落地",
+        "高频具体指导",
+        "产业就业",
+        "愿意探索高风险新方向",
+        "只能北京",
+    ]
+    # 提问轮（IN_PROGRESS）：表达层生效
+    for n in range(1, len(user_turns) + 1):
+        resp = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "user": user_id,
+                "messages": [
+                    {"role": "user", "content": turn} for turn in user_turns[:n]
+                ],
+                "stream": False,
+            },
+        )
+        assert resp.status_code == 200
+        assert (
+            resp.json()["choices"][0]["message"]["content"]
+            == "[GLM-增强] 自然重写内容"
+        )
+    assert len(render_calls) == 6
+
+    # 确认硬性条件草案 → 画像总结轮（AWAITING_CONFIRMATION）：不增强
+    user_turns.append("确认")
+    resp = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "user": user_id,
+            "messages": [
+                {"role": "user", "content": turn} for turn in user_turns
+            ],
+            "stream": False,
+        },
+    )
+    summary = resp.json()["choices"][0]["message"]["content"]
+    assert "确认画像" in summary  # 确定性确认引导保留
+    assert "[GLM-增强]" not in summary
+    assert len(render_calls) == 6  # 总结轮未调用表达层
+
+    # 确认画像 → 匹配结果（recommend_ready）：不增强
+    user_turns.append("确认画像")
+    resp = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "user": user_id,
+            "messages": [
+                {"role": "user", "content": turn} for turn in user_turns
+            ],
+            "stream": False,
+        },
+    )
+    outcome = resp.json()["choices"][0]["message"]["content"]
+    assert "[GLM-增强]" not in outcome
+    assert len(render_calls) == 6  # 匹配轮未调用表达层

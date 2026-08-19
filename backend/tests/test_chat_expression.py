@@ -217,6 +217,19 @@ def test_build_fact_pack_handles_missing_question():
     assert pack.user_message == ""
 
 
+def test_build_fact_pack_uses_assistant_message_for_dynamic_questions():
+    """动态题（如硬约束确认题）只存在于 assistant_message；题库 current_question
+    是静态原始题面，两者必须一致，否则重写会与真实流程错位。"""
+    state = _sample_state()
+    state.current_question.prompt = "最后划一下不可妥协的边界……"  # 题库静态题面
+    state.assistant_message = (
+        "我理解为地点必须在“北京”。这是不可妥协条件吗？请回复“确认”或“修改为……”。"
+    )
+    pack = expr.build_interview_fact_pack(state, "只能北京")
+    assert pack.question_prompt == state.assistant_message
+    assert "我理解为地点必须在" in pack.question_prompt
+
+
 def test_build_fact_pack_constraint_status_variants():
     state = _sample_state()
     state.profile.unresolved_hard_constraints = ["必须在北京"]

@@ -85,7 +85,9 @@ def build_interview_fact_pack(
         constraint_status = "尚未确认硬性条件"
     return InterviewFactPack(
         user_message=(latest_user_message or "").strip(),
-        question_prompt=question.prompt if question else "",
+        # 以实际展示给用户的回复为准：动态题（如硬约束确认题）只存在于
+        # assistant_message，题库 current_question 是静态原始题面，两者会错位。
+        question_prompt=(state.assistant_message if question else ""),
         options=(
             tuple(option.label for option in question.options) if question else ()
         ),
