@@ -30,6 +30,8 @@ class DialogueMode(str, Enum):
     DIRECTION_MAP = "direction_map"      # 研究方向地图（说不清兴趣时的引导）
     MATCH_REFINE = "match_refine"        # 匹配结果二次筛选（仅 recommend_ready 上下文）
     MENTOR_KNOWLEDGE = "mentor_knowledge"  # 导师公开评价综述咨询（v4.0.0）
+    MEMORY_VIEW = "memory_view"          # 长期记忆隐私查看（v4.1.0）
+    MEMORY_CLEAR = "memory_clear"        # 长期记忆隐私清除（v4.1.0）
     NONE = "none"
 
 
@@ -310,6 +312,29 @@ _DIRECTION_MAP_TERMS = (
     "研究方向有哪些",
 )
 
+# —— v4.1.0 长期记忆隐私入口（查看/清除）——
+# 刻意用完整词组，避免裸词"记忆"拦截访谈中的自然表达。
+_MEMORY_VIEW_TERMS = (
+    "查看记忆",
+    "看看记忆",
+    "我的记忆",
+    "你记住了什么",
+    "你记得我什么",
+    "你记得我的什么",
+    "记忆列表",
+)
+_MEMORY_CLEAR_TERMS = (
+    "清除记忆",
+    "清空记忆",
+    "删除记忆",
+    "忘掉我",
+    "忘记我",
+    "删除我的记忆",
+)
+# 记忆清除的二次确认指令（与 _REPORT_DELIVERY_CONFIRMATION 同风格）
+MEMORY_CLEAR_CONFIRMATION = "确认清除记忆"
+
+
 # —— v4.0.0 导师公开评价综述咨询（任务1 A-1 确定性词法索引）——
 # 确定性模式：`姓名 + 老师/教授/导师 + 咨询词`。防误伤设计：
 # - 姓名必须位于消息开头（允许少量前置词），避免把句中"方向老师"
@@ -556,6 +581,12 @@ def classify_dialogue_intent(
     # （"老师怎么样"同时是 FAQ 触发词，但无姓名时 extract 返回 None）。
     if extract_mentor_query_name(text):
         return DialogueMode.MENTOR_KNOWLEDGE
+    # v4.1.0 长期记忆隐私入口：清除优先于查看（"清除记忆"不含查看词，
+    # 两者词表无交叉，顺序仅作防御）；须在 FAQ 之前判定。
+    if any(term in text for term in _MEMORY_CLEAR_TERMS):
+        return DialogueMode.MEMORY_CLEAR
+    if any(term in text for term in _MEMORY_VIEW_TERMS):
+        return DialogueMode.MEMORY_VIEW
     if any(term in text for term in _CONSULT_FAQ_TERMS):
         return DialogueMode.CONSULT_FAQ
     # 直接粘贴简历原文（无触发词）→ 归入简历优化，等待润色

@@ -63,13 +63,18 @@ from app.services.consultation import (
     handle_consult_faq,
 )
 from app.services.dialogue_intent import (
+    MEMORY_CLEAR_CONFIRMATION,
     DialogueMode,
     _CONSULT_EMAIL_TERMS,
     classify_dialogue_intent,
     detect_implicit_dimension_attention,
     extract_mentor_query_name,
 )
-from app.services.dialogue_state_store import get_dialogue_mode
+from app.services.dialogue_state_store import (
+    get_dialogue_mode,
+    has_session_flag,
+    mark_session_flag,
+)
 from app.services.direction_map import handle_direction_map
 from app.services.match_application import (
     derive_user_dimension_scores,
@@ -99,6 +104,9 @@ from app.services.recruitment_dialogue import (
     handle_recruitment_query,
 )
 from app.services.recruitment_public import (
+    format_mentor_recruitment_brief,
+    interview_recruitment_summary,
+    mentor_open_recruitments,
     proactive_recruitment_hint,
 )
 from app.services.research_style import handle_research_style
@@ -115,7 +123,11 @@ from app.services.qxd_media import (
     SafeMediaFetcher,
 )
 from app.services.off_topic import detect_off_topic_matched, is_acknowledgment
-from app.services.memory_service import format_memory_summary
+from app.services.memory_service import (
+    clear_memories,
+    format_memory_listing,
+    format_memory_summary,
+)
 from app.services.tools_registry import (
     TOOL_GET_RECRUITMENTS,
     TOOL_QUERY_MENTOR_KNOWLEDGE,
@@ -428,6 +440,37 @@ async def _dispatch_dialogue_mode(
             name=TOOL_QUERY_MENTOR_KNOWLEDGE,
             arguments={"name": name},
         )
+        # v4.1.0 任务3 补齐：问导师时附带其实时在招信息（确定性、双源、
+        # 只引用记录内原文事实）；无在招则不追加。
+        brief = format_mentor_recruitment_brief(
+            mentor_open_recruitments(db, name)
+        )
+        if brief:
+            text = f"{text}\n\n{brief}"
+        attachment = None
+    elif intent == DialogueMode.MEMORY_VIEW:
+        # v4.1.0 记忆隐私查看：确定性只读输出，不经 LLM。
+        text = format_memory_listing(db, student_id)
+        attachment = None
+    elif intent == DialogueMode.MEMORY_CLEAR:
+        # v4.1.0 记忆隐私清除：两段式确认（先说明范围，再按精确指令执行），
+        # 与匹配报告交付确认同风格；只删本人记忆，不触碰访谈/匹配记录。
+        if latest_user.strip() == MEMORY_CLEAR_CONFIRMATION:
+            deleted = clear_memories(db, student_id)
+            text = (
+                f"已清除 {deleted} 条长期记忆。"
+                "访谈与匹配记录不受影响；下次确认画像后会重新保存"
+                "当时已确认的内容。"
+                if deleted
+                else "当前没有需要清除的长期记忆。"
+            )
+        else:
+            text = (
+                "长期记忆只包含你已确认画像里的研究兴趣与偏好"
+                "（未确认的内容不会保存）。确认要全部删除吗？\n"
+                f"确认请回复「{MEMORY_CLEAR_CONFIRMATION}」，"
+                "查看内容可回复「查看记忆」。"
+            )
         attachment = None
     else:
         return None
@@ -694,6 +737,30 @@ async def generate_agent_reply(
             # （recommend_ready）不增强，保持确定性原文（确认指令/匹配证据）。
             # 推荐结果优先短路，避免对非完整状态桩的字段依赖。
             if not probe and not state.recommend_ready and not state.needs_confirmation:
+                # v4.1.0 任务3 接线：访谈期一次性注入相关招募事实句
+                # （确定性规则：画像已有研究兴趣 + 本会话未注入过 + 双源
+                # 实时查询有相关度 >0 的在招记录）。注入后由表达层自然
+                # 转述，逐字校验闸门防改写；无相关招募则不注入。
+                recruitment_brief = ""
+                interests = list(
+                    getattr(state.profile, "research_interests", None) or []
+                )
+                if interests and not has_session_flag(
+                    db,
+                    session_id=session_id,
+                    student_id=student_id,
+                    key="interview_recruitment_noted",
+                ):
+                    recruitment_brief = (
+                        interview_recruitment_summary(db, interests) or ""
+                    )
+                    if recruitment_brief:
+                        mark_session_flag(
+                            db,
+                            session_id=session_id,
+                            student_id=student_id,
+                            key="interview_recruitment_noted",
+                        )
                 expression = await render_interview_reply(
                     build_interview_fact_pack(
                         state,
@@ -704,6 +771,7 @@ async def generate_agent_reply(
                         memory_summary=format_memory_summary(
                             db, resolved_principal.subject_id
                         ),
+                        recruitment_summary=recruitment_brief,
                     )
                 )
                 if expression.text:

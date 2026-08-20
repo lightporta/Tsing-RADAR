@@ -179,3 +179,186 @@ class TestValidateExpressionVerbatim:
     def test_no_summaries_behavior_unchanged(self):
         pack = _base_fact_pack()
         assert _validate_expression("随便一句自然的话。", pack) is True
+
+
+# —— v4.1.0 任务3 接线：访谈期一次性注入 + 导师咨询附带在招 ——
+
+
+class TestInterviewRecruitmentSummary:
+    def test_relevant_db_recruitment_yields_fact_sentence(self, monkeypatch):
+        monkeypatch.setattr(recruitment_public, "load_mentors", lambda: [])
+        # 更早的截止日期保证本条在相关度并列时排最前（此前用例可能已
+        # 种入同题记录，稳定排序取最早截止者）
+        _seed_recruitment(quota=2, deadline=date(2026, 12, 1))
+        with SessionLocal() as db:
+            summary = recruitment_public.interview_recruitment_summary(
+                db, ["自然语言处理"]
+            )
+        # 数据库投稿帖发布者为脱敏口径：不带"XX老师组"前缀
+        assert summary is not None
+        assert summary.startswith("当前正在招科研助理：")
+        assert "自然语言处理课题组招募" in summary
+        assert "截止 2026-12-01" in summary
+        assert "招 2 名" in summary
+
+    def test_static_mentor_post_carries_mentor_prefix(self, monkeypatch):
+        monkeypatch.setattr(
+            recruitment_public,
+            "load_mentors",
+            lambda: [
+                {
+                    "advisor_id": "T00001",
+                    "name": "李琦",
+                    "dept": "计算机系",
+                    "recruitments": [
+                        {
+                            "recruit_id": "r-static-1",
+                            "title": "大模型方向科研助理",
+                            "type": "科研助理",
+                            "major": "自然语言处理",
+                            "deadline": date(2027, 2, 1),
+                        }
+                    ],
+                }
+            ],
+        )
+        with SessionLocal() as db:
+            summary = recruitment_public.interview_recruitment_summary(
+                db, ["自然语言处理"]
+            )
+        assert summary is not None
+        assert summary.startswith("李琦老师组正在招科研助理：")
+        assert "大模型方向科研助理" in summary
+        assert "截止 2027-02-01" in summary
+
+    def test_no_relevance_returns_none(self, monkeypatch):
+        monkeypatch.setattr(recruitment_public, "load_mentors", lambda: [])
+        _seed_recruitment()
+        with SessionLocal() as db:
+            assert (
+                recruitment_public.interview_recruitment_summary(
+                    db, ["量子计算"]
+                )
+                is None
+            )
+
+    def test_empty_interests_returns_none(self, monkeypatch):
+        monkeypatch.setattr(recruitment_public, "load_mentors", lambda: [])
+        with SessionLocal() as db:
+            assert recruitment_public.interview_recruitment_summary(db, []) is None
+
+
+class TestMentorRecruitmentBrief:
+    def test_static_mentor_name_match(self, monkeypatch):
+        monkeypatch.setattr(
+            recruitment_public,
+            "load_mentors",
+            lambda: [
+                {
+                    "advisor_id": "T00001",
+                    "name": "李琦",
+                    "dept": "计算机系",
+                    "recruitments": [
+                        {
+                            "recruit_id": "r-static-1",
+                            "title": "大模型方向科研助理",
+                            "type": "科研助理",
+                            "deadline": date(2027, 2, 1),
+                            "is_urgent": True,
+                        }
+                    ],
+                }
+            ],
+        )
+        with SessionLocal() as db:
+            matched = recruitment_public.mentor_open_recruitments(db, "李琦")
+        assert len(matched) == 1
+        brief = recruitment_public.format_mentor_recruitment_brief(matched)
+        assert brief is not None
+        assert "该导师当前在招的公开招募" in brief
+        assert "[急招] 大模型方向科研助理" in brief
+        assert "截止 2027-02-01" in brief
+
+    def test_expired_or_other_name_excluded(self, monkeypatch):
+        monkeypatch.setattr(
+            recruitment_public,
+            "load_mentors",
+            lambda: [
+                {
+                    "advisor_id": "T00001",
+                    "name": "李琦",
+                    "dept": "计算机系",
+                    "recruitments": [
+                        {
+                            "recruit_id": "r-static-1",
+                            "title": "已过期招募",
+                            "type": "科研助理",
+                            "deadline": date(2020, 1, 1),
+                        }
+                    ],
+                }
+            ],
+        )
+        with SessionLocal() as db:
+            assert recruitment_public.mentor_open_recruitments(db, "李琦") == []
+            assert (
+                recruitment_public.format_mentor_recruitment_brief([]) is None
+            )
+
+    def test_db_post_matched_via_advisor_brief(self, monkeypatch):
+        monkeypatch.setattr(
+            recruitment_public, "load_mentors", lambda: []
+        )
+        _seed_recruitment(advisor_id="T00009")
+        monkeypatch.setattr(
+            recruitment_public,
+            "advisor_brief",
+            lambda advisor_id: (
+                {"advisor_id": advisor_id, "name": "王五", "dept": "自动化系"}
+                if advisor_id == "T00009"
+                else None
+            ),
+        )
+        with SessionLocal() as db:
+            matched = recruitment_public.mentor_open_recruitments(db, "王五")
+        assert len(matched) == 1
+        assert matched[0]["recruit_id"]
+
+
+class TestSessionFlagHelpers:
+    """访谈期一次性注入的会话标记：合并写入不破坏既有对话模式。"""
+
+    def test_flag_roundtrip_and_mode_preserved(self):
+        from app.services.dialogue_state_store import (
+            get_dialogue_mode,
+            has_session_flag,
+            mark_session_flag,
+            upsert_dialogue_state,
+        )
+
+        session_id = f"flag_{uuid4().hex}"
+        student_id = f"stu_{uuid4().hex}"
+        with SessionLocal() as db:
+            assert not has_session_flag(
+                db, session_id=session_id, student_id=student_id,
+                key="interview_recruitment_noted",
+            )
+            upsert_dialogue_state(
+                db, session_id=session_id, student_id=student_id,
+                mode="resume_build", state={"step": 2},
+            )
+            mark_session_flag(
+                db, session_id=session_id, student_id=student_id,
+                key="interview_recruitment_noted",
+            )
+            assert has_session_flag(
+                db, session_id=session_id, student_id=student_id,
+                key="interview_recruitment_noted",
+            )
+            # 合并写入不覆盖当前对话模式与既有状态键
+            assert (
+                get_dialogue_mode(
+                    db, session_id=session_id, student_id=student_id
+                )
+                == "resume_build"
+            )

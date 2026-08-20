@@ -186,3 +186,32 @@ def clear_memories(db: Session, student_id: str) -> int:
     )
     db.commit()
     return deleted
+
+
+# 记忆键 → 用户可读标签（隐私查看用）
+_MEMORY_KEY_LABELS = {
+    _INTEREST_KEY: "研究兴趣",
+    "research_mode": "研究方式",
+    "mentorship_style": "指导偏好",
+    "career_orientation": "生涯方向",
+    "innovation_risk": "创新风险",
+    _CONSTRAINT_KEY: "硬性条件",
+    _CONFIRMED_MARKER_KEY: "画像确认时间",
+}
+
+
+def format_memory_listing(db: Session, student_id: str) -> str:
+    """隐私查看：全部长期记忆的用户可读文本（确定性、只读）。"""
+    rows = list_memories(db, student_id)
+    if not rows:
+        return (
+            "当前没有保存任何长期记忆。完成访谈并确认画像后，才会保存"
+            "已确认的研究兴趣与偏好（未确认的内容不会写入）。"
+        )
+    lines = ["当前保存的长期记忆（只来自你已确认的画像，共 "
+             f"{len(rows)} 条）："]
+    for row in rows:
+        label = _MEMORY_KEY_LABELS.get(row["memory_key"], row["memory_key"])
+        lines.append(f"- {label}：{row['memory_value']}")
+    lines.append("如需删除，回复「清除记忆」。")
+    return "\n".join(lines)

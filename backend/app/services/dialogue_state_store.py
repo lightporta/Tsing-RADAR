@@ -98,3 +98,50 @@ def clear_dialogue_state(
         DialogueSession.student_id == student_id,
     ).delete()
     db.commit()
+
+
+def has_session_flag(
+    db: Session,
+    *,
+    session_id: str,
+    student_id: str,
+    key: str,
+) -> bool:
+    """只读会话级一次性标记（如"访谈期招募提示已注入"）。"""
+    state = get_dialogue_state(
+        db, session_id=session_id, student_id=student_id
+    )
+    return bool(state and state.get(key))
+
+
+def mark_session_flag(
+    db: Session,
+    *,
+    session_id: str,
+    student_id: str,
+    key: str,
+) -> None:
+    """写入会话级一次性标记；合并进既有 state，不改写当前对话模式。"""
+    record = (
+        db.query(DialogueSession)
+        .filter(
+            DialogueSession.session_id == session_id,
+            DialogueSession.student_id == student_id,
+        )
+        .first()
+    )
+    if record is None:
+        record = DialogueSession(
+            session_id=session_id,
+            student_id=student_id,
+            mode="none",
+            state={key: True},
+            version=1,
+        )
+        db.add(record)
+    else:
+        merged = dict(record.state or {})
+        merged[key] = True
+        record.state = merged
+        record.version = (record.version or 0) + 1
+    db.commit()
