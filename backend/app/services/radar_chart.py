@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,6 +46,39 @@ _TEXT_CANVAS_H = 13
 _TEXT_CENTER = (12, 6)
 _TEXT_RADIUS = (12, 6)  # (x 半径, y 半径)，字符宽高比约 2:1，视觉接近正菱形
 _TEXT_BAR_LEN = 20      # 数值条形长度（满格 100）
+_BARS_FORM_LEN = 24     # 独立柱状图形态的条形长度
+
+# 八分档块（1/8 ~ 7/8），用于条形末端不足一格的精确刻度
+_EIGHTH_BLOCKS = ("", "▏", "▎", "▍", "▌", "▋", "▊", "▉")
+
+# 形态选择：线状雷达多边形可辨识所需的最少数据边缘格数；低于该值
+# （如全 0、极端偏轴）图形不可读，自动降级为柱状图
+_RADAR_FORM_MIN_EDGE_CELLS = 6
+
+
+def _display_width(text: str) -> int:
+    """CJK 等宽对齐用的显示宽度（East Asian W/F 记 2 列，其余 1 列）。"""
+    return sum(
+        2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        for char in text
+    )
+
+
+def _pad_label(label: str, width: int) -> str:
+    """按显示宽度右补空格，保证混合中英文标签的数值列对齐。"""
+    return label + " " * max(0, width - _display_width(label))
+
+
+def _eighth_bar(value: float, length: int, *, empty: str) -> str:
+    """把 0~100 的值渲染为 length 格条形：整格 + 1 个八分档尾块 + 空位。"""
+    cells = max(0.0, min(100.0, float(value))) / 100.0 * length
+    full = int(cells)
+    remainder = int(round((cells - full) * 8))
+    if remainder >= 8:  # 进位到整格
+        full += 1
+        remainder = 0
+    partial = _EIGHTH_BLOCKS[remainder] if full < length else ""
+    return "█" * full + partial + empty * (length - full - len(partial))
 
 
 def _line_points(
@@ -127,21 +161,99 @@ def render_radar_text(
     数据源与 render_radar_svg 完全一致（客观四维，已审核公开证据），
     供清小搭仅对话端口在不支持图片附件时直接渲染；诚实性约定相同：
     无已审核数据时由调用方输出诚实空态，本函数不画推断值。
+    条形行按维度名的显示宽度对齐（CJK 宽度显式计算），数值列对齐。
     """
     dimension_labels = labels or RADAR_DIMENSION_LABELS
+    row_labels = [
+        dimension_labels.get(key, key) for key in OBJECTIVE_DIMENSION_KEYS
+    ]
+    label_width = max(_display_width(label) for label in row_labels)
     lines: list[str] = [title]
     lines.append("")
     lines.append(_render_text_polygon(list(series.values)))
     lines.append("")
-    for key, value in zip(OBJECTIVE_DIMENSION_KEYS, series.values):
-        label = dimension_labels.get(key, key)
-        filled = round(float(value) / 100.0 * _TEXT_BAR_LEN)
-        bar = "█" * filled + "░" * (_TEXT_BAR_LEN - filled)
-        lines.append(f"{label}  {bar}  {value:.0f}")
+    for label, value in zip(row_labels, series.values):
+        bar = _eighth_bar(float(value), _TEXT_BAR_LEN, empty="░")
+        lines.append(
+            f"{_pad_label(label, label_width)}  {bar}  {value:.0f}"
+        )
     if sample_note:
         lines.append("")
         lines.append(sample_note)
     return "\n".join(lines)
+
+
+def render_radar_bars(
+    *,
+    series: RadarSeries,
+    labels: dict[str, str] | None = None,
+    title: str = "导师客观证据雷达图（文本版）",
+    sample_note: str | None = None,
+) -> str:
+    """确定性文本柱状图（雷达图的兜底形态）。
+
+    每维一行：对齐的维度名 + 八分档块条形（█ ▉ ▊ ▋ ▌ ▍ ▎ ▏）+ 数值。
+    用于线状雷达在纯文本渠道不可辨识（如全 0 / 极端偏轴）或运维显式
+    配置柱状形态时；数据源与诚实性约定与 render_radar_text 完全一致。
+    """
+    dimension_labels = labels or RADAR_DIMENSION_LABELS
+    row_labels = [
+        dimension_labels.get(key, key) for key in OBJECTIVE_DIMENSION_KEYS
+    ]
+    label_width = max(_display_width(label) for label in row_labels)
+    lines: list[str] = [title]
+    lines.append("")
+    for label, value in zip(row_labels, series.values):
+        bar = _eighth_bar(float(value), _BARS_FORM_LEN, empty=" ")
+        lines.append(
+            f"{_pad_label(label, label_width)}  {bar}  {value:.0f}"
+        )
+    if sample_note:
+        lines.append("")
+        lines.append(sample_note)
+    return "\n".join(lines)
+
+
+def radar_polygon_edge_cells(values: list[float]) -> int:
+    """文本雷达多边形的数据边缘格数（形态可辨识度的确定性度量）。"""
+    return _render_text_polygon(list(values)).count("█")
+
+
+def select_radar_text_form(
+    values: list[float], *, preference: str = "auto"
+) -> str:
+    """选择文本图形态：radar（线状雷达）/ bars（柱状图）。
+
+    preference 显式指定时直接生效（"radar"/"bars"）；"auto" 按数据
+    可辨识度决定：数据边缘格数低于阈值的退化形状（全 0、极端偏轴）
+    自动降级为柱状图。任何未知取值按 "auto" 处理。
+    """
+    normalized = (preference or "auto").strip().lower()
+    if normalized in ("radar", "bars"):
+        return normalized
+    if radar_polygon_edge_cells(list(values)) < _RADAR_FORM_MIN_EDGE_CELLS:
+        return "bars"
+    return "radar"
+
+
+def render_radar_text_auto(
+    *,
+    series: RadarSeries,
+    labels: dict[str, str] | None = None,
+    title: str = "导师客观证据雷达图（文本版）",
+    sample_note: str | None = None,
+    form: str = "auto",
+) -> str:
+    """按形态选择分发到线状雷达或柱状图（两个形态确定性一致）。"""
+    renderer = (
+        render_radar_bars
+        if select_radar_text_form(list(series.values), preference=form)
+        == "bars"
+        else render_radar_text
+    )
+    return renderer(
+        series=series, labels=labels, title=title, sample_note=sample_note
+    )
 
 
 @dataclass(frozen=True)

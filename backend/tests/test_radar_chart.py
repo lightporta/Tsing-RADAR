@@ -11,10 +11,14 @@ from app.services.radar_chart import (
     RADAR_DIMENSION_LABELS,
     RadarSeries,
     build_radar_series_for_advisor,
+    radar_polygon_edge_cells,
     radar_series_from_bundle,
+    render_radar_bars,
     render_radar_drawing,
     render_radar_svg,
     render_radar_text,
+    render_radar_text_auto,
+    select_radar_text_form,
 )
 
 SAMPLE_VALUES = [80.0, 60.0, 90.0, 70.0]
@@ -243,3 +247,111 @@ def test_render_radar_text_axis_order_matches_objective_keys():
     for idx, key in enumerate(OBJECTIVE_DIMENSION_KEYS):
         assert RADAR_DIMENSION_LABELS[key] in text
         assert f"{values[idx]:.0f}" in text
+
+
+_BAR_CHARS = "█▉▊▋▌▍▎▏░"
+
+
+def _display_width(text: str) -> int:
+    """与渲染端同口径的显示宽度（East Asian W/F 记 2 列）。"""
+    import unicodedata
+
+    return sum(
+        2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        for char in text
+    )
+
+
+def _dimension_lines(rendered: str) -> list[str]:
+    """按 OBJECTIVE_DIMENSION_KEYS 顺序取出各维度数值行。"""
+    lines = []
+    for key in OBJECTIVE_DIMENSION_KEYS:
+        line = [
+            ln
+            for ln in rendered.splitlines()
+            if RADAR_DIMENSION_LABELS[key] in ln
+        ]
+        assert line, f"缺少维度行：{key}"
+        lines.append(line[0])
+    return lines
+
+
+def _bar_display_start(line: str) -> int:
+    """行内条形首字符的显示列位置（按 CJK 宽度折算，标签列对齐的度量）。"""
+    for index, char in enumerate(line):
+        if char in _BAR_CHARS:
+            return _display_width(line[:index])
+    raise AssertionError(f"条形字符缺失：{line}")
+
+
+def test_render_radar_text_value_columns_aligned_across_cjk_labels():
+    """v4.1.0：维度名显示宽度不一致（4~7 个汉字）时条形列仍逐行对齐。"""
+    text = render_radar_text(series=_series(values=[70.0, 45.0, 90.0, 30.0]))
+    lines = _dimension_lines(text)
+    assert len({_bar_display_start(ln) for ln in lines}) == 1
+    # 数值列（行尾数值 token）同样按显示宽度对齐
+    value_starts = {
+        _display_width(ln) - _display_width(ln.rsplit("  ", 1)[-1])
+        for ln in lines
+    }
+    assert len(value_starts) == 1
+
+
+def test_render_radar_bars_is_deterministic_with_eighth_blocks():
+    """v4.1.0 独立柱状图形态：字节级确定性 + 八分档块 + 空位补齐。"""
+    kwargs = dict(series=_series(), title="测试导师 客观证据雷达图", sample_note="样本说明")
+    first = render_radar_bars(**kwargs)
+    second = render_radar_bars(**kwargs)
+    assert first == second
+    assert first.encode("utf-8") == second.encode("utf-8")
+    assert "测试导师 客观证据雷达图" in first
+    assert "样本说明" in first
+    # 非整格维度（80/60/90/70 折算 24 格均带小数）出现八分档尾块
+    assert any(char in first for char in "▏▎▍▌▋▊▉")
+    # 柱状图形态用空位补齐（非 ░），条形列与数值列按显示宽度逐行对齐
+    assert "░" not in first
+    lines = _dimension_lines(first)
+    assert len({_bar_display_start(ln) for ln in lines}) == 1
+    value_starts = {
+        _display_width(ln) - _display_width(ln.rsplit("  ", 1)[-1])
+        for ln in lines
+    }
+    assert len(value_starts) == 1
+
+
+def test_render_radar_bars_zero_and_full_scale():
+    zero = render_radar_bars(series=_series(values=[0.0] * 4))
+    zero_line = _dimension_lines(zero)[0]
+    # 全 0：条形段（标签与数值之间）不含任何整格/分档块
+    bar_segment = zero_line.rsplit("  ", 1)[0].split("  ", 1)[-1]
+    assert bar_segment.strip() == ""
+    assert zero_line.rstrip().endswith("0")
+    full = render_radar_bars(series=_series(values=[100.0] * 4))
+    full_line = _dimension_lines(full)[0]
+    assert "█" * 24 in full_line
+    assert full_line.rstrip().endswith("100")
+
+
+def test_select_radar_text_form_preference_and_auto_fallback():
+    values = [70.0, 45.0, 90.0, 30.0]
+    # 显式偏好直接生效
+    assert select_radar_text_form(values, preference="bars") == "bars"
+    assert select_radar_text_form(values, preference="radar") == "radar"
+    # 未知取值按 auto；正常数据 → 线状雷达
+    assert select_radar_text_form(values, preference="whatever") == "radar"
+    # 退化数据（全 0，多边形退化为中心点）→ 自动降级柱状图
+    assert select_radar_text_form([0.0] * 4, preference="auto") == "bars"
+    assert radar_polygon_edge_cells([0.0] * 4) <= 1
+
+
+def test_render_radar_text_auto_dispatches_by_form():
+    series = _series(values=[0.0] * 4)
+    auto = render_radar_text_auto(series=series, title="t", form="auto")
+    bars = render_radar_bars(series=series, title="t")
+    radar = render_radar_text(series=series, title="t")
+    # 全 0 退化数据自动选择柱状图（无 ░ 空位填充是 bars 形态特征）
+    assert auto == bars
+    assert auto != radar
+    # 显式 radar 偏好覆盖自动降级
+    forced = render_radar_text_auto(series=series, title="t", form="radar")
+    assert forced == radar

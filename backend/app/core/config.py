@@ -157,6 +157,9 @@ class Settings(BaseSettings):
     # separate capabilities. Both remain disabled unless explicitly released.
     QXD_REMOTE_MEDIA_FETCH_ENABLED: bool = False
     QXD_ATTACHMENTS_ENABLED: bool = False
+    # 清小搭文本雷达图形态：auto（默认，退化数据自动降级柱状图）/
+    # radar（固定线状雷达）/ bars（固定柱状图）。未知取值按 auto。
+    RADAR_TEXT_FORM: str = "auto"
     # 逗号分隔的媒体下载域名白名单；启用远程媒体抓取时必须非空。
     QXD_MEDIA_ALLOWED_HOSTS: str = ""
     QXD_MEDIA_MAX_REDIRECTS: int = Field(default=3, ge=0, le=10)

@@ -92,7 +92,7 @@ from app.services.radar_chart import (
     RadarSeries,
     build_radar_series_for_advisor,
     render_radar_svg,
-    render_radar_text,
+    render_radar_text_auto,
 )
 from app.services.recruitment_dialogue import (
     _parse_ordinal,
@@ -1155,7 +1155,7 @@ def _radar_intent_reply(
         return (
             "雷达图附件当前未启用；文本版雷达图如下（仅对话端口直出，"
             "数据与附件版同一来源）。\n\n"
-            f"{render_radar_text(series=series, title=f'{name} 客观证据雷达图', sample_note=release_note)}\n\n"
+            f"{render_radar_text_auto(series=series, title=f'{name} 客观证据雷达图', sample_note=release_note, form=settings.RADAR_TEXT_FORM)}\n\n"
             "客观指标与匿名主观评价严格分离，本图不含学生评价。\n"
             f"交互式雷达图 👉 {_SITE_HOME_URL}",
             None,
@@ -1166,7 +1166,7 @@ def _radar_intent_reply(
         logger.warning("radar_delivery_not_ready status=%s", exc.status_code)
         return (
             "雷达图附件交付尚未配置公网地址；文本版雷达图如下。\n\n"
-            f"{render_radar_text(series=series, title=f'{name} 客观证据雷达图')}\n\n"
+            f"{render_radar_text_auto(series=series, title=f'{name} 客观证据雷达图', form=settings.RADAR_TEXT_FORM)}\n\n"
             "客观指标与匿名主观评价严格分离，本图不含学生评价。\n"
             f"交互式雷达图 👉 {_SITE_HOME_URL}",
             None,
