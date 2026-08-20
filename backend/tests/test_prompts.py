@@ -81,14 +81,15 @@ def test_empty_template_file_returns_fallback(monkeypatch, tmp_path):
 
 
 # —— v4.1.0 自然度增强：v2 模板合同 ——
+# —— v4.2.0 多轮自然度：rewrite_template 升级 v3 ——
 
 
-def test_active_versions_are_v2():
+def test_active_versions_are_current():
     assert _CURRENT_VERSIONS["system_prompt"] == "v2"
-    assert _CURRENT_VERSIONS["rewrite_template"] == "v2"
+    assert _CURRENT_VERSIONS["rewrite_template"] == "v3"
 
 
-def test_rewrite_template_v2_carries_naturalness_contract():
+def test_rewrite_template_carries_naturalness_contract():
     text = _real_text("rewrite_template")
     # 六条自然度要求的关键指令齐全
     for directive in (
@@ -98,6 +99,14 @@ def test_rewrite_template_v2_carries_naturalness_contract():
         "自然停在问题上",         # E：不挂"请回答"尾巴
         "语气词",                 # F：松弛但不堆砌
         "像真人对话，不像模板播报",
+    ):
+        assert directive in text, directive
+    # v4.2.0 多轮自然度要求（G/H）
+    for directive in (
+        "多轮要连贯",             # G：参考最近对话自然呼应
+        "不要照搬其措辞",         # G：系统底稿仅作上下文
+        "本轮开场必须与「上一轮话术」明显不同",  # B/G：防重复承接
+        "篇幅贴合用户与阶段",     # H：镜像用户长度 + 阶段语气
     ):
         assert directive in text, directive
     # v1 事实红线全部保留
@@ -120,6 +129,10 @@ def test_rewrite_template_v2_carries_naturalness_contract():
         "{options}",
         "{recruitment_summary}",
         "{memory_summary}",
+        "{recent_dialogue}",
+        "{previous_reply}",
+        "{turn_phase}",
+        "{user_style_hint}",
     ):
         assert placeholder in text, placeholder
 

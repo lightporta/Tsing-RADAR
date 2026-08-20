@@ -1510,6 +1510,95 @@ def test_expression_layer_skipped_on_confirmation_gate_and_match(monkeypatch):
     assert len(render_calls) == 6  # 匹配轮未调用表达层
 
 
+def test_expression_layer_receives_persisted_previous_reply_next_turn(monkeypatch):
+    """v4.2.0 多轮自然度：上一轮实际展示话术跨轮进入 FactPack。
+
+    第 1 轮表达层输出被会话级持久化；第 2 轮 FactPack.previous_reply
+    必须是用户真实看到的上一轮话术（而非状态机底稿），供防重复闸门
+    与提示词 v3 防重复承接使用。
+    """
+    packs = []
+    rewrite = "那我们接着聊：你更偏好算法理论研究，还是实际应用？"
+
+    async def fake_render(fact_pack):
+        packs.append(fact_pack)
+        return SimpleNamespace(
+            text=rewrite,
+            provider="glm",
+            status="available",
+        )
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", fake_render)
+    user_id = f"qxd-multiturn-{uuid.uuid4()}"
+    headers = _qxd_headers(user_id)
+    first = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "user": user_id,
+            "messages": [{"role": "user", "content": "我对强化学习感兴趣"}],
+            "stream": False,
+        },
+    )
+    assert first.status_code == 200
+    assert (
+        first.json()["choices"][0]["message"]["content"] == rewrite
+    )
+    second = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "user": user_id,
+            "messages": [
+                {"role": "user", "content": "我对强化学习感兴趣"},
+                {"role": "user", "content": "偏工程落地一些"},
+            ],
+            "stream": False,
+        },
+    )
+    assert second.status_code == 200
+    assert len(packs) == 2
+    # 第 1 轮：无持久化值，previous_reply 回退状态机底稿推导（开场题，
+    # 用户确实看过）；第 2 轮：持久化的「上一轮实际展示话术」优先。
+    assert packs[0].previous_reply
+    assert packs[0].previous_reply != rewrite
+    assert packs[1].previous_reply == rewrite
+    # 多轮上下文同步投影：第 2 轮事实包含最近对话底稿
+    assert "用户：我对强化学习感兴趣" in packs[1].recent_dialogue
+    assert packs[1].turn_phase == "中段"
+
+
+def test_session_kv_row_does_not_hijack_dialogue_intent():
+    """v4.2.0 回归护栏：会话级 KV（mode="none" 占位行）不得短路意图分类。
+
+    表达层每轮写入 interview_last_expression 会创建/合并 mode="none" 行；
+    get_dialogue_mode 必须把它归一化为 None，否则后续轮次的新意图
+    （招募/导师咨询等）永远路由不进对话模式。
+    """
+    from app.db.session import SessionLocal
+    from app.services.dialogue_state_store import (
+        get_dialogue_mode,
+        set_session_value,
+    )
+
+    session_id = f"s-kv-{uuid.uuid4()}"
+    student_id = f"stu-{uuid.uuid4()}"
+    with SessionLocal() as db:
+        set_session_value(
+            db,
+            session_id=session_id,
+            student_id=student_id,
+            key="interview_last_expression",
+            value="上一轮实际展示话术",
+        )
+        assert (
+            get_dialogue_mode(
+                db, session_id=session_id, student_id=student_id
+            )
+            is None
+        )
+
+
 # ---------------------------------------------------------------- v2.5 对话模式
 
 

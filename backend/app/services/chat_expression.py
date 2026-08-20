@@ -4,6 +4,11 @@
 事实包生成更自然的整段回复。任何失败（未配置凭据 / 网络错误 / 超时 /
 输出未通过校验）都返回 disabled/unavailable，调用方必须完全降级回
 固定模板——题序、画像状态、确认门与匹配触发绝不依赖本模块。
+
+v4.2.0 多轮自然度增强：事实包扩展只读多轮上下文（最近对话底稿 /
+上一轮实际展示话术 / 访谈阶段 / 用户风格标签，全部为服务端已有事实
+的确定性投影），配套跨轮防重复闸门与提示词 v3。红线不变：确认门与
+匹配结果不增强；题面/选项/招募/记忆逐字校验照常生效。
 """
 
 import logging
@@ -23,6 +28,16 @@ from app.services.prompts import load_prompt_template
 logger = logging.getLogger(__name__)
 
 MAX_EXPRESSION_CHARS = 400
+
+# v4.2.0 多轮自然度：事实包新增只读多轮上下文（全部为服务端已有事实的
+# 确定性投影，不给 LLM 留新事实空间）。上界用于控制提示词长度。
+MAX_PREVIOUS_REPLY_CHARS = 200
+_MAX_RECENT_DIALOGUE_MESSAGES = 6
+_MAX_RECENT_DIALOGUE_CHARS = 800
+_MAX_DIALOGUE_TURN_CHARS = 120
+# 跨轮防重复闸门阈值：开头逐字相同 / 正文连续复用上一轮话术的片段长度。
+_REPETITION_OPENING_CHARS = 10
+_REPETITION_RUN_CHARS = 14
 
 _DIMENSION_LABELS = {
     "research_interests": "研究兴趣",
@@ -50,11 +65,17 @@ _NATURALNESS_REJECT_TOKENS = (
     "收到请回复",
     "期待您的回复",
     "亲，",
+    # v4.2.0 追加：客服套话 / 服务用语（自然对话中不应出现）
+    "很高兴为您",
+    "为您服务",
+    "还有什么可以帮",
+    "希望以上",
+    "祝您生活愉快",
 )
 
-# v4.0.0 任务1 A-3：提示词版本化。内嵌 v1 文本为兜底常量，运行期从
-# app/services/prompts/rewrite_template_v1.txt 加载（失败 → 回退本常量，
-# 行为与 v3.1.x 完全一致）。format 占位符与常量一致。
+# v4.0.0 任务1 A-3：提示词版本化。内嵌 v1 文本为兜底常量，运行期按
+# prompt_versions.json 登记的当前版本加载（v4.2.0 起 rewrite_template
+# 为 v3：多轮上下文 + 防重复衔接）；加载失败 → 回退本常量（fail-closed）。
 _REWRITE_TEMPLATE_FALLBACK_V1 = (
     "你是访谈向导，请把服务端给出的下一句话用自然、温暖、口语化的中文"
     "转述给用户，让对话像一位真人导师助理。\n"
@@ -98,6 +119,16 @@ class InterviewFactPack:
     # 逐字校验按 >=4 字片段强校验，防表达层改写用户事实。
     recruitment_summary: str = ""
     memory_summary: str = ""
+    # v4.2.0 多轮自然度上下文（只读事实投影，见 build_interview_fact_pack）：
+    # recent_dialogue 为最近几轮「用户：…/清小搭：…」对话底稿（assistant 侧
+    # 是状态机固定话术底稿，非表达层输出）；previous_reply 为上一轮实际展示
+    # 话术（调用方持久化值优先，否则回退状态机底稿推导）；turn_phase 与
+    # user_style_hint 为确定性阶段/风格标签。LLM 只被允许引用其中出现的
+    # 事实，闸门照常逐字校验，不给自由发挥留空间。
+    recent_dialogue: str = ""
+    previous_reply: str = ""
+    turn_phase: str = ""
+    user_style_hint: str = ""
 
 
 def _dimension_labels(dimensions) -> tuple[str, ...]:
@@ -107,14 +138,87 @@ def _dimension_labels(dimensions) -> tuple[str, ...]:
     )
 
 
+def _message_parts(messages) -> list[tuple[str, str]]:
+    """把 pydantic / dict 两种消息形态统一成 (role, content) 列表。"""
+    parts: list[tuple[str, str]] = []
+    for item in messages or []:
+        if isinstance(item, dict):
+            role = str(item.get("role") or "")
+            content = str(item.get("content") or "")
+        else:
+            role = str(getattr(item, "role", "") or "")
+            content = str(getattr(item, "content", "") or "")
+        parts.append((role, content))
+    return parts
+
+
+def _clip(text: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
+def _derive_recent_dialogue(messages) -> tuple[str, str]:
+    """从状态机消息底稿推导 (recent_dialogue, previous_reply)。
+
+    确定性只读投影：末位 assistant 消息即本轮话术底稿（question_prompt
+    已单独注入，跳过）；previous_reply 取其前最后一条 assistant 底稿。
+    调用方持久化的「上一轮实际展示话术」优先于本推导（见 chat.py）。
+    """
+    parts = _message_parts(messages)
+    if parts and parts[-1][0] == "assistant":
+        parts = parts[:-1]
+    previous_reply = ""
+    for role, content in reversed(parts):
+        if role == "assistant" and content.strip():
+            previous_reply = _clip(content, MAX_PREVIOUS_REPLY_CHARS)
+            break
+    lines = [
+        f"{'用户' if role == 'user' else '清小搭'}：{_clip(content, _MAX_DIALOGUE_TURN_CHARS)}"
+        for role, content in parts[-_MAX_RECENT_DIALOGUE_MESSAGES:]
+        if content.strip()
+    ]
+    dialogue = "\n".join(lines)
+    if len(dialogue) > _MAX_RECENT_DIALOGUE_CHARS:
+        dialogue = "…" + dialogue[-_MAX_RECENT_DIALOGUE_CHARS:]
+    return dialogue, previous_reply
+
+
+def _turn_phase(completed, missing) -> str:
+    """确定性访谈阶段标签（供提示词做阶段化语气，不影响状态机）。"""
+    if not completed:
+        return "开场"
+    if not missing:
+        return "收尾"
+    return "中段"
+
+
+def _user_style_hint(message: str) -> str:
+    """用户最新一句的确定性风格标签（长度分档，无 LLM 参与）。"""
+    length = len((message or "").strip())
+    if not length:
+        return "未提供"
+    if length <= 8:
+        return "简短"
+    if length <= 39:
+        return "常规"
+    return "详细"
+
+
 def build_interview_fact_pack(
     state: InterviewStateResponse,
     latest_user_message: str,
     *,
     recruitment_summary: str = "",
     memory_summary: str = "",
+    previous_reply: str = "",
 ) -> InterviewFactPack:
-    """从只读状态投影构造事实包；不访问数据库、不改变任何状态。"""
+    """从只读状态投影构造事实包；不访问数据库、不改变任何状态。
+
+    previous_reply 为调用方持久化的「上一轮实际展示话术」（可为空）；
+    非空时优先于状态机底稿推导，使防重复闸门对齐用户真实看到的文本。
+    """
     question = state.current_question
     profile = state.profile
     if profile.hard_constraints:
@@ -123,6 +227,7 @@ def build_interview_fact_pack(
         constraint_status = "有硬性条件待确认"
     else:
         constraint_status = "尚未确认硬性条件"
+    derived_dialogue, derived_previous = _derive_recent_dialogue(state.messages)
     return InterviewFactPack(
         user_message=(latest_user_message or "").strip(),
         # 以实际展示给用户的回复为准：动态题（如硬约束确认题）只存在于
@@ -136,6 +241,16 @@ def build_interview_fact_pack(
         hard_constraint_status=constraint_status,
         recruitment_summary=recruitment_summary.strip(),
         memory_summary=memory_summary.strip(),
+        recent_dialogue=derived_dialogue,
+        previous_reply=(
+            _clip(previous_reply, MAX_PREVIOUS_REPLY_CHARS)
+            if previous_reply.strip()
+            else derived_previous
+        ),
+        turn_phase=_turn_phase(
+            state.completed_dimensions, state.missing_dimensions
+        ),
+        user_style_hint=_user_style_hint(latest_user_message),
     )
 
 
@@ -191,6 +306,80 @@ def _naturalness_violation(text: str, fact_pack: InterviewFactPack) -> bool:
     )
 
 
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _maximal_common_runs(a: str, b: str, min_len: int) -> list[str]:
+    """a 与 b 的全部极大公共连续子串（长度 >= min_len）。
+
+    输入均为闸门用短串（<=600 字），滚动数组 DP 足够；仅收集无法继续
+    延伸的极大片段，避免同一片段重复计数。
+    """
+    runs: list[str] = []
+    if len(a) < min_len or len(b) < min_len:
+        return runs
+    prev_row = [0] * (len(b) + 1)
+    for i in range(1, len(a) + 1):
+        cur = [0] * (len(b) + 1)
+        char = a[i - 1]
+        for j in range(1, len(b) + 1):
+            if char == b[j - 1]:
+                length = prev_row[j - 1] + 1
+                cur[j] = length
+                if length >= min_len and (
+                    i == len(a) or j == len(b) or a[i] != b[j]
+                ):
+                    runs.append(a[i - length : i])
+        prev_row = cur
+    return runs
+
+
+def _repetition_violation(text: str, fact_pack: InterviewFactPack) -> bool:
+    """v4.2.0 跨轮防重复闸门（确定性）。
+
+    上一轮话术存在时，以下任一命中即拒绝并降级固定模板：
+    1. 开头连续 {_REPETITION_OPENING_CHARS} 字（去空白）与上一轮完全相同——
+       表达层最常见的机器式雷同承接（「好的，那我们……」逐轮复读）；
+    2. 与上一轮话术共享 >={_REPETITION_RUN_CHARS} 字的连续片段，且该片段
+       不属于本轮合法内容（题面/选项/招募/记忆/用户原话）——题面等逐字
+       必现内容豁免，避免误伤正常复述。
+    """
+    previous = fact_pack.previous_reply
+    if not previous:
+        return False
+    candidate = _normalize(text)
+    prev = _normalize(previous)
+    if not candidate or not prev:
+        return False
+    if (
+        len(candidate) >= _REPETITION_OPENING_CHARS
+        and len(prev) >= _REPETITION_OPENING_CHARS
+        and candidate[:_REPETITION_OPENING_CHARS]
+        == prev[:_REPETITION_OPENING_CHARS]
+    ):
+        return True
+    allowed = _normalize(
+        " ".join(
+            part
+            for part in (
+                fact_pack.question_prompt,
+                " ".join(fact_pack.options),
+                fact_pack.recruitment_summary,
+                fact_pack.memory_summary,
+                fact_pack.user_message,
+            )
+            if part
+        )
+    )
+    return any(
+        run not in allowed
+        for run in _maximal_common_runs(
+            candidate, prev, _REPETITION_RUN_CHARS
+        )
+    )
+
+
 def _validate_expression(text: str, fact_pack: InterviewFactPack) -> bool:
     """输出闸门：非空 / 长度 / 禁词 / 题面关键信息覆盖 / 事实段逐字校验 /
     自然度标记（机器腔/客服腔 → 拒绝降级）。"""
@@ -201,6 +390,10 @@ def _validate_expression(text: str, fact_pack: InterviewFactPack) -> bool:
     if any(token in text for token in _FORBIDDEN_TOKENS):
         return False
     if _naturalness_violation(text, fact_pack):
+        return False
+    # v4.2.0 跨轮防重复：与上一轮话术雷同（开头逐字相同 / 长片段复用）
+    # → 拒绝降级，倒逼承接方式轮换（宁降级不出戏）。
+    if _repetition_violation(text, fact_pack):
         return False
     if fact_pack.options and not all(
         option in text for option in fact_pack.options
@@ -252,6 +445,12 @@ async def render_interview_reply(
                     options="；".join(fact_pack.options) or "无",
                     recruitment_summary=fact_pack.recruitment_summary or "无",
                     memory_summary=fact_pack.memory_summary or "无",
+                    # v4.2.0 多轮自然度上下文（v1 兜底模板不含这些占位符，
+                    # str.format 忽略多余实参，向后兼容）
+                    recent_dialogue=fact_pack.recent_dialogue or "无",
+                    previous_reply=fact_pack.previous_reply or "无",
+                    turn_phase=fact_pack.turn_phase or "未提供",
+                    user_style_hint=fact_pack.user_style_hint or "未提供",
                 ),
             )
         ],

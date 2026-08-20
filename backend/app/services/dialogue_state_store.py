@@ -39,7 +39,13 @@ def get_dialogue_mode(
     session_id: str,
     student_id: str,
 ) -> str | None:
-    """只读当前对话模式名（无记录返回 None）。"""
+    """只读当前对话模式名（无记录/无活动模式返回 None）。
+
+    "none" 是会话级 KV（一次性标记 / 表达层上一轮话术）落库时的占位
+    mode，不代表活动对话模式——必须归一化为 None，否则会把后续轮次
+    的意图分类短路成 NONE（v4.2.0 修复：表达层话术每轮写入激活了该
+    潜在缺陷）。
+    """
     record = (
         db.query(DialogueSession.mode)
         .filter(
@@ -48,7 +54,10 @@ def get_dialogue_mode(
         )
         .first()
     )
-    return record[0] if record is not None else None
+    if record is None:
+        return None
+    mode = record[0]
+    return mode if mode and mode != "none" else None
 
 
 def upsert_dialogue_state(
@@ -142,6 +151,59 @@ def mark_session_flag(
     else:
         merged = dict(record.state or {})
         merged[key] = True
+        record.state = merged
+        record.version = (record.version or 0) + 1
+    db.commit()
+
+
+def get_session_value(
+    db: Session,
+    *,
+    session_id: str,
+    student_id: str,
+    key: str,
+) -> str | None:
+    """只读会话级字符串值（如「上一轮表达层实际展示话术」）。
+
+    v4.2.0 多轮自然度：与一次性标记同一存储约定；值非字符串（被对话
+    模式整体覆盖等）视为不存在，调用方回退到底稿推导。
+    """
+    state = get_dialogue_state(db, session_id=session_id, student_id=student_id)
+    if not state:
+        return None
+    value = state.get(key)
+    return value if isinstance(value, str) else None
+
+
+def set_session_value(
+    db: Session,
+    *,
+    session_id: str,
+    student_id: str,
+    key: str,
+    value: str,
+) -> None:
+    """写入会话级字符串值；合并进既有 state，不改写当前对话模式。"""
+    record = (
+        db.query(DialogueSession)
+        .filter(
+            DialogueSession.session_id == session_id,
+            DialogueSession.student_id == student_id,
+        )
+        .first()
+    )
+    if record is None:
+        record = DialogueSession(
+            session_id=session_id,
+            student_id=student_id,
+            mode="none",
+            state={key: value},
+            version=1,
+        )
+        db.add(record)
+    else:
+        merged = dict(record.state or {})
+        merged[key] = value
         record.state = merged
         record.version = (record.version or 0) + 1
     db.commit()

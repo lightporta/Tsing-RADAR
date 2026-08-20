@@ -17,9 +17,11 @@ _VERSIONS_PATH = _PROMPTS_DIR / "prompt_versions.json"
 
 # 各模板当前支持/期望的版本（与 prompt_versions.json 对照，不一致即兜底）
 # v4.1.0：升级 v2（自然度增强：人设 + 机器腔禁令 + 承接方式轮换）。
+# v4.2.0：rewrite_template 升级 v3（多轮自然度：最近对话/上一轮话术/
+# 阶段/风格四段确定性上下文 + 防重复承接要求）。
 _CURRENT_VERSIONS: dict[str, str] = {
     "system_prompt": "v2",
-    "rewrite_template": "v2",
+    "rewrite_template": "v3",
 }
 
 

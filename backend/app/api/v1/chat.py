@@ -44,6 +44,7 @@ from app.services.artifact_delivery import (
 )
 from app.services.artifact_generation import create_match_report_artifact
 from app.services.chat_expression import (
+    MAX_PREVIOUS_REPLY_CHARS,
     build_interview_fact_pack,
     render_interview_reply,
 )
@@ -72,8 +73,10 @@ from app.services.dialogue_intent import (
 )
 from app.services.dialogue_state_store import (
     get_dialogue_mode,
+    get_session_value,
     has_session_flag,
     mark_session_flag,
+    set_session_value,
 )
 from app.services.direction_map import handle_direction_map
 from app.services.match_application import (
@@ -772,10 +775,29 @@ async def generate_agent_reply(
                             db, resolved_principal.subject_id
                         ),
                         recruitment_summary=recruitment_brief,
+                        # v4.2.0 多轮自然度：上一轮实际展示话术（会话级
+                        # 持久化值）注入事实包，供表达层防重复承接；
+                        # 无值时由状态机底稿推导（见 build_interview_fact_pack）。
+                        previous_reply=get_session_value(
+                            db,
+                            session_id=session_id,
+                            student_id=student_id,
+                            key="interview_last_expression",
+                        )
+                        or "",
                     )
                 )
                 if expression.text:
                     visible = expression.text
+                # v4.2.0 记住本轮实际展示话术（会话级 best-effort），下一轮
+                # 表达层据此防重复；对话模式切换会覆盖该键，属预期降级。
+                set_session_value(
+                    db,
+                    session_id=session_id,
+                    student_id=student_id,
+                    key="interview_last_expression",
+                    value=visible[:MAX_PREVIOUS_REPLY_CHARS],
+                )
             if state.recommend_ready:
                 latest_user = user_messages[-1].strip() if user_messages else ""
                 earlier_users = user_messages[:-1]
