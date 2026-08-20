@@ -35,6 +35,23 @@ _DIMENSION_LABELS = {
 
 _FORBIDDEN_TOKENS = ("画像已确认", "匹配完成", "确认画像")
 
+# v4.1.0 自然度闸门：机器腔/客服腔标记出现在输出里 → 拒绝并降级固定模板
+# （降级输出仍正确，只是不自然；宁降级不出戏）。标记若同时出现在事实包
+# 提供的内容里（如题目/选项本身含该词），不视为违规，防止误伤合法题面。
+_NATURALNESS_REJECT_TOKENS = (
+    "作为一个AI",
+    "作为一个智能",
+    "作为一名人工智能",
+    "作为一个语言模型",
+    "人工智能语言模型",
+    "人工智能助手",
+    "亲爱的用户",
+    "感谢您的反馈",
+    "收到请回复",
+    "期待您的回复",
+    "亲，",
+)
+
 # v4.0.0 任务1 A-3：提示词版本化。内嵌 v1 文本为兜底常量，运行期从
 # app/services/prompts/rewrite_template_v1.txt 加载（失败 → 回退本常量，
 # 行为与 v3.1.x 完全一致）。format 占位符与常量一致。
@@ -155,13 +172,35 @@ def _summary_verbatim_tokens(summary: str) -> tuple[str, ...]:
     )
 
 
+def _naturalness_violation(text: str, fact_pack: InterviewFactPack) -> bool:
+    """机器腔/客服腔标记检测；标记同时出现在事实包内容里时不误伤。"""
+    allowed = " ".join(
+        part
+        for part in (
+            fact_pack.question_prompt,
+            " ".join(fact_pack.options),
+            fact_pack.recruitment_summary,
+            fact_pack.memory_summary,
+            fact_pack.user_message,
+        )
+        if part
+    )
+    return any(
+        token in text and token not in allowed
+        for token in _NATURALNESS_REJECT_TOKENS
+    )
+
+
 def _validate_expression(text: str, fact_pack: InterviewFactPack) -> bool:
-    """输出闸门：非空 / 长度 / 禁词 / 题面关键信息覆盖 / 事实段逐字校验。"""
+    """输出闸门：非空 / 长度 / 禁词 / 题面关键信息覆盖 / 事实段逐字校验 /
+    自然度标记（机器腔/客服腔 → 拒绝降级）。"""
     if not text:
         return False
     if len(text) > MAX_EXPRESSION_CHARS:
         return False
     if any(token in text for token in _FORBIDDEN_TOKENS):
+        return False
+    if _naturalness_violation(text, fact_pack):
         return False
     if fact_pack.options and not all(
         option in text for option in fact_pack.options

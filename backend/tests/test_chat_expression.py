@@ -235,3 +235,49 @@ def test_build_fact_pack_constraint_status_variants():
     state.profile.unresolved_hard_constraints = ["必须在北京"]
     pack = expr.build_interview_fact_pack(state, "必须在北京")
     assert pack.hard_constraint_status == "有硬性条件待确认"
+
+
+# —— v4.1.0 自然度闸门：机器腔/客服腔 → 拒绝并降级固定模板 ——
+
+
+def _plain_pack(**overrides) -> expr.InterviewFactPack:
+    fields = dict(
+        user_message="答",
+        question_prompt="喜欢什么？",
+        options=(),
+        completed_dimensions=(),
+        missing_dimensions=("研究兴趣",),
+        hard_constraint_status="尚未确认硬性条件",
+    )
+    fields.update(overrides)
+    return expr.InterviewFactPack(**fields)
+
+
+class TestNaturalnessGate:
+    def test_ai_self_reference_rejected(self):
+        pack = _plain_pack()
+        text = "作为一个AI助手，我来问你：喜欢什么？"
+        assert expr._validate_expression(text, pack) is False
+
+    def test_customer_service_tone_rejected(self):
+        pack = _plain_pack()
+        for text in (
+            "亲爱的用户，请告诉我你喜欢什么？",
+            "感谢您的反馈！那么喜欢什么呢？",
+            "收到请回复你的偏好哦。",
+        ):
+            assert expr._validate_expression(text, pack) is False, text
+
+    def test_natural_tone_still_passes(self):
+        pack = _plain_pack()
+        text = "说到这个，你平时更喜欢琢磨哪块呢？"
+        assert expr._validate_expression(text, pack) is True
+
+    def test_token_from_fact_pack_content_not_misjudged(self):
+        # 题面/选项本身含"人工智能助手"字样时不算机器腔（防误伤合法题面）
+        pack = _plain_pack(
+            options=("人工智能助手伦理", "其他"),
+            question_prompt="你怎么看人工智能助手这个研究方向？",
+        )
+        text = "你怎么看人工智能助手这个研究方向？偏人工智能助手伦理还是其他？"
+        assert expr._validate_expression(text, pack) is True

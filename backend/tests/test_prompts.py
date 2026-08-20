@@ -78,3 +78,60 @@ def test_empty_template_file_returns_fallback(monkeypatch, tmp_path):
     )
     (tmp_path / "system_prompt_v1.txt").write_text("   \n", encoding="utf-8")
     assert load_prompt_template("system_prompt", fallback="fb") == "fb"
+
+
+# —— v4.1.0 自然度增强：v2 模板合同 ——
+
+
+def test_active_versions_are_v2():
+    assert _CURRENT_VERSIONS["system_prompt"] == "v2"
+    assert _CURRENT_VERSIONS["rewrite_template"] == "v2"
+
+
+def test_rewrite_template_v2_carries_naturalness_contract():
+    text = _real_text("rewrite_template")
+    # 六条自然度要求的关键指令齐全
+    for directive in (
+        "承接方式要换着来",       # B：不每轮同一开场
+        "融进句子里",             # C：选项不编号复述
+        "禁止机器腔",             # D：客服腔/AI 自称禁令
+        "自然停在问题上",         # E：不挂"请回答"尾巴
+        "语气词",                 # F：松弛但不堆砌
+        "像真人对话，不像模板播报",
+    ):
+        assert directive in text, directive
+    # v1 事实红线全部保留
+    for redline in (
+        "必须完整保留服务端题目要传达的信息",
+        "不得添加题目之外的新事实",
+        "不得宣布画像已确认或匹配完成",
+        "400 字",
+        "原样保留其中的招募名称、截止日期",
+        "原样保留其中的用户事实",
+    ):
+        assert redline in text, redline
+    # v1 的全部 format 占位符保留（调用方 .format 不变）
+    for placeholder in (
+        "{user_message}",
+        "{completed}",
+        "{missing}",
+        "{constraints}",
+        "{question_prompt}",
+        "{options}",
+        "{recruitment_summary}",
+        "{memory_summary}",
+    ):
+        assert placeholder in text, placeholder
+
+
+def test_system_prompt_v2_keeps_state_machine_rules_with_persona():
+    text = _real_text("system_prompt")
+    # v1 控制规则保留（test_load_versioned_template_matches_file 也断言
+    # "Tsing-RADAR" 在文本中）
+    assert "服务端状态机控制" in text
+    assert "不得输出控制标记" in text
+    assert "不得自行宣布画像已确认或触发导师匹配" in text
+    # v2 人设与自然度基调
+    assert "学长/学姐" in text
+    assert "客服" in text
+    assert "语言模型" in text

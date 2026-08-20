@@ -16,9 +16,10 @@ _PROMPTS_DIR = Path(__file__).resolve().parent
 _VERSIONS_PATH = _PROMPTS_DIR / "prompt_versions.json"
 
 # 各模板当前支持/期望的版本（与 prompt_versions.json 对照，不一致即兜底）
+# v4.1.0：升级 v2（自然度增强：人设 + 机器腔禁令 + 承接方式轮换）。
 _CURRENT_VERSIONS: dict[str, str] = {
-    "system_prompt": "v1",
-    "rewrite_template": "v1",
+    "system_prompt": "v2",
+    "rewrite_template": "v2",
 }
 
 
