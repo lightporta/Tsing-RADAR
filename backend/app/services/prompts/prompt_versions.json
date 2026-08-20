@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "note": "模板变更必须新增版本文件（如 rewrite_template_v2.txt）并在此登记，不得原地覆盖；运行期加载失败回退代码内嵌 v1 兜底（fail-closed）。",
+  "versions": {
+    "system_prompt": {
+      "current": "v1",
+      "description": "通用系统提示词：动态访谈的题序、画像状态与确认门由服务端状态机控制，模型不得输出控制标记或自行宣布确认/触发匹配。"
+    },
+    "rewrite_template": {
+      "current": "v1",
+      "description": "访谈回复整段重写模板：保留服务端题目全部信息、不新增事实；招募/记忆摘要事实段逐字保留（配合表达层输出闸门校验）。"
+    }
+  }
+}

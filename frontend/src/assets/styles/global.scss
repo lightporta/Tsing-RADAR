@@ -1,0 +1,181 @@
+@use './variables.scss' as *;
+@use 'reset.scss';
+
+// =====================================================================
+// 全局基础样式
+// =====================================================================
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background-color: $color-bg;
+  color: $text-primary;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 3px solid rgba(64, 158, 255, 0.72);
+  outline-offset: 2px;
+}
+
+:where(input, textarea, select) {
+  font-size: 16px;
+}
+
+a {
+  color: $color-primary;
+  text-decoration: none;
+
+  &:hover {
+    color: $color-primary-light;
+  }
+}
+
+// —— 通用滚动条 ——
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(144, 147, 153, 0.3);
+  border-radius: 3px;
+
+  &:hover {
+    background: rgba(144, 147, 153, 0.5);
+  }
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+// —— 文字截断工具类 ——
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.text-ellipsis-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+// —— 通用动画 ——
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: all 0.3s ease;
+}
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+// —— 路由切换过渡 ——
+.view-transition-enter-active,
+.view-transition-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.view-transition-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+.view-transition-leave-to {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+// —— Element Plus 主题色覆盖 ——
+:root {
+  --el-color-primary: #{$color-primary};
+  --el-color-primary-light-3: #{$color-primary-light};
+  --el-color-primary-light-5: #a0cfff;
+  --el-color-primary-light-7: #c6e2ff;
+  --el-color-primary-light-8: #d9ecff;
+  --el-color-primary-light-9: #ecf5ff;
+  --el-color-primary-dark-2: #{$color-primary-dark};
+  --el-border-radius-base: 6px;
+}
+
+// —— 全局 markdown 渲染容器 ——
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  word-break: break-word;
+
+  p {
+    margin: 0 0 8px;
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+  code {
+    background: rgba(64, 158, 255, 0.1);
+    color: $color-primary-dark;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'SF Mono', Monaco, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+  }
+  pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 8px 0;
+    code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+  }
+  ul,
+  ol {
+    padding-left: 20px;
+    margin: 0 0 8px;
+  }
+  blockquote {
+    border-left: 3px solid $color-primary;
+    padding-left: 12px;
+    color: $text-regular;
+    margin: 8px 0;
+  }
+}

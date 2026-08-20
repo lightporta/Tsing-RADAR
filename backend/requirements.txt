@@ -1,0 +1,42 @@
+# Tsing-RADAR Backend Dependencies
+# Python 3.10+
+
+# —— Web 框架 ——
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+
+# —— 配置与校验 ——
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# —— 数据库 ——
+SQLAlchemy==2.0.35
+alembic==1.13.3
+# 方式二 PostgreSQL（SQLite 开发仍使用标准库驱动）
+psycopg[binary]==3.2.9
+
+# —— 缓存（方式二启用；未配置 URL 时仍降级为内存）——
+redis==5.2.1
+
+# —— HTTP 客户端（调用 LLM API）——
+httpx==0.27.2
+
+# —— D1 官方招生目录离线解析 ——
+lxml==6.0.2
+
+# —— A5/A6 私有简历解析与真实文档生成 ——
+pypdf==6.10.0
+python-docx==1.2.0
+reportlab==4.4.9
+
+# —— A6 私有 S3 兼容对象存储（本地开发可不配置远端桶） ——
+boto3==1.40.61
+
+# —— 对话编排（可选，未安装降级为函数链）——
+# langgraph==0.2.34
+# langchain-core==0.3.1
+
+# —— 测试 ——
+pytest==8.3.3
+pytest-asyncio==0.24.0

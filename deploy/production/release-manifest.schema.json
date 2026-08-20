@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/tsing-radar/release-manifest.schema.json",
+  "title": "Tsing-RADAR local release candidate manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "target_platform",
+    "base_images",
+    "application_images",
+    "source_files",
+    "compose_image_slots",
+    "cloud_gates"
+  ],
+  "properties": {
+    "schema_version": {"const": "l2-release-manifest-v1"},
+    "target_platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": {"const": "linux"},
+        "architecture": {"const": "amd64"}
+      }
+    },
+    "base_images": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"$ref": "#/$defs/baseImage"}
+    },
+    "application_images": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"$ref": "#/$defs/applicationImage"}
+    },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/sourceFile"}
+    },
+    "compose_image_slots": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "cloud_resolution_required"],
+        "properties": {
+          "name": {
+            "enum": [
+              "POSTGRES_IMAGE",
+              "REDIS_IMAGE",
+              "CLAMAV_IMAGE",
+              "BACKEND_IMAGE",
+              "FRONTEND_IMAGE",
+              "CADDY_IMAGE",
+              "NGINX_UNPRIVILEGED_IMAGE"
+            ]
+          },
+          "cloud_resolution_required": {"const": true}
+        }
+      }
+    },
+    "cloud_gates": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "cloud_pull_and_inspect_linux_amd64",
+          "compose_vendor_and_application_image_digests",
+          "real_secret_bind_uid_mode",
+          "real_cos_clamav_database_dns_tls"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "baseImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "tag",
+        "index_digest",
+        "linux_amd64_manifest_digest",
+        "linux_amd64_config_digest"
+      ],
+      "properties": {
+        "role": {"enum": ["backend", "frontend_builder", "frontend_runtime"]},
+        "tag": {"type": "string", "minLength": 1},
+        "index_digest": {"$ref": "#/$defs/digest"},
+        "linux_amd64_manifest_digest": {"$ref": "#/$defs/digest"},
+        "linux_amd64_config_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "applicationImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "local_reference", "image_id", "os", "architecture"],
+      "properties": {
+        "role": {"enum": ["backend", "frontend"]},
+        "local_reference": {"enum": ["tsing-radar-backend:l2-local", "tsing-radar-frontend:l2-local"]},
+        "image_id": {"$ref": "#/$defs/digest"},
+        "os": {"const": "linux"},
+        "architecture": {"const": "amd64"}
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/@+ -]+(?:/[A-Za-z0-9._/@+ -]+)*$"
+        },
+        "size": {"type": "integer", "minimum": 0, "maximum": 10485760},
+        "sha256": {"$ref": "#/$defs/digest"}
+      }
+    }
+  }
+}
