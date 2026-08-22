@@ -120,7 +120,9 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0012"
+    # 迁移链随版本合法推进：0013（v3.1.7 dialogue_sessions）/ 0014（v4.0.0
+    # user_memories）；断言跟随当前唯一头，避免陈旧硬编码。
+    assert revision == "0014"
     engine.dispose()
 
 

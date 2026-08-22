@@ -28,6 +28,11 @@ shutil.rmtree(PRIVATE_UPLOAD_ROOT, ignore_errors=True)
 os.environ["PRIVATE_UPLOAD_ROOT"] = str(PRIVATE_UPLOAD_ROOT)
 os.environ["OBJECT_STORAGE_LOCAL_ROOT"] = str(PRIVATE_UPLOAD_ROOT)
 
+# 测试默认禁用评分发布文件（诚实零态），避免本机 .env 的本地评分文件
+# 污染测试；需要数据的测试用 monkeypatch 显式提供（test_mentor_score_governance）。
+os.environ["MENTOR_SCORE_DATA_FILE"] = ""
+os.environ["MENTOR_SCORE_DATA_EXPECTED_SHA256"] = ""
+
 # 本地 macOS 开发环境：为 PDF/DOCX 生成测试自动提供 CJK 字体
 # （生产镜像内置字体；其他环境需自行配置 DOCUMENT_CJK_FONT_PATH）
 if not os.environ.get("DOCUMENT_CJK_FONT_PATH"):

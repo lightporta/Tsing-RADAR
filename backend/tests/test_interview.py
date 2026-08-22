@@ -16,7 +16,13 @@ from app.db.session import SessionLocal
 from app.main import app
 from app.models.questionnaire_session import QuestionnaireSession
 from app.models.identity import ExternalIdentity, IdentitySession
-from app.services.interview import create_session, answer_session, state_response
+from app.services.interview import (
+    create_session,
+    answer_session,
+    state_response,
+    upsert_portrait_field,
+)
+from app.schemas.interview import InterviewStatus
 from app.api.v1 import interview as interview_api
 
 client = TestClient(app)
@@ -601,5 +607,98 @@ def test_dialogue_signal_regressions(answer: str, field: str, expected: str):
             student_id="regression",
         )
         assert state_response(session).profile.model_dump()[field] == expected
+    finally:
+        db.close()
+
+
+def test_upsert_portrait_field_after_confirm_requires_reconfirmation():
+    """v3.1.6 对话端口回填：已确认画像被改动 → 回落 awaiting_confirmation。"""
+    state = _complete_interview()
+    session_id = state["session_id"]
+    confirmed = client.post(
+        f"/api/interviews/{session_id}/confirm",
+        headers=STUDENT_HEADERS,
+        json={"expected_version": state["profile_version"]},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "confirmed"
+    with SessionLocal() as db:
+        before = db.get(QuestionnaireSession, session_id)
+        assert state_response(before).recommend_ready is True
+        before_version = before.profile_version
+
+        upsert_portrait_field(
+            db,
+            session_id=session_id,
+            student_id=before.student_id,
+            changes={"research_mode": "engineering"},
+        )
+        after = db.get(QuestionnaireSession, session_id)
+        after_state = state_response(after)
+        assert after_state.profile.research_mode == "engineering"
+        assert after_state.status == InterviewStatus.AWAITING_CONFIRMATION
+        assert after_state.recommend_ready is False
+        assert after.profile_version == before_version + 1
+
+
+def test_upsert_portrait_field_merges_interests_dedup_and_fills_statement():
+    """v3.1.6 对话端口回填：research_interests 合并去重 + 自动补兴趣陈述。"""
+    db = SessionLocal()
+    try:
+        session = create_session(db, student_id="upsert-merge")
+        sid = session.session_id
+        upsert_portrait_field(
+            db,
+            session_id=sid,
+            student_id="upsert-merge",
+            changes={"research_interests": ["大模型 / 大语言模型", "自然语言处理"]},
+        )
+        upsert_portrait_field(
+            db,
+            session_id=sid,
+            student_id="upsert-merge",
+            changes={"research_interests": ["自然语言处理", "芯片 / 集成电路"]},
+        )
+        profile = state_response(
+            db.get(QuestionnaireSession, sid)
+        ).profile
+        # 合并去重且保持既有顺序
+        assert profile.research_interests == [
+            "大模型 / 大语言模型",
+            "自然语言处理",
+            "芯片 / 集成电路",
+        ]
+        # 兴趣陈述只在为空时自动补一次（忠实于首次所选方向）
+        assert profile.interest_statement == (
+            "我对大模型 / 大语言模型、自然语言处理方向感兴趣。"
+        )
+
+        # 上限 8：追加到 9 个时截断（保留既有值）
+        overflow = [f"追加方向{i}" for i in range(1, 10)]
+        upsert_portrait_field(
+            db,
+            session_id=sid,
+            student_id="upsert-merge",
+            changes={"research_interests": overflow},
+        )
+        assert len(state_response(db.get(QuestionnaireSession, sid)).profile.research_interests) == 8
+    finally:
+        db.close()
+
+
+def test_upsert_portrait_field_creates_session_when_missing():
+    """v3.1.6 对话端口回填：会话不存在时创建（不要求先做访谈）。"""
+    db = SessionLocal()
+    try:
+        session = upsert_portrait_field(
+            db,
+            session_id="s-upsert-new",
+            student_id="upsert-new",
+            changes={"research_mode": "theory"},
+        )
+        assert session.status == InterviewStatus.IN_PROGRESS.value
+        profile = state_response(session).profile
+        assert profile.research_mode == "theory"
+        assert profile.research_interests == []
     finally:
         db.close()

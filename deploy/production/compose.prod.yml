@@ -78,6 +78,15 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # v4.0.0 综述级知识库（backend/data/knowledge，随仓库版本固定；不随
+      # 镜像内置，与治理数据同一"只读挂载"策略）。目录缺失时启动不报错，
+      # 但知识库查询按未收录降级（服务日志会告警）。
+      - type: bind
+        source: ${KNOWLEDGE_DATA_DIR:-../../backend/data/knowledge}
+        target: /app/data/knowledge
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
         target: /run/secrets/database_password

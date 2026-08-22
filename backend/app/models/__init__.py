@@ -29,6 +29,8 @@ from app.models.recruitment_comment import (
     RecruitmentComment,
     RecruitmentCommentLike,
 )
+from app.models.dialogue_state import DialogueSession
+from app.models.user_memory import UserMemory
 
 __all__ = [
     "Student",
@@ -58,4 +60,6 @@ __all__ = [
     "AdvisorRatingSummary",
     "RecruitmentComment",
     "RecruitmentCommentLike",
+    "DialogueSession",
+    "UserMemory",
 ]

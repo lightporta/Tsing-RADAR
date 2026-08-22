@@ -14,12 +14,12 @@ from app.core.deps import (
     get_idempotency_key,
     get_mutating_principal,
 )
-from app.core.config import settings
 from app.db.session import get_db
 from app.models.advisor_rating import AdvisorRating
 from app.schemas.advisor_rating import RatingSubmitRequest
 from app.services.advisor_rating import (
     REVIEW_APPROVED,
+    apply_display_threshold,
     get_summary,
     submit_rating,
 )
@@ -111,16 +111,12 @@ def submit_advisor_rating(
 
 
 def _apply_display_threshold(summary: dict) -> dict:
-    """主观雷达展示门槛：单维 n < ADVISOR_RATING_MIN_SAMPLES 时不下发数值。
+    """主观雷达展示门槛（与 services.advisor_rating.apply_display_threshold 同口径）。
 
     防止低样本暴露与操纵（如 1-2 人打分即可反推个体）；n 保留用于
-    前端展示「样本不足」提示。服务层 get_summary 仍返回原始聚合。
+    前端展示「样本不足」提示。
     """
-    threshold = settings.ADVISOR_RATING_MIN_SAMPLES
-    for item in summary["dimensions"].values():
-        if (item.get("n") or 0) < threshold:
-            item["value"] = None
-    return summary
+    return apply_display_threshold(summary)
 
 
 @router.get("/advisors/{advisor_id}/ratings/summary")

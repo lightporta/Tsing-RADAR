@@ -16,13 +16,19 @@ import httpx
 
 from app.core.config import settings
 from app.schemas.advisor import LLMMessage
+from app.services.prompts import load_prompt_template
 
 logger = logging.getLogger(__name__)
 
-# 通用文本提示词；严禁模型自行发出访谈控制标记。
-LLM_SYSTEM_PROMPT = (
+# v4.0.0 任务1 A-3：提示词版本化。内嵌 v1 文本为兜底常量，运行期从
+# app/services/prompts/system_prompt_v1.txt 加载（版本清单不一致/文件缺失
+# → 回退本常量，行为与 v3.1.x 完全一致）。
+_SYSTEM_PROMPT_FALLBACK_V1 = (
     "你是 Tsing-RADAR 文本助手。动态访谈的题序、画像状态和确认门由服务端状态机控制。"
     "不得输出控制标记，不得自行宣布画像已确认或触发导师匹配。"
+)
+LLM_SYSTEM_PROMPT = load_prompt_template(
+    "system_prompt", fallback=_SYSTEM_PROMPT_FALLBACK_V1
 )
 
 

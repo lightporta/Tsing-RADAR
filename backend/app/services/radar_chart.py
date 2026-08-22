@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +31,6 @@ RADAR_DIMENSION_LABELS: dict[str, str] = {
 }
 
 ADVISOR_TRAIT_COLOR = "#FF9500"
-ADVISOR_TRAIT_FILL_OPACITY = 0.45
 GRID_COLOR = "#E4E7ED"
 AXIS_COLOR = "#C0C4CC"
 AXIS_TEXT_COLOR = "#606266"
@@ -39,6 +39,221 @@ NOTE_COLOR = "#909399"
 LEGEND_COLOR = "#606266"
 
 GRID_STEPS = (20, 40, 60, 80, 100)
+
+# —— 文本版雷达图（仅对话端口）——
+_TEXT_CANVAS_W = 25
+_TEXT_CANVAS_H = 13
+_TEXT_CENTER = (12, 6)
+_TEXT_RADIUS = (12, 6)  # (x 半径, y 半径)，字符宽高比约 2:1，视觉接近正菱形
+_TEXT_BAR_LEN = 20      # 数值条形长度（满格 100）
+_BARS_FORM_LEN = 24     # 独立柱状图形态的条形长度
+
+# 八分档块（1/8 ~ 7/8），用于条形末端不足一格的精确刻度
+_EIGHTH_BLOCKS = ("", "▏", "▎", "▍", "▌", "▋", "▊", "▉")
+
+# 形态选择：线状雷达多边形可辨识所需的最少数据边缘格数；低于该值
+# （如全 0、极端偏轴）图形不可读，自动降级为柱状图
+_RADAR_FORM_MIN_EDGE_CELLS = 6
+
+
+def _display_width(text: str) -> int:
+    """CJK 等宽对齐用的显示宽度（East Asian W/F 记 2 列，其余 1 列）。"""
+    return sum(
+        2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        for char in text
+    )
+
+
+def _pad_label(label: str, width: int) -> str:
+    """按显示宽度右补空格，保证混合中英文标签的数值列对齐。"""
+    return label + " " * max(0, width - _display_width(label))
+
+
+def _eighth_bar(value: float, length: int, *, empty: str) -> str:
+    """把 0~100 的值渲染为 length 格条形：整格 + 1 个八分档尾块 + 空位。"""
+    cells = max(0.0, min(100.0, float(value))) / 100.0 * length
+    full = int(cells)
+    remainder = int(round((cells - full) * 8))
+    if remainder >= 8:  # 进位到整格
+        full += 1
+        remainder = 0
+    partial = _EIGHTH_BLOCKS[remainder] if full < length else ""
+    return "█" * full + partial + empty * (length - full - len(partial))
+
+
+def _line_points(
+    x0: int, y0: int, x1: int, y1: int
+) -> list[tuple[int, int]]:
+    """整数网格 Bresenham 线段。"""
+    points: list[tuple[int, int]] = []
+    dx = abs(x1 - x0)
+    dy = -abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx + dy
+    while True:
+        points.append((x0, y0))
+        if x0 == x1 and y0 == y1:
+            return points
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x0 += sx
+        if e2 <= dx:
+            err += dx
+            y0 += sy
+
+
+def _text_vertex(value: float, axis: int) -> tuple[int, int]:
+    """文本画布四轴顶点：0 上 / 1 右 / 2 下 / 3 左（与 SVG 轴序一致）。"""
+    cx, cy = _TEXT_CENTER
+    rx, ry = _TEXT_RADIUS
+    ratio = value / 100.0
+    if axis == 0:
+        return (cx, cy - round(ry * ratio))
+    if axis == 1:
+        return (cx + round(rx * ratio), cy)
+    if axis == 2:
+        return (cx, cy + round(ry * ratio))
+    return (cx - round(rx * ratio), cy)
+
+
+def _render_text_polygon(values: list[float]) -> str:
+    """把 0~100 四维值渲染为 4 轴字符雷达多边形（网格环 + 数据边缘勾连）。
+
+    v3.1.5：数据多边形只描边不填充（边缘线图风格），与 SVG/PDF 版一致。
+    """
+    width, height = _TEXT_CANVAS_W, _TEXT_CANVAS_H
+    grid: list[list[str]] = [[" "] * width for _ in range(height)]
+
+    # 网格环（20~100）与轴线：浅色点线
+    for step in GRID_STEPS:
+        ring = [_text_vertex(float(step), i) for i in range(4)]
+        for i in range(4):
+            for x, y in _line_points(*ring[i], *ring[(i + 1) % 4]):
+                if grid[y][x] == " ":
+                    grid[y][x] = "·"
+    cx, cy = _TEXT_CENTER
+    for axis in range(4):
+        for x, y in _line_points(cx, cy, *_text_vertex(100.0, axis)):
+            if grid[y][x] == " ":
+                grid[y][x] = "·"
+
+    # 数据多边形：只勾连边缘（覆盖网格）
+    if len(values) == 4:
+        data_pts = [_text_vertex(float(v), i) for i, v in enumerate(values)]
+        for i in range(4):
+            for x, y in _line_points(*data_pts[i], *data_pts[(i + 1) % 4]):
+                grid[y][x] = "█"
+
+    return "\n".join("".join(row).rstrip() for row in grid)
+
+
+def render_radar_text(
+    *,
+    series: RadarSeries,
+    labels: dict[str, str] | None = None,
+    title: str = "导师客观证据雷达图（文本版）",
+    sample_note: str | None = None,
+) -> str:
+    """确定性文本雷达图：4 轴字符多边形 + 逐维度条形数值表。
+
+    数据源与 render_radar_svg 完全一致（客观四维，已审核公开证据），
+    供清小搭仅对话端口在不支持图片附件时直接渲染；诚实性约定相同：
+    无已审核数据时由调用方输出诚实空态，本函数不画推断值。
+    条形行按维度名的显示宽度对齐（CJK 宽度显式计算），数值列对齐。
+    """
+    dimension_labels = labels or RADAR_DIMENSION_LABELS
+    row_labels = [
+        dimension_labels.get(key, key) for key in OBJECTIVE_DIMENSION_KEYS
+    ]
+    label_width = max(_display_width(label) for label in row_labels)
+    lines: list[str] = [title]
+    lines.append("")
+    lines.append(_render_text_polygon(list(series.values)))
+    lines.append("")
+    for label, value in zip(row_labels, series.values):
+        bar = _eighth_bar(float(value), _TEXT_BAR_LEN, empty="░")
+        lines.append(
+            f"{_pad_label(label, label_width)}  {bar}  {value:.0f}"
+        )
+    if sample_note:
+        lines.append("")
+        lines.append(sample_note)
+    return "\n".join(lines)
+
+
+def render_radar_bars(
+    *,
+    series: RadarSeries,
+    labels: dict[str, str] | None = None,
+    title: str = "导师客观证据雷达图（文本版）",
+    sample_note: str | None = None,
+) -> str:
+    """确定性文本柱状图（雷达图的兜底形态）。
+
+    每维一行：对齐的维度名 + 八分档块条形（█ ▉ ▊ ▋ ▌ ▍ ▎ ▏）+ 数值。
+    用于线状雷达在纯文本渠道不可辨识（如全 0 / 极端偏轴）或运维显式
+    配置柱状形态时；数据源与诚实性约定与 render_radar_text 完全一致。
+    """
+    dimension_labels = labels or RADAR_DIMENSION_LABELS
+    row_labels = [
+        dimension_labels.get(key, key) for key in OBJECTIVE_DIMENSION_KEYS
+    ]
+    label_width = max(_display_width(label) for label in row_labels)
+    lines: list[str] = [title]
+    lines.append("")
+    for label, value in zip(row_labels, series.values):
+        bar = _eighth_bar(float(value), _BARS_FORM_LEN, empty=" ")
+        lines.append(
+            f"{_pad_label(label, label_width)}  {bar}  {value:.0f}"
+        )
+    if sample_note:
+        lines.append("")
+        lines.append(sample_note)
+    return "\n".join(lines)
+
+
+def radar_polygon_edge_cells(values: list[float]) -> int:
+    """文本雷达多边形的数据边缘格数（形态可辨识度的确定性度量）。"""
+    return _render_text_polygon(list(values)).count("█")
+
+
+def select_radar_text_form(
+    values: list[float], *, preference: str = "auto"
+) -> str:
+    """选择文本图形态：radar（线状雷达）/ bars（柱状图）。
+
+    preference 显式指定时直接生效（"radar"/"bars"）；"auto" 按数据
+    可辨识度决定：数据边缘格数低于阈值的退化形状（全 0、极端偏轴）
+    自动降级为柱状图。任何未知取值按 "auto" 处理。
+    """
+    normalized = (preference or "auto").strip().lower()
+    if normalized in ("radar", "bars"):
+        return normalized
+    if radar_polygon_edge_cells(list(values)) < _RADAR_FORM_MIN_EDGE_CELLS:
+        return "bars"
+    return "radar"
+
+
+def render_radar_text_auto(
+    *,
+    series: RadarSeries,
+    labels: dict[str, str] | None = None,
+    title: str = "导师客观证据雷达图（文本版）",
+    sample_note: str | None = None,
+    form: str = "auto",
+) -> str:
+    """按形态选择分发到线状雷达或柱状图（两个形态确定性一致）。"""
+    renderer = (
+        render_radar_bars
+        if select_radar_text_form(list(series.values), preference=form)
+        == "bars"
+        else render_radar_text
+    )
+    return renderer(
+        series=series, labels=labels, title=title, sample_note=sample_note
+    )
 
 
 @dataclass(frozen=True)
@@ -158,23 +373,24 @@ def render_radar_svg(
             f"{_escape_xml(RADAR_DIMENSION_LABELS[key])}</text>"
         )
 
-    # 数据系列
+    # 数据系列：边缘线图勾连（v3.1.5 起不填充，仅描边多边形 + 顶点勾连点）
     for item in series:
-        points = " ".join(
-            f"{x:.2f},{y:.2f}"
-            for x, y in (
-                _vertex(cx, cy, radius * (value / 100.0), i, axis_count)
-                for i, value in enumerate(item.values)
-            )
-        )
+        vertices = [
+            _vertex(cx, cy, radius * (value / 100.0), i, axis_count)
+            for i, value in enumerate(item.values)
+        ]
+        points = " ".join(f"{x:.2f},{y:.2f}" for x, y in vertices)
         stroke_dash = (
             ' stroke-dasharray="6 4"' if item.line_type == "dashed" else ""
         )
         parts.append(
-            f'<polygon points="{points}" fill="{item.color}" '
-            f'fill-opacity="{ADVISOR_TRAIT_FILL_OPACITY}" stroke="{item.color}" '
+            f'<polygon points="{points}" fill="none" stroke="{item.color}" '
             f'stroke-width="2.5"{stroke_dash}/>'
         )
+        for x, y in vertices:
+            parts.append(
+                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="3" fill="{item.color}"/>'
+            )
 
     # 图例
     legend_y = height - 34
@@ -183,8 +399,7 @@ def render_radar_svg(
         lx = width / 2.0 - (len(series) - 1) * legend_gap / 2.0 + index * legend_gap
         parts.append(
             f'<rect x="{lx:.2f}" y="{legend_y}" width="12" height="12" '
-            f'fill="{item.color}" fill-opacity="{ADVISOR_TRAIT_FILL_OPACITY}" '
-            f'stroke="{item.color}" stroke-width="1.5"/>'
+            f'fill="none" stroke="{item.color}" stroke-width="1.5"/>'
         )
         parts.append(
             f'<text x="{lx + 18:.2f}" y="{legend_y + 11}" font-size="12" '
@@ -277,12 +492,7 @@ def render_radar_drawing(
         drawing.add(
             Polygon(
                 points,
-                fillColor=colors.Color(
-                    stroke_color.red,
-                    stroke_color.green,
-                    stroke_color.blue,
-                    alpha=ADVISOR_TRAIT_FILL_OPACITY,
-                ),
+                fillColor=None,  # v3.1.5：边缘线图勾连，不填充
                 strokeColor=stroke_color,
                 strokeWidth=1.5,
             )

@@ -19,8 +19,7 @@ const OBJECTIVE_INDICATORS = OBJECTIVE_DIMENSIONS.map((d) => ({ name: d.label, m
 export interface RadarSeries {
   name: string
   values: (number | null)[] // null = 该维不画线（如样本不足）
-  color: string // line color
-  areaColor: string // fill color
+  color: string // line color（v3.1.5 起雷达为边缘线图勾连，无填充）
   lineType?: 'solid' | 'dashed' | 'dotted'
   lineWidth?: number
   /** 悬停该系列时的固定提示文案（如学生评价的主观性声明） */
@@ -101,7 +100,7 @@ export function buildRadarOption(
             width: s.lineWidth ?? 2,
             type: s.lineType ?? 'solid',
           },
-          areaStyle: { color: s.areaColor },
+          // v3.1.5：边缘线图勾连，无 areaStyle 填充
           symbol: 'circle',
           itemStyle: { color: s.color },
         })),
@@ -122,7 +121,7 @@ export function objectiveToArray(objective: ObjectiveRadar): number[] {
 
 // ---------------------------------------------------------------- 系列名与配色
 
-/** 学生需求雷达系列（半透明蓝，主观雷达第一系列） */
+/** 学生需求雷达系列（蓝勾边，主观雷达第一系列） */
 export const STUDENT_SERIES_NAME = '学生需求'
 /** 客观证据雷达系列（橙实线，仅来自已审核公开证据） */
 export const OBJECTIVE_SERIES_NAME = '客观证据（已审核）'
@@ -135,19 +134,16 @@ export const RATING_SERIES_NAME = '学生评价'
 
 export const STUDENT_RADAR = {
   color: '#409EFF',
-  areaColor: 'rgba(64, 158, 255, 0.2)',
 }
 
 /** 有已审核公开证据时的客观雷达颜色（橙色实线，与后端 SVG 渲染一致） */
 export const OBJECTIVE_RADAR = {
   color: '#FF9500',
-  areaColor: 'rgba(255, 149, 0, 0.6)',
 }
 
 /** 无数据时的默认基准雷达颜色（浅色虚线，值=50，非评分） */
 export const OBJECTIVE_DEFAULT_RADAR = {
   color: '#C0C4CC',
-  areaColor: 'rgba(192, 196, 204, 0.15)',
   lineType: 'dashed' as const,
   lineWidth: 1.5,
 }
@@ -161,7 +157,6 @@ export const ADVISOR_DEFAULT_RADAR = OBJECTIVE_DEFAULT_RADAR
 /** 学生评价雷达颜色（绿 #67c23a，固定虚线：主观 ≠ 事实） */
 export const RATING_RADAR = {
   color: '#67c23a',
-  areaColor: 'rgba(103, 194, 58, 0.25)',
   lineType: 'dashed' as const,
 }
 

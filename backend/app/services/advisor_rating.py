@@ -112,6 +112,31 @@ def get_summary(db: Session, advisor_id: str) -> dict | None:
     }
 
 
+def apply_display_threshold(summary: dict) -> dict:
+    """主观雷达展示门槛：单维 n < ADVISOR_RATING_MIN_SAMPLES 时不下发数值。
+
+    防止低样本暴露与操纵（如 1-2 人打分即可反推个体）；n 保留用于
+    前端展示「样本不足」提示。路由与对话匹配输出共用同一口径。
+    """
+    threshold = settings.ADVISOR_RATING_MIN_SAMPLES
+    for item in summary["dimensions"].values():
+        if (item.get("n") or 0) < threshold:
+            item["value"] = None
+    return summary
+
+
+def get_gated_summary(db: Session, advisor_id: str) -> dict | None:
+    """读取物化聚合并应用 ≥8 样本展示门槛；与 /ratings/summary 路由同口径。
+
+    对话匹配输出的六维对比使用本函数，保证"导师特质"只呈现有足够匿名
+    样本的维度，其余保持诚实空态。
+    """
+    summary = get_summary(db, advisor_id)
+    if summary is None:
+        return None
+    return apply_display_threshold(summary)
+
+
 def submit_rating(
     db: Session,
     *,

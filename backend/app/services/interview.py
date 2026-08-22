@@ -24,6 +24,8 @@ from app.schemas.interview import (
     StudentPortrait,
     StudentPortraitPatch,
 )
+from app.services import off_topic
+from app.services.memory_service import remember_confirmed_portrait
 
 
 class InterviewNotFoundError(LookupError):
@@ -144,25 +146,21 @@ _DRAFT_REJECT_SIGNALS = {
     "只是偏好",
     "可以放宽",
 }
+# v4.2.x 修复1/2：硬约束值黑名单与负向表达模式统一收口在 off_topic.py
+# （权威词表，matching 复用，避免双份定义漂移）。命中即整体清空，不产生
+# 任何草案；与 off_topic 守卫不同，这里是"已放行的答案"进入画像前的
+# 最后一层值清洗。
+from app.services.off_topic import (  # noqa: E402
+    CONSTRAINT_JUNK_SIGNALS,
+    is_constraint_rejection_answer,
+)
 
 
 def _is_constraint_rejection(answer: str) -> bool:
     cleaned = answer.strip(" ，。；、,.!?！？")
     if cleaned in _DRAFT_REJECT_SIGNALS or cleaned.lower() in _EMPTY_CONSTRAINTS:
         return True
-    return any(
-        phrase in cleaned
-        for phrase in (
-            "不作为硬约束",
-            "只是一般偏好",
-            "只是偏好",
-            "均为一般偏好",
-            "没有不可妥协条件",
-            "没有硬性条件",
-            "无硬性条件",
-            "无硬约束",
-        )
-    )
+    return is_constraint_rejection_answer(cleaned)
 
 
 def _now() -> datetime:
@@ -232,10 +230,33 @@ def _next_question(profile: StudentPortrait) -> InterviewQuestion | None:
     return QUESTION_BANK[missing[0]] if missing else None
 
 
+# v4.2.x 修复6：画像字段清洗 —— 命令句式（帮我推荐/想要/想找）与疑问句式
+# （怎么样/是什么）不入档；"推荐系统"这类名词短语不误伤（推荐仅后接请求词
+# 时视为命令）。配合长度上限与前后缀剥离，整句开场白不再整句入档。
+_INTEREST_COMMAND_RE = re.compile(
+    r"帮我|麻烦|请(?:求|问|教)?|想要|想找|可以吗|给我|"
+    r"推荐(?:一下|几个|导师|些|个|您|你)|求推荐"
+)
+_INTEREST_QUESTION_RE = re.compile(
+    r"怎么样|怎么|为什么|为啥|什么|哪里|哪儿|如何|哪个|哪些"
+)
+
+
 def _normalize_interest_piece(value: str) -> str:
     value = value.strip(" ，。；、,.!?！？")
-    prefixes = ("我对", "我想做", "我想研究", "希望研究", "想做", "研究")
-    suffixes = ("很感兴趣", "感兴趣", "方向", "领域", "相关研究")
+    prefixes = (
+        "我对",
+        "我是学",
+        "我的方向是",
+        "我方向是",
+        "我想做",
+        "我想研究",
+        "希望研究",
+        "想做",
+        "我是",
+        "研究",
+    )
+    suffixes = ("很感兴趣", "感兴趣", "相关研究", "方向", "领域", "的")
     for prefix in prefixes:
         if value.startswith(prefix):
             value = value[len(prefix) :].strip()
@@ -247,13 +268,25 @@ def _normalize_interest_piece(value: str) -> str:
 
 def _interest_tags(answer: str) -> list[str]:
     cleaned = answer.strip()
-    if cleaned.lower() in _GREETING_ONLY or len(cleaned) < 2:
+    if (
+        cleaned.lower() in _GREETING_ONLY
+        or cleaned in _CONFIRM_SIGNALS
+        or cleaned in CONSTRAINT_JUNK_SIGNALS
+        or off_topic.is_uncertain(cleaned)
+        or len(cleaned) < 2
+    ):
         return []
     pieces = re.split(r"[，,、；;。\n]|\s+(?:和|与|及)\s+|和|以及", cleaned)
     tags: list[str] = []
     for piece in pieces:
         item = _normalize_interest_piece(piece)
-        if 1 < len(item) <= 40 and item not in tags:
+        if (
+            1 < len(item) <= 12
+            and item not in tags
+            and item not in CONSTRAINT_JUNK_SIGNALS
+            and not _INTEREST_COMMAND_RE.search(item)
+            and not _INTEREST_QUESTION_RE.search(item)
+        ):
             tags.append(item)
     return tags[:8]
 
@@ -592,15 +625,20 @@ def _process_constraint_followup(
         current = drafts[0]
         if cleaned in _DRAFT_CONFIRM_SIGNALS:
             if current.proposed_constraint is None:
-                return True
-            confirmed = list(profile.get("hard_constraints") or [])
-            confirmed.append(
-                current.proposed_constraint.model_dump(mode="json")
-            )
-            profile["hard_constraints"] = confirmed
-            drafts.pop(0)
-            if current.source_text in unresolved:
-                unresolved.remove(current.source_text)
+                # v4.2.x 修复2：无结构化形态的草案无法被"确认"（确认什么？
+                # 值未给出）。按"放弃这条低置信草案"处理，避免澄清死循环。
+                drafts.pop(0)
+                if current.source_text in unresolved:
+                    unresolved.remove(current.source_text)
+            else:
+                confirmed = list(profile.get("hard_constraints") or [])
+                confirmed.append(
+                    current.proposed_constraint.model_dump(mode="json")
+                )
+                profile["hard_constraints"] = confirmed
+                drafts.pop(0)
+                if current.source_text in unresolved:
+                    unresolved.remove(current.source_text)
         elif _is_constraint_rejection(cleaned):
             drafts.pop(0)
             if current.source_text in unresolved:
@@ -635,6 +673,34 @@ def _process_constraint_followup(
     return True
 
 
+# 选择题关键词映射（单选答案 → 维度值）；与 off_topic 守卫共用同一份词表
+_RESEARCH_MODE_KEYWORDS = (
+    ("mixed", ("结合", "两者", "兼顾", "都想")),
+    ("theory", ("理论", "原理", "证明", "基础")),
+    ("engineering", ("工程", "落地", "应用", "系统")),
+    ("undecided", ("不确定", "都可以", "无所谓")),
+)
+_MENTORSHIP_STYLE_KEYWORDS = (
+    ("high_guidance", ("手把手", "高频", "具体", "多指导")),
+    ("autonomous", ("自主", "自由", "放养", "少干预")),
+    ("balanced", ("平衡", "适度", "结合")),
+    ("undecided", ("不确定", "都可以", "无所谓")),
+)
+_CAREER_ORIENTATION_KEYWORDS = (
+    ("national_mission", ("国家", "大国重器", "军工", "航天")),
+    ("academic", ("学术", "读博", "高校", "研究所")),
+    ("industry", ("产业", "就业", "大厂", "创业")),
+    ("mixed", ("混合", "兼顾", "都想")),
+    ("undecided", ("不确定", "都可以", "无所谓")),
+)
+_INNOVATION_RISK_KEYWORDS = (
+    ("balanced", ("平衡", "兼顾", "适中")),
+    ("pioneering", ("蓝海", "新方向", "少有人", "高风险", "探索")),
+    ("mature", ("成熟", "稳妥", "低风险", "确定")),
+    ("undecided", ("不确定", "都可以", "无所谓")),
+)
+
+
 def _apply_target_answer(
     profile: dict[str, Any],
     dimension: InterviewDimension,
@@ -649,51 +715,35 @@ def _apply_target_answer(
     if dimension == InterviewDimension.RESEARCH_MODE:
         profile["research_mode"] = _choice_from_answer(
             answer,
-            (
-                ("mixed", ("结合", "两者", "兼顾", "都想")),
-                ("theory", ("理论", "原理", "证明", "基础")),
-                ("engineering", ("工程", "落地", "应用", "系统")),
-                ("undecided", ("不确定", "都可以", "无所谓")),
-            ),
+            _RESEARCH_MODE_KEYWORDS,
         )
         return
     if dimension == InterviewDimension.MENTORSHIP_STYLE:
         profile["mentorship_style"] = _choice_from_answer(
             answer,
-            (
-                ("high_guidance", ("手把手", "高频", "具体", "多指导")),
-                ("autonomous", ("自主", "自由", "放养", "少干预")),
-                ("balanced", ("平衡", "适度", "结合")),
-                ("undecided", ("不确定", "都可以", "无所谓")),
-            ),
+            _MENTORSHIP_STYLE_KEYWORDS,
         )
         return
     if dimension == InterviewDimension.CAREER_ORIENTATION:
         profile["career_orientation"] = _choice_from_answer(
             answer,
-            (
-                ("national_mission", ("国家", "大国重器", "军工", "航天")),
-                ("academic", ("学术", "读博", "高校", "研究所")),
-                ("industry", ("产业", "就业", "大厂", "创业")),
-                ("mixed", ("混合", "兼顾", "都想")),
-                ("undecided", ("不确定", "都可以", "无所谓")),
-            ),
+            _CAREER_ORIENTATION_KEYWORDS,
         )
         return
     if dimension == InterviewDimension.INNOVATION_RISK:
         profile["innovation_risk"] = _choice_from_answer(
             answer,
-            (
-                ("balanced", ("平衡", "兼顾", "适中")),
-                ("pioneering", ("蓝海", "新方向", "少有人", "高风险", "探索")),
-                ("mature", ("成熟", "稳妥", "低风险", "确定")),
-                ("undecided", ("不确定", "都可以", "无所谓")),
-            ),
+            _INNOVATION_RISK_KEYWORDS,
         )
         return
     if dimension == InterviewDimension.HARD_CONSTRAINTS:
         stripped = answer.strip()
-        if stripped.lower() in _EMPTY_CONSTRAINTS:
+        # v4.2.x 修复1/2：负向表达/确认指令/态度词 → 视为"无硬约束"，
+        # 整体清空（含已确认项按计划语义处理，澄清环内走短路分支保留已确认项）
+        if (
+            stripped.lower() in _EMPTY_CONSTRAINTS
+            or _is_constraint_rejection(stripped)
+        ):
             profile["hard_constraints"] = []
             profile["draft_hard_constraints"] = []
             profile["unresolved_hard_constraints"] = []
@@ -759,6 +809,36 @@ def _summary(profile: StudentPortrait) -> str:
         _constraint_label(constraint)
         for constraint in profile.hard_constraints or []
     ) or "无已确认的结构化条件"
+    focus: list[str] = []
+    if profile.research_interests:
+        focus.append(f"研究方向：{'、'.join(profile.research_interests)}")
+    if profile.research_mode:
+        focus.append(f"研究方式：{_VALUE_LABELS.get(profile.research_mode, profile.research_mode)}")
+    if profile.career_orientation:
+        focus.append(f"生涯方向：{_VALUE_LABELS.get(profile.career_orientation, profile.career_orientation)}")
+    if profile.mentorship_style:
+        focus.append(f"指导偏好：{_VALUE_LABELS.get(profile.mentorship_style, profile.mentorship_style)}")
+    if profile.hard_constraints:
+        focus.append(f"硬性条件：{constraints}")
+    focus_line = "；".join(focus) if focus else "暂无已确认信息，先匹配会较宽泛"
+    open_items = [
+        draft.confirmation_prompt
+        for draft in profile.draft_hard_constraints or []
+    ]
+    open_items.extend(
+        item
+        for item in profile.unresolved_hard_constraints or []
+        if item not in {d.source_text for d in profile.draft_hard_constraints or []}
+    )
+    if profile.research_mode is None:
+        open_items.append("研究方式（理论/工程/混合）")
+    if profile.career_orientation is None:
+        open_items.append("生涯方向（学术深造/产业就业）")
+    open_line = (
+        "；".join(open_items[:5]) + (" 等" if len(open_items) > 5 else "")
+        if open_items
+        else "无"
+    )
     return (
         "好，我们已经把选择线索拼成了一版可编辑画像：\n"
         f"- 研究兴趣：{'、'.join(profile.research_interests)}\n"
@@ -767,6 +847,8 @@ def _summary(profile: StudentPortrait) -> str:
         f"- 生涯方向：{_VALUE_LABELS.get(profile.career_orientation or '', '暂不确定')}\n"
         f"- 创新风险：{_VALUE_LABELS.get(profile.innovation_risk or '', '暂不确定')}\n"
         f"- 已确认硬性条件：{constraints}\n\n"
+        f"**匹配时将重点考虑**：{focus_line}\n"
+        f"**尚未明确（可选补充）**：{open_line}\n\n"
         "看看是否像你？需要调整就直接说；确认无误请回复“确认画像”，我们再开始匹配。"
     )
 
@@ -848,6 +930,75 @@ def _set_state_after_profile_change(
     return next_question.prompt
 
 
+_OFF_TOPIC_NUDGE = (
+    "刚才这句好像和导师匹配的话题有点远，我担心会记错你的想法，"
+    "所以先不写入画像～\n\n我们还是继续刚才的问题："
+)
+_CLARIFY_STALL_NOTE = (
+    "这几轮澄清没有收敛到可确认的硬性条件，我先不再追问："
+    "已确认的保留，其余按“无硬性条件”处理。可随时在画像卡里补充或修改。\n\n"
+)
+
+
+def _constraint_clarify_stall(messages: list[dict[str, str]]) -> bool:
+    """v4.2.x 修复2：同一澄清提问连续出现 3 次（本轮将复述第 4 次）→ 卡死。"""
+    assistant_texts = [
+        message.get("content") or ""
+        for message in reversed(messages)
+        if message.get("role") == "assistant"
+    ][:3]
+    return len(assistant_texts) == 3 and len(set(assistant_texts)) == 1
+
+
+def _last_assistant_text(messages: list[dict[str, str]]) -> str | None:
+    for message in reversed(messages):
+        if message.get("role") == "assistant":
+            return message.get("content") or ""
+    return None
+
+
+def _off_topic_reply(
+    current_dimension: InterviewDimension,
+    answer: str,
+    messages: list[dict[str, str]],
+) -> str | None:
+    """跑题检测（v4.0.0）：命中返回温和重问文案，未命中返回 None 放行。
+
+    只在"当前题"上下文生效；已确认/待确认状态（current_question_id 为空）
+    不会走到这里，自由文本修正照旧。
+    """
+    if current_dimension == InterviewDimension.RESEARCH_INTERESTS:
+        if not off_topic.detect_off_topic_interests(answer):
+            return None
+    elif current_dimension == InterviewDimension.RESEARCH_MODE:
+        if not off_topic.detect_off_topic_choice(
+            answer, tuple(k for _, kws in _RESEARCH_MODE_KEYWORDS for k in kws)
+        ):
+            return None
+    elif current_dimension == InterviewDimension.MENTORSHIP_STYLE:
+        if not off_topic.detect_off_topic_choice(
+            answer, tuple(k for _, kws in _MENTORSHIP_STYLE_KEYWORDS for k in kws)
+        ):
+            return None
+    elif current_dimension == InterviewDimension.CAREER_ORIENTATION:
+        if not off_topic.detect_off_topic_choice(
+            answer, tuple(k for _, kws in _CAREER_ORIENTATION_KEYWORDS for k in kws)
+        ):
+            return None
+    elif current_dimension == InterviewDimension.INNOVATION_RISK:
+        if not off_topic.detect_off_topic_choice(
+            answer, tuple(k for _, kws in _INNOVATION_RISK_KEYWORDS for k in kws)
+        ):
+            return None
+    elif current_dimension == InterviewDimension.HARD_CONSTRAINTS:
+        if not off_topic.detect_off_topic_constraints(answer):
+            return None
+    else:
+        return None
+    last_question = _last_assistant_text(messages) or ""
+    return f"{_OFF_TOPIC_NUDGE}{last_question}"
+
+
 def answer_session(
     db: Session,
     *,
@@ -902,6 +1053,39 @@ def answer_session(
         session.profile_version = int(session.profile_version or 1) + 1
         session.messages = messages
         session.updated_at = _now()
+        # v4.0.0 长期记忆：确认门通过后写入白名单事实（仅六维+硬条件+标记）
+        remember_confirmed_portrait(
+            db,
+            student_id=session.student_id,
+            portrait=profile.model_dump(mode="json"),
+        )
+        db.commit()
+        db.refresh(session)
+        return session
+
+    # v4.2.x 修复1+3：硬约束澄清环中"确认画像"短路 —— 视为"不再补充硬性
+    # 条件"：保留已确认项、丢弃悬空草案，边界直接闭合出总览卡（回声环
+    # 就此终止，下一条"确认画像"走上方待确认分支完成确认）。
+    if (
+        session.current_question_id == InterviewDimension.HARD_CONSTRAINTS.value
+        and cleaned_answer in _CONFIRM_SIGNALS
+    ):
+        profile.draft_hard_constraints = []
+        profile.unresolved_hard_constraints = []
+        profile.hard_constraints = list(profile.hard_constraints or [])
+        updated_profile = StudentPortrait.model_validate(profile)
+        reply = _set_state_after_profile_change(session, updated_profile)
+        session.profile_version = int(session.profile_version or 1) + 1
+        messages.extend(
+            [_message("user", cleaned_answer), _message("assistant", reply)]
+        )
+        session.messages = messages
+        session.portrait = updated_profile.model_dump(mode="json")
+        session.answered_dimensions = [
+            dimension.value
+            for dimension in _completed_dimensions(updated_profile)
+        ]
+        session.updated_at = _now()
         db.commit()
         db.refresh(session)
         return session
@@ -919,6 +1103,22 @@ def answer_session(
         and _process_constraint_followup(profile_data, cleaned_answer)
     )
     if not handled_constraint_followup and current_dimension is not None:
+        # v4.0.0 防吸收守卫：跑题文本温和重问，不写入画像
+        off_topic_reply = _off_topic_reply(
+            current_dimension, cleaned_answer, messages
+        )
+        if off_topic_reply is not None:
+            messages.extend(
+                [
+                    _message("user", cleaned_answer),
+                    _message("assistant", off_topic_reply),
+                ]
+            )
+            session.messages = messages
+            session.updated_at = _now()
+            db.commit()
+            db.refresh(session)
+            return session
         _apply_target_answer(profile_data, current_dimension, cleaned_answer)
     overwrite = (
         current_dimension is None
@@ -937,6 +1137,22 @@ def answer_session(
         _extract_freeform_corrections(profile_data, cleaned_answer)
     updated_profile = StudentPortrait.model_validate(profile_data)
 
+    # v4.2.x 修复2 轮次硬限制：硬约束澄清环同一提问连续 3 次无进展 →
+    # 丢弃悬空草案、保留已确认项，强制闭合边界（总览卡直出，不再复读）。
+    stalled_closure = (
+        current_dimension == InterviewDimension.HARD_CONSTRAINTS
+        and handled_constraint_followup
+        and (
+            updated_profile.draft_hard_constraints
+            or updated_profile.unresolved_hard_constraints
+        )
+        and _constraint_clarify_stall(messages)
+    )
+    if stalled_closure:
+        profile_data["draft_hard_constraints"] = []
+        profile_data["unresolved_hard_constraints"] = []
+        updated_profile = StudentPortrait.model_validate(profile_data)
+
     if session.status == InterviewStatus.CONFIRMED.value and before == profile_data:
         reply = (
             "画像已确认。如需修改，请明确说明要改的偏好，"
@@ -944,6 +1160,8 @@ def answer_session(
         )
     else:
         reply = _set_state_after_profile_change(session, updated_profile)
+        if stalled_closure:
+            reply = _CLARIFY_STALL_NOTE + reply
         session.profile_version = int(session.profile_version or 1) + 1
 
     messages.extend([_message("user", cleaned_answer), _message("assistant", reply)])
@@ -988,6 +1206,50 @@ def patch_profile(
     return session
 
 
+def upsert_portrait_field(
+    db: Session,
+    *,
+    session_id: str,
+    student_id: str | None,
+    changes: dict[str, Any],
+) -> QuestionnaireSession:
+    """对话端口专用：把单字段写回画像（无版本冲突检查，内部自增版本）。
+
+    语义与 patch_profile 一致：画像变化后状态回落 awaiting_confirmation
+    （已确认画像需重新确认），确认门与诚实红线不受影响。v3.1.6 供
+    科研风格速测「确认」回填 research_mode、方向地图选方向回填
+    research_interests 使用。
+    research_interests 为合并去重语义（保留既有值，追加新标签，上限 8）；
+    原 interest_statement 为空时按合并后的兴趣自动补一句，忠实于用户所选。
+    """
+    session = create_session(db, student_id=student_id, session_id=session_id)
+    data = _portrait(session).model_dump(mode="json")
+    if "research_interests" in changes:
+        existing = list(data.get("research_interests") or [])
+        merged = list(existing)
+        for tag in changes["research_interests"] or []:
+            tag = (tag or "").strip()
+            if tag and tag not in merged:
+                merged.append(tag)
+        merged = merged[:8]
+        changes = {**changes, "research_interests": merged}
+        if not data.get("interest_statement"):
+            changes["interest_statement"] = f"我对{'、'.join(merged)}方向感兴趣。"
+    data.update(changes)
+    profile = StudentPortrait.model_validate(data)
+    reply = _set_state_after_profile_change(session, profile)
+    session.portrait = profile.model_dump(mode="json")
+    session.answered_dimensions = [
+        dimension.value for dimension in _completed_dimensions(profile)
+    ]
+    session.profile_version = int(session.profile_version or 1) + 1
+    session.messages = list(session.messages or []) + [_message("assistant", reply)]
+    session.updated_at = _now()
+    db.commit()
+    db.refresh(session)
+    return session
+
+
 def confirm_profile(
     db: Session,
     *,
@@ -1015,6 +1277,12 @@ def confirm_profile(
     session.profile_version = int(session.profile_version or 1) + 1
     session.messages = list(session.messages or []) + [_message("assistant", reply)]
     session.updated_at = _now()
+    # v4.0.0 长期记忆：Web 画像卡确认同样只写白名单事实
+    remember_confirmed_portrait(
+        db,
+        student_id=session.student_id,
+        portrait=profile.model_dump(mode="json"),
+    )
     db.commit()
     db.refresh(session)
     return session

@@ -22,6 +22,7 @@ from app.models.identity import ExternalIdentity
 from app.schemas.qxd import SodaAttachment
 from app.services.artifact_delivery import issue_radar_chart_token
 from app.services.match_application import MatchApplicationOutcome
+from app.services import match_refine as match_refine_service
 from app.services.qxd_media import FetchedMedia
 from app.services.radar_chart import ADVISOR_TRAIT_COLOR, RadarSeries
 
@@ -1099,6 +1100,44 @@ def _matched_outcome() -> MatchApplicationOutcome:
                 "fit_score": 91.5,
                 "evidence_coverage": 0.75,
                 "evidence_confidence": 0.8,
+                "score_breakdown": [
+                    {
+                        "objective": "topic_fit",
+                        "requested_weight": 0.4,
+                        "score": 0.95,  # 95 分 > 91.5 → 拉高
+                        "method": "exact-category-v1",
+                        "evidence_coverage": 1.0,
+                        "evidence_confidence": 0.8,
+                        "conservative_contribution": 0.304,
+                    },
+                    {
+                        "objective": "mentorship_fit",
+                        "requested_weight": 0.2,
+                        "score": 0.8,  # 80 分 < 91.5 → 拉低
+                        "method": "exact-category-v1",
+                        "evidence_coverage": 1.0,
+                        "evidence_confidence": 0.9,
+                        "conservative_contribution": 0.144,
+                    },
+                    {
+                        "objective": "career_fit",
+                        "requested_weight": 0.2,
+                        "score": 0.9,  # 90 分 ≈ 91.5 → 中位
+                        "method": "exact-category-v1",
+                        "evidence_coverage": 1.0,
+                        "evidence_confidence": 0.7,
+                        "conservative_contribution": 0.126,
+                    },
+                    {
+                        "objective": "innovation_fit",
+                        "requested_weight": 0.1,
+                        "score": None,  # 无画像证据 → 未计入
+                        "method": "not-scored",
+                        "evidence_coverage": 0.0,
+                        "evidence_confidence": 0.0,
+                        "conservative_contribution": 0.0,
+                    },
+                ],
                 "explanation": {
                     "supporting_evidence": [
                         {
@@ -1114,6 +1153,38 @@ def _matched_outcome() -> MatchApplicationOutcome:
         ],
         meta={},
         message="基于已确认画像找到 1 个证据化候选。",
+        questions=[],
+    )
+
+
+def _matched_outcome_two() -> MatchApplicationOutcome:
+    """v3.1.6 双候选 fixture：第二位用于「第 N 个」追问黑盒断言。"""
+    first = _matched_outcome().items[0]
+    second = {
+        "advisor_id": "T00002",
+        "name": "测试导师二",
+        "dept": "计算机系",
+        "score": 82.4,
+        "fit_score": 88.0,
+        "evidence_coverage": 0.8,
+        "evidence_confidence": 0.75,
+        "explanation": {
+            "supporting_evidence": [
+                {
+                    "statement": "在系统方向有多年工程沉淀",
+                    "citations": [{"citation": "实验室主页·2024"}],
+                },
+            ],
+            "counter_evidence": [],
+            "uncertainties": [],
+            "questions_to_verify": [],
+        },
+    }
+    return MatchApplicationOutcome(
+        status="matched",
+        items=[first, second],
+        meta={"match_candidate_records": 2, "interview_status": "confirmed"},
+        message="基于已确认画像找到 2 个证据化候选。",
         questions=[],
     )
 
@@ -1136,6 +1207,12 @@ def _patch_recommend_ready(monkeypatch, outcome: MatchApplicationOutcome) -> Non
     )
     monkeypatch.setattr(
         qxd_chat, "confirmed_portrait", lambda *_args, **_kwargs: None
+    )
+    # v3.1.6：匹配结果上下文下的「第 N 个」追问短路（隔离 DB 会话依赖）
+    monkeypatch.setattr(
+        qxd_chat,
+        "_ordinal_follows_match_results",
+        lambda *_args, **_kwargs: True,
     )
 
 
@@ -1213,6 +1290,59 @@ def test_qxd_radar_intent_issues_signed_svg_attachment(monkeypatch):
     assert "已生成 测试导师 的客观证据雷达图" in content
     # 客观与主观分离声明
     assert "客观指标与匿名主观评价严格分离" in content
+
+
+def test_qxd_radar_intent_text_chart_when_attachments_disabled(monkeypatch):
+    """清小搭仅对话端口（无附件能力）：雷达图指令应直出文本字符版雷达图。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    values = [88.0, 96.0, 60.0, 78.0]
+    bundle = {
+        "values": {
+            key: value
+            for key, value in zip(qxd_chat.OBJECTIVE_DIMENSION_KEYS, values)
+        }
+    }
+    monkeypatch.setattr(
+        qxd_chat,
+        "public_score_bundles",
+        lambda: ({"T00001": bundle}, {"release_version": "v-test"}),
+    )
+    series = RadarSeries(
+        name="客观证据（已审核）",
+        values=values,
+        color=ADVISOR_TRAIT_COLOR,
+    )
+    monkeypatch.setattr(
+        qxd_chat,
+        "build_radar_series_for_advisor",
+        lambda _advisor_id, _bundles=None: series,
+    )
+    # 仅对话端口：无附件交付能力 → 文本版降级
+    monkeypatch.setattr(qxd_chat.settings, "QXD_ATTACHMENTS_ENABLED", False)
+    claim = f"qxd-radar-text-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "雷达图"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    # 文本版雷达图：字符条形 + 标题 + 四维标签 + 数值
+    assert "雷达图附件当前未启用" in content
+    assert "仅对话端口直出" in content
+    assert "█" in content
+    assert "测试导师 客观证据雷达图" in content
+    for label in ("项目广度", "研究主题广度", "联系信息完整度", "研究资料完整度"):
+        assert label in content
+    for value in ("88", "96", "60", "78"):
+        assert value in content
+    # 诚实性：客观与主观严格分离声明 + 样本来源（v + release_version 拼接）
+    assert "客观指标与匿名主观评价严格分离" in content
+    assert "样本来源：已审核评分发布" in content
+    assert "v-test" in content
+    # 无附件输出
+    assert "x_soda" not in payload
 
 
 def test_radar_chart_endpoint_serves_deterministic_svg_and_rejects_tampering(
@@ -1324,7 +1454,8 @@ def test_expression_layer_skipped_on_confirmation_gate_and_match(monkeypatch):
         "愿意探索高风险新方向",
         "只能北京",
     ]
-    # 提问轮（IN_PROGRESS）：表达层生效
+    # 提问轮（IN_PROGRESS）：自由文本题（第 1、6 轮）表达层生效；
+    # 单选轮（第 2-5 轮）v4.2.x 修复5 跳过增强，直接回确定性问题。
     for n in range(1, len(user_turns) + 1):
         resp = client.post(
             "/v1/chat/completions",
@@ -1338,11 +1469,12 @@ def test_expression_layer_skipped_on_confirmation_gate_and_match(monkeypatch):
             },
         )
         assert resp.status_code == 200
-        assert (
-            resp.json()["choices"][0]["message"]["content"]
-            == "[GLM-增强] 自然重写内容"
-        )
-    assert len(render_calls) == 6
+        content = resp.json()["choices"][0]["message"]["content"]
+        if n in (1, 6):
+            assert content == "[GLM-增强] 自然重写内容"
+        else:
+            assert "[GLM-增强]" not in content
+    assert len(render_calls) == 2  # 仅自由文本轮调用表达层
 
     # 确认硬性条件草案 → 画像总结轮（AWAITING_CONFIRMATION）：不增强
     user_turns.append("确认")
@@ -1360,7 +1492,7 @@ def test_expression_layer_skipped_on_confirmation_gate_and_match(monkeypatch):
     summary = resp.json()["choices"][0]["message"]["content"]
     assert "确认画像" in summary  # 确定性确认引导保留
     assert "[GLM-增强]" not in summary
-    assert len(render_calls) == 6  # 总结轮未调用表达层
+    assert len(render_calls) == 2  # 总结轮未调用表达层
 
     # 确认画像 → 匹配结果（recommend_ready）：不增强
     user_turns.append("确认画像")
@@ -1377,4 +1509,886 @@ def test_expression_layer_skipped_on_confirmation_gate_and_match(monkeypatch):
     )
     outcome = resp.json()["choices"][0]["message"]["content"]
     assert "[GLM-增强]" not in outcome
-    assert len(render_calls) == 6  # 匹配轮未调用表达层
+    assert len(render_calls) == 2  # 匹配轮未调用表达层
+
+
+def test_expression_layer_receives_persisted_previous_reply_next_turn(monkeypatch):
+    """v4.2.0 多轮自然度：上一轮实际展示话术跨轮进入 FactPack。
+
+    第 1 轮表达层输出被会话级持久化；随后单选轮跳过增强但真实展示话术
+    仍持久化（v4.2.x 修复5）；到硬约束文本轮，FactPack.previous_reply
+    必须是用户真实看到的上一轮话术（而非状态机底稿），供防重复闸门
+    与提示词 v3 防重复承接使用。
+    """
+    packs = []
+    rewrite = "那我们接着聊：你更偏好算法理论研究，还是实际应用？"
+
+    async def fake_render(fact_pack):
+        packs.append(fact_pack)
+        return SimpleNamespace(
+            text=rewrite,
+            provider="glm",
+            status="available",
+        )
+
+    monkeypatch.setattr(qxd_chat, "render_interview_reply", fake_render)
+    user_id = f"qxd-multiturn-{uuid.uuid4()}"
+    headers = _qxd_headers(user_id)
+    turns = [
+        "我对强化学习感兴趣",
+        "偏工程落地一些",
+        "给方向后自主探索",
+        "学术深造，计划读博",
+        "愿意探索高风险新方向",
+        "只能北京",
+    ]
+    replies = []
+    for n in range(1, len(turns) + 1):
+        resp = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "user": user_id,
+                "messages": [
+                    {"role": "user", "content": turn} for turn in turns[:n]
+                ],
+                "stream": False,
+            },
+        )
+        assert resp.status_code == 200
+        replies.append(
+            resp.json()["choices"][0]["message"]["content"]
+        )
+    # 第 1 轮（自由文本）与第 6 轮（硬约束文本）进入表达层；第 2-5 轮单选跳过
+    assert len(packs) == 2
+    assert replies[0] == rewrite
+    # 第 1 轮：无持久化值，previous_reply 回退状态机底稿推导（开场题，
+    # 用户确实看过）；第 6 轮：上一轮（第 5 轮单选，用户真实看到的
+    # 确定性提问）优先，且不等于状态机底稿。
+    assert packs[0].previous_reply
+    assert packs[0].previous_reply != rewrite
+    assert packs[1].previous_reply == replies[4]
+    # 多轮上下文同步投影：硬约束轮事实包含最近对话底稿（近几轮）
+    assert "用户：愿意探索高风险新方向" in packs[1].recent_dialogue
+    assert "用户：只能北京" in packs[1].recent_dialogue
+    assert packs[1].turn_phase == "中段"
+
+
+def test_session_kv_row_does_not_hijack_dialogue_intent():
+    """v4.2.0 回归护栏：会话级 KV（mode="none" 占位行）不得短路意图分类。
+
+    表达层每轮写入 interview_last_expression 会创建/合并 mode="none" 行；
+    get_dialogue_mode 必须把它归一化为 None，否则后续轮次的新意图
+    （招募/导师咨询等）永远路由不进对话模式。
+    """
+    from app.db.session import SessionLocal
+    from app.services.dialogue_state_store import (
+        get_dialogue_mode,
+        set_session_value,
+    )
+
+    session_id = f"s-kv-{uuid.uuid4()}"
+    student_id = f"stu-{uuid.uuid4()}"
+    with SessionLocal() as db:
+        set_session_value(
+            db,
+            session_id=session_id,
+            student_id=student_id,
+            key="interview_last_expression",
+            value="上一轮实际展示话术",
+        )
+        assert (
+            get_dialogue_mode(
+                db, session_id=session_id, student_id=student_id
+            )
+            is None
+        )
+
+
+# ---------------------------------------------------------------- v2.5 对话模式
+
+
+def _dialogue_headers(claim: str) -> dict[str, str]:
+    return _qxd_headers(claim)
+
+
+def _post_dialogue(
+    claim: str,
+    content: str,
+    *,
+    session_id: str,
+    stream: bool = False,
+    max_tokens: int | None = None,
+):
+    body: dict = {
+        "messages": [{"role": "user", "content": content}],
+        "sessionId": session_id,
+        "stream": stream,
+    }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+    return client.post(
+        "/v1/chat/completions",
+        headers=_dialogue_headers(claim),
+        json=body,
+    )
+
+
+def _ensure_qxd_identity(claim: str) -> None:
+    """预热：首次带 claim 的请求创建 ExternalIdentity 映射（get_qxd_principal
+    依赖注入内完成），_qxd_session_id 依赖该行存在。探测请求（max_tokens=1）
+    不进入对话模式也不推进访谈，不会污染任何会话状态。"""
+    warm = _post_dialogue(
+        claim,
+        "你好",
+        session_id=f"warm-{uuid.uuid4()}",
+        max_tokens=1,
+    )
+    assert warm.status_code == 200
+
+
+def test_qxd_resume_build_multiturn_dialogue_blackbox():
+    from app.db.session import SessionLocal
+    from app.models.questionnaire_session import QuestionnaireSession
+
+    claim = f"qxd-resume-{uuid.uuid4()}"
+    conversation = f"resume-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+
+    first = _post_dialogue(claim, "帮我从零写一份简历", session_id=session_id)
+    assert first.status_code == 200
+    first_text = first.json()["choices"][0]["message"]["content"]
+    assert "第一步" in first_text
+    assert "姓名" in first_text
+
+    answers = [
+        "张三",
+        "计算机科学与技术系 · 软件工程",
+        "大三 · 3.8/4.0 · 数据结构、机器学习",
+        "NLP 项目：负责模型训练，完成情感分类",
+        "挑战杯二等奖\n担任班级学习委员",
+        "英语六级 · test@example.com",
+    ]
+    final_text = ""
+    for answer in answers:
+        resp = _post_dialogue(claim, answer, session_id=session_id)
+        assert resp.status_code == 200
+        final_text = resp.json()["choices"][0]["message"]["content"]
+
+    assert "简历初稿已生成" in final_text
+    assert "张三" in final_text
+    # 对话模式不触碰访谈状态机：本会话不应产生问卷访谈记录
+    with SessionLocal() as db:
+        interview_rows = (
+            db.query(QuestionnaireSession)
+            .filter(QuestionnaireSession.session_id == session_id)
+            .count()
+        )
+        assert interview_rows == 0
+
+
+def test_qxd_probe_never_enters_dialogue_mode():
+    claim = f"qxd-probe-{uuid.uuid4()}"
+    conversation = f"probe-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+    resp = _post_dialogue(
+        claim,
+        "帮我从零写一份简历",
+        session_id=session_id,
+        max_tokens=1,
+    )
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    # 探测请求绝不进入对话模式（不应出现简历第一步引导语）
+    assert "第一步" not in content
+
+
+def test_qxd_recruitment_dialogue_before_interview_and_reasoning_stage():
+    claim = f"qxd-recruit2-{uuid.uuid4()}"
+    conversation = f"recruit-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+    resp = _post_dialogue(
+        claim, "有招募信息吗", session_id=session_id, stream=True
+    )
+    assert resp.status_code == 200
+    data_lines = [
+        line.removeprefix("data:").strip()
+        for line in resp.text.splitlines()
+        if line.startswith("data:")
+    ]
+    assert data_lines[-1] == "[DONE]"
+    frames = [json.loads(line) for line in data_lines[:-1]]
+
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    for frame in frames:
+        delta = frame["choices"][0].get("delta") or {}
+        if "reasoning" in delta:
+            reasoning_parts.append(delta["reasoning"])
+        if "content" in delta:
+            content_parts.append(delta["content"])
+    content = "".join(content_parts)
+    assert "暂无通过审核且仍在招期内的招募信息" in content
+    assert "https://www.tsingradar.com.cn/recruitment" in content
+    # 分派走对话模式：reasoning 应为检索档位，而非访谈档位
+    assert any("正在为你检索并整理信息…" in part for part in reasoning_parts)
+    # 诚实空态不附带任何交付物
+    assert not any("x_soda" in frame for frame in frames)
+
+
+def test_qxd_scatter_query_honest_gate_closed_blackbox():
+    claim = f"qxd-scatter-{uuid.uuid4()}"
+    conversation = f"scatter-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+    resp = _post_dialogue(claim, "四象限导师分布怎么样", session_id=session_id)
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert "暂不能诚实地进行四象限分类" in content
+
+
+def test_qxd_consult_faq_honest_not_collected_blackbox():
+    claim = f"qxd-faq-{uuid.uuid4()}"
+    conversation = f"faq-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+    resp = _post_dialogue(claim, "组会频率一般怎么样", session_id=session_id)
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert "暂未收录" in content
+    assert "官方邮箱" in content
+
+
+def test_qxd_consult_email_blackbox():
+    claim = f"qxd-mail-{uuid.uuid4()}"
+    conversation = f"mail-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+    resp = _post_dialogue(claim, "给王老师写一封套磁邮件", session_id=session_id)
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert "套磁信初稿" in content
+    assert "王老师" in content
+
+
+def test_qxd_research_style_multiturn_blackbox():
+    """v3.1.4 科研风格速测：清小搭仅对话端口多轮直出，不触碰访谈状态机。"""
+    from app.db.session import SessionLocal
+    from app.models.questionnaire_session import QuestionnaireSession
+
+    claim = f"qxd-style-{uuid.uuid4()}"
+    conversation = f"style-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+
+    first = _post_dialogue(claim, "测测我的科研风格", session_id=session_id)
+    assert first.status_code == 200
+    first_text = first.json()["choices"][0]["message"]["content"]
+    assert "第一题" in first_text
+    assert "不判断你是否适合科研" in first_text
+
+    # 依次作答：1(范围-broad) / 从方法创新出发(method) / 2(工程) / 论文(paper)
+    final_text = ""
+    for answer in ("1", "从方法创新出发", "2", "论文"):
+        resp = _post_dialogue(claim, answer, session_id=session_id)
+        assert resp.status_code == 200
+        final_text = resp.json()["choices"][0]["message"]["content"]
+
+    assert "【你的科研风格速测结果】" in final_text
+    assert "多线·方法工程型" in final_text
+    # 诚实性：结果不评价能力高低、不写入六维评分
+    assert "不评价能力高低" in final_text
+    assert "「确认」后生效" in final_text
+    # 对话模式不触碰访谈状态机：本会话不应产生问卷访谈记录
+    with SessionLocal() as db:
+        interview_rows = (
+            db.query(QuestionnaireSession)
+            .filter(QuestionnaireSession.session_id == session_id)
+            .count()
+        )
+        assert interview_rows == 0
+
+
+def test_qxd_direction_map_single_turn_blackbox():
+    """v3.1.4 方向地图：单轮输出公开方向清单，不输出参考教师名单。"""
+    claim = f"qxd-dir-{uuid.uuid4()}"
+    conversation = f"dir-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+
+    resp = _post_dialogue(claim, "有哪些方向", session_id=session_id)
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert "【研究方向地图】" in content
+    assert "自然语言处理" in content
+    assert "大模型 / 大语言模型" in content
+    assert "不涉及具体导师" in content
+    # 治理边界：方向地图只输出学科方向本身，不输出参考教师名单
+    assert "参考教师" not in content
+    assert "回复其中一个方向名" in content
+
+
+def test_qxd_research_style_cancel_blackbox():
+    """v3.1.4 科研风格速测：中途取消退出并清除模式状态。"""
+    claim = f"qxd-style-cancel-{uuid.uuid4()}"
+    conversation = f"style-cancel-conv-{uuid.uuid4()}"
+    _ensure_qxd_identity(claim)
+    session_id = _qxd_session_id(claim, conversation)
+
+    first = _post_dialogue(claim, "测测我的科研风格", session_id=session_id)
+    assert first.status_code == 200
+    assert "第一题" in first.json()["choices"][0]["message"]["content"]
+
+    cancel = _post_dialogue(claim, "不测了", session_id=session_id)
+    assert cancel.status_code == 200
+    content = cancel.json()["choices"][0]["message"]["content"]
+    assert "已退出科研风格速测" in content
+
+    # 退出后可正常触发其它对话模式（不被残留状态拦截）
+    again = _post_dialogue(claim, "有哪些方向", session_id=session_id)
+    assert again.status_code == 200
+    assert "【研究方向地图】" in again.json()["choices"][0]["message"]["content"]
+
+
+def test_qxd_match_outcome_includes_fit_breakdown_blackbox(monkeypatch):
+    """v3.1.5 特色：匹配输出含「契合度构成」分解（拉高/拉低/中位/未计入）。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    claim = f"qxd-breakdown-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "查看匹配结果"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "契合度 92 分" in content  # 91.5 四舍五入
+    assert "契合度构成" in content
+    assert "非新增评分" in content  # 诚实声明：构成分解只解释不新增评分
+    assert "▲ 拉高：方向匹配（权重 40%）—— 95 分" in content
+    assert "▼ 拉低：指导方式（权重 20%）—— 80 分" in content
+    assert "· 中位：生涯去向（权重 20%）—— 90 分" in content
+    assert "创新偏好：未计入（画像无该维度证据，确认后生效）" in content
+
+
+def test_qxd_match_outcome_omits_breakdown_when_absent(monkeypatch):
+    """无 score_breakdown 的旧数据/桩：诚实省略构成块，其余输出不受影响。"""
+    outcome = _matched_outcome()
+    for item in outcome.items:
+        item.pop("score_breakdown", None)
+    _patch_recommend_ready(monkeypatch, outcome)
+    claim = f"qxd-no-breakdown-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "查看匹配结果"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "契合度 92 分" in content
+    assert "契合度构成" not in content
+
+
+# —— v3.1.6 匹配后「第 N 个」候选追问（详情 / 雷达 / 套磁 / 越界诚实） ——
+
+
+def test_qxd_match_ordinal_shows_single_candidate_detail(monkeypatch):
+    _patch_recommend_ready(monkeypatch, _matched_outcome_two())
+    claim = f"qxd-ordinal-detail-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "第2个"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    # 单候选详情头 + 第二位候选事实（不重新输出整份匹配列表）
+    assert "第 2 位候选详情" in content
+    assert "测试导师二" in content
+    assert "计算机系" in content
+    assert "契合度 88 分" in content
+    assert "x_soda" not in payload
+
+
+def test_qxd_match_ordinal_radar_selects_candidate(monkeypatch):
+    """「雷达图 第2个」应按序号选择第二位候选并签发其 SVG。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome_two())
+    bundle = {
+        "values": {key: 90 for key in qxd_chat.OBJECTIVE_DIMENSION_KEYS}
+    }
+    monkeypatch.setattr(
+        qxd_chat,
+        "public_score_bundles",
+        lambda: ({"T00001": bundle, "T00002": bundle}, {"release_version": "v-test"}),
+    )
+    monkeypatch.setattr(
+        qxd_chat,
+        "build_radar_series_for_advisor",
+        lambda _advisor_id, _bundles=None: RadarSeries(
+            name="客观证据（已审核）",
+            values=[90.0] * 4,
+            color=ADVISOR_TRAIT_COLOR,
+        ),
+    )
+    claim = f"qxd-ordinal-radar-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "雷达图 第2个"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    attachment = payload["x_soda"]["attachments"][0]
+    assert attachment["fileType"] == "image"
+    assert attachment["mimeType"] == "image/svg+xml"
+    content = payload["choices"][0]["message"]["content"]
+    assert "已生成 测试导师二 的客观证据雷达图" in content
+
+
+def test_qxd_match_ordinal_email_targets_candidate(monkeypatch):
+    """「第2个的套磁邮件」应按序号把候选名注入套磁邮件生成。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome_two())
+    seen: list[str] = []
+
+    async def fake_consult_email(*, latest_user: str, portrait=None):
+        seen.append(latest_user)
+        return "【套磁信初稿】\n尊敬的测试导师二老师：……（确定性模板）", None
+
+    monkeypatch.setattr(qxd_chat, "handle_consult_email", fake_consult_email)
+    claim = f"qxd-ordinal-email-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "第2个的套磁邮件"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    assert seen == ["给测试导师二写一封套磁邮件"]
+    assert "为第 2 位候选 测试导师二 生成套磁邮件" in content
+    assert "【套磁信初稿】" in content
+    assert "x_soda" not in payload
+
+
+def test_qxd_match_ordinal_out_of_range_is_honest(monkeypatch):
+    _patch_recommend_ready(monkeypatch, _matched_outcome_two())
+    claim = f"qxd-ordinal-oob-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "第9个"}]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    assert "当前匹配结果只有 2 位候选" in content
+    assert "第 1 到第 2" in content
+    assert "x_soda" not in payload
+
+
+# —— v3.1.7 匹配结果二次筛选（换一批 / 缩小范围 / 恢复完整结果） ——
+
+
+def _refined_batch_outcome() -> MatchApplicationOutcome:
+    """换一批 fixture：排除已展示候选后的新批次（T00003，含主页与方向）。"""
+    return MatchApplicationOutcome(
+        status="matched",
+        items=[
+            {
+                "advisor_id": "T00003",
+                "name": "新批次导师",
+                "dept": "软件学院",
+                "score": 79.2,
+                "fit_score": 84.0,
+                "evidence_coverage": 0.7,
+                "evidence_confidence": 0.85,
+                "research_keywords": ["大模型"],
+                "official_homepage": "https://example.com/new-prof",
+                "explanation": {
+                    "supporting_evidence": [
+                        {
+                            "statement": "在大模型对齐方向有公开成果",
+                            "citations": [
+                                {"citation": "论文·2024", "source": "public"}
+                            ],
+                        },
+                    ],
+                    "counter_evidence": [],
+                    "uncertainties": [],
+                    "questions_to_verify": [],
+                },
+            }
+        ],
+        meta={},
+        message="基于已确认画像找到 1 个证据化候选。",
+        questions=[],
+    )
+
+
+def _narrowed_outcome() -> MatchApplicationOutcome:
+    """缩小范围 fixture：按方向过滤后的候选（T00004）。"""
+    return MatchApplicationOutcome(
+        status="matched",
+        items=[
+            {
+                "advisor_id": "T00004",
+                "name": "筛选后导师",
+                "dept": "计算机系",
+                "score": 81.0,
+                "fit_score": 87.0,
+                "evidence_coverage": 0.75,
+                "evidence_confidence": 0.8,
+                "research_keywords": ["自然语言处理"],
+                "explanation": {
+                    "supporting_evidence": [
+                        {
+                            "statement": "在自然语言处理方向有公开积累",
+                            "citations": [
+                                {"citation": "主页·2025", "source": "public"}
+                            ],
+                        },
+                    ],
+                    "counter_evidence": [],
+                    "uncertainties": [],
+                    "questions_to_verify": [],
+                },
+            }
+        ],
+        meta={},
+        message="基于已确认画像找到 1 个证据化候选。",
+        questions=[],
+    )
+
+
+def _refine_outcome_for(extra_constraints) -> MatchApplicationOutcome:
+    """按附加硬约束返回对应批次（模拟 match_mentors 硬过滤行为）。
+
+    无约束 → 基础双候选；有 ADVISOR_ID EXCLUDES → 换一批新批次；
+    有 RESEARCH_TOPIC CONTAINS → 缩小范围后的过滤结果。
+    """
+    include: list[str] = []
+    excluded: list[str] = []
+    for constraint in extra_constraints or []:
+        if constraint.get("field") == "research_topic":
+            if constraint.get("operator") == "contains":
+                include = list(constraint.get("value") or [])
+        elif constraint.get("field") == "advisor_id":
+            excluded = list(constraint.get("value") or [])
+    if include:
+        return _narrowed_outcome()
+    if excluded:
+        return _refined_batch_outcome()
+    return _matched_outcome_two()
+
+
+def _patch_refine_ready(monkeypatch) -> None:
+    """桩到 recommend_ready 且基础重跑/二次筛选共用同一约束驱动的假匹配。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome_two())
+    monkeypatch.setattr(
+        qxd_chat,
+        "run_confirmed_match",
+        lambda _db, *, extra_constraints=None, **_kwargs: _refine_outcome_for(
+            extra_constraints
+        ),
+    )
+    monkeypatch.setattr(
+        match_refine_service,
+        "run_confirmed_match",
+        lambda _db, *, extra_constraints=None, **_kwargs: _refine_outcome_for(
+            extra_constraints
+        ),
+    )
+
+
+def _qxd_refine_claim(tag: str) -> str:
+    return f"qxd-refine-{tag}-{uuid.uuid4()}"
+
+
+def test_qxd_refine_change_batch_excludes_shown(monkeypatch):
+    """换一批：排除已展示候选后重新匹配，输出含主页链接与能力差距分析。"""
+    _patch_refine_ready(monkeypatch)
+    claim = _qxd_refine_claim("change")
+    headers = _qxd_headers(claim)
+
+    first = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "查看匹配结果"}]},
+    )
+    assert first.status_code == 200
+    base_content = first.json()["choices"][0]["message"]["content"]
+    assert "测试导师" in base_content and "测试导师二" in base_content
+    assert "换一批" in base_content  # 引导文案含二次筛选入口
+
+    second = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "换一批"}]},
+    )
+    assert second.status_code == 200
+    content = second.json()["choices"][0]["message"]["content"]
+    assert "已排除已展示的 2 位候选" in content
+    assert "新批次导师" in content
+    assert "测试导师" not in content  # 已展示候选不再出现
+    assert "官方主页：https://example.com/new-prof" in content
+    assert "能力差距：暂无画像证据" in content
+    assert "Transformer 架构与注意力机制" in content
+
+
+def test_qxd_refine_narrow_scope_two_questions(monkeypatch):
+    """缩小范围：两问状态机 → 按方向过滤重跑，输出过滤后候选。"""
+    _patch_refine_ready(monkeypatch)
+    claim = _qxd_refine_claim("narrow")
+    headers = _qxd_headers(claim)
+
+    client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "查看匹配结果"}]},
+    )
+    q1 = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "缩小范围"}]},
+    )
+    assert q1.status_code == 200
+    q1_content = q1.json()["choices"][0]["message"]["content"]
+    assert "集中在哪些方向或技术上" in q1_content
+
+    q2 = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "大模型、多模态"}]},
+    )
+    assert q2.status_code == 200
+    q2_content = q2.json()["choices"][0]["message"]["content"]
+    assert "排除的方向或技术" in q2_content
+
+    done = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "无"}]},
+    )
+    assert done.status_code == 200
+    content = done.json()["choices"][0]["message"]["content"]
+    assert "已按你的筛选条件重新匹配" in content
+    assert "筛选后导师" in content
+    assert "能力差距" in content
+    assert "自然语言处理" in content
+
+
+def test_qxd_refine_ordinal_consistent_after_change(monkeypatch):
+    """换一批后「第 N 个」追问与二次筛选批次一致（不回到旧批次）。"""
+    _patch_refine_ready(monkeypatch)
+    claim = _qxd_refine_claim("ordinal")
+    headers = _qxd_headers(claim)
+
+    client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "查看匹配结果"}]},
+    )
+    client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "换一批"}]},
+    )
+    third = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "第1个"}]},
+    )
+    assert third.status_code == 200
+    content = third.json()["choices"][0]["message"]["content"]
+    assert "第 1 位候选详情" in content
+    assert "新批次导师" in content
+    assert "测试导师" not in content
+
+
+def test_qxd_refine_reset_restores_full(monkeypatch):
+    """恢复完整结果：清空二次筛选条件后回到全量结果。"""
+    _patch_refine_ready(monkeypatch)
+    claim = _qxd_refine_claim("reset")
+    headers = _qxd_headers(claim)
+
+    client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "查看匹配结果"}]},
+    )
+    client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "换一批"}]},
+    )
+    restored = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "恢复完整结果"}]},
+    )
+    assert restored.status_code == 200
+    content = restored.json()["choices"][0]["message"]["content"]
+    assert "已恢复完整结果" in content
+    assert "测试导师" in content  # 全量候选回归
+
+
+def test_qxd_refine_first_change_is_honest(monkeypatch):
+    """首次直接「换一批」（无已展示批次）→ 诚实说明无法排除。"""
+    _patch_refine_ready(monkeypatch)
+    claim = _qxd_refine_claim("first")
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "换一批"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "还没有已展示的候选可排除" in content
+
+
+def test_qxd_matched_state_off_topic_gives_capability_guidance(monkeypatch):
+    """v4.0.0：已匹配态收到跑题消息 → 能力引导，不再静默复读匹配结果。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    claim = f"qxd-offtopic-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "讲个笑话"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "这个话题我暂时帮不上忙" in content
+    assert "可以继续追问" not in content  # 不再复读匹配引导
+    assert "x_soda" not in response.json()
+
+
+def test_qxd_matched_state_weather_is_guided_not_absorbed(monkeypatch):
+    """v4.0.0：天气类消息在匹配态给引导，不静默重跑。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    claim = f"qxd-weather-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "今天天气怎么样"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "暂时帮不上忙" in content
+
+
+def test_qxd_matched_state_acknowledgment_keeps_follow_ups(monkeypatch):
+    """v4.0.0：致谢消息 → 简短回应 + 保留候选追问引导。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    claim = f"qxd-thanks-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "谢谢"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "不客气" in content
+    assert "可以继续追问" in content
+
+
+def test_qxd_matched_state_relevant_question_still_reruns(monkeypatch):
+    """v4.0.0：匹配相关提问不受跑题兜底影响，仍正常复跑+引导。"""
+    _patch_recommend_ready(monkeypatch, _matched_outcome())
+    claim = f"qxd-relevant-{uuid.uuid4()}"
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(claim),
+        json={"messages": [{"role": "user", "content": "哪个导师更适合我"}]},
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "可以继续追问" in content
+    assert "测试导师" in content
+
+
+def _complete_qxd_interview_turns() -> list[str]:
+    """走到画像确认门前的完整访谈轮次（与既有多轮确认测试同一口径）。
+
+    两个“确认”分别确认地点与每周投入的约束草案，随后状态机进入
+    awaiting_confirmation（回复里会出现“确认无误请回复‘确认画像’”）。
+    """
+    return [
+        "自然语言处理、对话系统",
+        "工程落地",
+        "高频具体指导",
+        "产业就业",
+        "愿意探索高风险新方向",
+        "只能北京、每周至少3天",
+        "确认",
+        "确认",
+    ]
+
+
+def test_qxd_confirmation_touches_relevant_recruitment_once(monkeypatch):
+    """v4.0.0：确认画像 → 匹配结果附带一次招募提示；后续消息不再触发。"""
+    user_id = f"qxd-proactive-{uuid.uuid4()}"
+    headers = _qxd_headers(user_id)
+    turns = _complete_qxd_interview_turns()
+    monkeypatch.setattr(
+        qxd_chat,
+        "proactive_recruitment_hint",
+        lambda *_a, **_k: (
+            "顺带一提：自然语言处理课题组（科研助理，截止 2027-01-01）"
+            "正在开放。回复「招募信息」可查看。"
+        ),
+    )
+
+    def _post(messages):
+        return client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "tsing-radar",
+                "user": user_id,
+                "messages": [{"role": "user", "content": c} for c in messages],
+                "stream": False,
+            },
+        )
+
+    # 第一段：走到画像确认门（awaiting_confirmation）
+    first = _post(turns)
+    assert "确认无误请回复" in first.json()["choices"][0]["message"]["content"]
+
+    # 第二段：确认画像 → 匹配结果 + 一次性招募提示
+    confirmed_turns = [*turns, "确认画像"]
+    second = _post(confirmed_turns)
+    second_content = second.json()["choices"][0]["message"]["content"]
+    assert "顺带一提" in second_content
+    assert "回复「招募信息」" in second_content
+
+    # 后续非确认消息：匹配结果正常复跑，但不再附带招募提示（仅一次）
+    follow = _post([*confirmed_turns, "哪个导师更适合我"])
+    follow_content = follow.json()["choices"][0]["message"]["content"]
+    assert "顺带一提" not in follow_content
+    assert "暂无通过审核的数据" in follow_content
+
+
+def test_qxd_confirmation_silent_without_relevant_recruitment(monkeypatch):
+    """v4.0.0：无画像相关开放招募时，确认回复保持诚实，不提示招募。"""
+    user_id = f"qxd-proactive-empty-{uuid.uuid4()}"
+    headers = _qxd_headers(user_id)
+    turns = [*_complete_qxd_interview_turns(), "确认画像"]
+    monkeypatch.setattr(
+        qxd_chat, "proactive_recruitment_hint", lambda *_a, **_k: None
+    )
+    response = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "model": "tsing-radar",
+            "user": user_id,
+            "messages": [{"role": "user", "content": c} for c in turns],
+            "stream": False,
+        },
+    )
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    assert "顺带一提" not in content

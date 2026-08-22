@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import logging
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.schemas.mentor_scores import (
@@ -19,6 +22,8 @@ from app.schemas.mentor_scores import (
 )
 from app.services.data_loader import load_match_candidates
 from app.services.radar_chart import OBJECTIVE_DIMENSION_KEYS
+
+logger = logging.getLogger("tsing_radar.mentor_scores")
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -42,7 +47,12 @@ def load_score_dataset() -> MentorScoreDataset | None:
     expected = (settings.MENTOR_SCORE_DATA_EXPECTED_SHA256 or "").strip().lower()
     if expected and hashlib.sha256(payload).hexdigest() != expected:
         raise RuntimeError("mentor_score_dataset_sha256_mismatch")
-    return MentorScoreDataset.model_validate_json(payload)
+    try:
+        return MentorScoreDataset.model_validate_json(payload)
+    except ValidationError:
+        # 文件损坏 / 版本不匹配：诚实降级为零数据态，不让评分门影响主链路
+        logger.exception("mentor_score_dataset_invalid")
+        return None
 
 
 def _active_release(

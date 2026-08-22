@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from collections import Counter
@@ -38,6 +39,9 @@ from app.schemas.matching import (
     RankingObjective,
     SourcedEvidenceClaim,
 )
+from app.services.off_topic import CONSTRAINT_JUNK_SIGNALS
+
+logger = logging.getLogger("tsing_radar.matching")
 
 MATCH_METHOD_VERSION = "evidence-matching-v1"
 LEXICAL_FALLBACK_METHOD = "deterministic-concept-ngram-lexical-v1"
@@ -485,6 +489,20 @@ def parse_hard_constraints(portrait: dict[str, Any]) -> ParsedHardConstraints:
                 f"{'/'.join(constraint.value)}"
             )
         )
+    # v4.2.x 修复1 第三层消毒：幽灵值（确认指令/态度词/开场白残留）直接丢弃，
+    # 绝不参与硬过滤。访谈层（修复1 前两层）已拦截大部分，这里是匹配前的
+    # 最后一道防线（防旧数据/防旁路写入）。
+    kept: list[tuple[HardConstraint, str]] = []
+    for constraint, applied in zip(parsed.constraints, parsed.applied):
+        joined = "".join(constraint.value)
+        if any(junk in joined for junk in CONSTRAINT_JUNK_SIGNALS):
+            logger.warning(
+                "hard_constraint_junk_value_dropped: %s", joined
+            )
+            continue
+        kept.append((constraint, applied))
+    parsed.constraints = [constraint for constraint, _ in kept]
+    parsed.applied = [applied for _, applied in kept]
     return parsed
 
 

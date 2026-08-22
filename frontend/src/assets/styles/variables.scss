@@ -12,9 +12,8 @@ $color-accent-light: #ffb340;
 $color-accent-dark: #cc7700;
 
 // —— 业务语义色 ——
-$color-student-radar: rgba(64, 158, 255, 0.2); // 学生需求雷达半透明蓝填充
+// v3.1.5：雷达为边缘线图勾连（无填充），仅保留描边色
 $color-student-radar-line: #409eff; // 学生需求雷达描边
-$color-advisor-radar: rgba(255, 149, 0, 0.6); // 导师特质雷达实橙填充
 $color-advisor-radar-line: #ff9500; // 导师特质雷达描边
 
 // —— 背景与文字 ——

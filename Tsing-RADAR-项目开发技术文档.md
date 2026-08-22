@@ -2,7 +2,7 @@
 ## Research Advisor Dimension Analysis Radar / 清研寻师雷达
 
 > 部署平台：清华大学"清小搭"智能体广场
-> 文档版本：v3.0
+> 文档版本：v4.0.0
 > 更新日期：2026年8月
 
 ---
@@ -19,6 +19,8 @@
 8. 部署与运维
 9. 模型训练与迭代闭环
 10. v3.0 导师服务与表达层增强
+11. v3.1 纯对话升级（v2.5 规格）
+12. v4.0.0 智能体升级（任务书四任务全量交付）
 
 ---
 
@@ -73,6 +75,9 @@
 
 - 支持基于检索增强生成（RAG）的多轮对话，可追问导师研究进展、组内管理风格、招生要求等细节问题。
 - 回答严格基于知识库检索结果，避免信息编造。
+- **v4.0.0 实现**：以**综述级词法知识库**作为确定性等价物（见 §12.1）——语料只入综述级聚合、
+  剔除原始引文、SHA256 可溯源；姓名精确/子串匹配零幻觉；未收录诚实拒答。无 chroma/langchain
+  依赖、无 key 可跑。
 
 #### 2.1.6 简历智能生成与管理
 
@@ -265,7 +270,7 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
   - 四个象限：国热、国冷、私热、私冷
   - 每个散点对应一位导师，悬浮显示姓名与契合度
 - **点击导师卡片后**：散点图切换为该导师的**完整大尺寸雷达图**
-  - 六维度双轨对比（学生需求半透明蓝色 + 导师特质实心橙色）
+  - 六维度双轨对比（学生需求蓝色勾边 + 导师特质橙色勾边，v3.1.5 起为边缘线图勾连、无颜色填充）
   - 下方展示契合指数得分与核心匹配理由
   - 保留返回散点图的切换按钮
 
@@ -298,7 +303,7 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 
 - 外观为横向圆角长方形卡片，左侧展示导师头像、姓名、院系与职称
 - 中部排列 3-4 个核心研究方向关键词标签，下方显示契合度百分比
-- 右侧内嵌**迷你双轨雷达图**：半透明蓝色代表学生需求轮廓，实心橙色代表导师特质，重叠区域高亮
+- 右侧内嵌**迷你双轨雷达图**：蓝色勾边代表学生需求轮廓，橙色勾边代表导师特质（v3.1.5 起边缘线图勾连、无颜色填充），重叠区域高亮
 - 卡片点击为选中态，高亮边框，同时触发右侧看板切换为该导师的完整大雷达图
 - 卡片支持二次点击展开详情面板，向下滑出近期论文、学生评价、在研项目、招募信息
 
@@ -546,7 +551,24 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 | status | VARCHAR(20) | 处理状态 |
 | created_at | TIMESTAMP | 申请时间 |
 
-> 完整迁移链见 `backend/alembic/versions/`（0001-0012）；以上为业务语义摘要，字段以 ORM 模型为准。
+### 5.4 v4.0.0 新增业务数据表
+
+#### 表 19：user_memories（长期记忆表，Ultra-Memory 确定性等价物）
+
+| 字段名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| student_id | VARCHAR(64) | 复合主键（联合 memory_key）；主体标识 |
+| memory_key | VARCHAR(50) | 复合主键；白名单键（research_interests / 六维 / hard_constraints / portrait_confirmed） |
+| memory_value | JSON | 事实文本（已确认画像白名单投影） |
+| source | VARCHAR(30) | 写入来源（portrait_confirmed） |
+| created_at | TIMESTAMP | 创建时间 |
+| updated_at | TIMESTAMP | 更新时间（重新确认即覆盖） |
+
+写入门禁（红线）：**只写已确认画像白名单字段**，未确认猜测绝不写；写入触发点仅
+`interview.answer_session` 确认分支与 `confirm_profile`（均在确认门通过之后）。
+
+> 完整迁移链见 `backend/alembic/versions/`（0001-0014：0013 dialogue_sessions /
+> 0014 user_memories）；以上为业务语义摘要，字段以 ORM 模型为准。
 
 ---
 
@@ -776,3 +798,386 @@ v3.0 在 v2.2 审计基线之上完成两侧能力整合（`integration/final-20
 - 边缘路由白名单（`public-route-allowlist.json` + `web-api.caddy`）需覆盖导师服务与评分/兴趣探索全部新路由。
 - 清小搭三层链路：`qxd.tsingradar.com.cn` → Caddy edge → qxd-gateway(nginx) → backend:8000；OpenAI 兼容入口 `https://qxd.tsingradar.com.cn/v1`。
 - 迁移链至 0012（mentor_campus_card）；升级前按 RUNBOOK 完成数据库备份与 advisory lock 流程。
+
+---
+
+## 11. v3.1 纯对话升级（v2.5 规格）
+
+> 分支 `feature/v25-dialogue`。在清小搭纯对话入口落地 v2.5 规格：简历生成与优化、科研招募信息、对话智能度、纯对话文本化转译、套磁/FAQ 咨询、匹配输出 v2.5 格式。延续"确定性状态机 + LLM fail-closed + 诚实空态"基调。
+
+### 11.1 版本概览
+
+| 能力域 | 内容 | 关键实现 |
+| :--- | :--- | :--- |
+| 对话智能基座 | 意图分类 + 口语→维度映射 + 隐式关注识别 | `dialogue_intent.py`（DialogueMode 枚举优先级：定向 > 优化 > 从零 > 招募 > 四象限 > 套磁 > FAQ） |
+| 状态持久化 | 跨轮对话模式状态 | `dialogue_state.py` + 迁移 0013 `dialogue_sessions`（session_id/student_id/mode/state JSON/version） |
+| 简历对话 | 从零生成 / 优化已有 / 定向优化 | `resume_dialogue.py`（6 字段分步采集 → Markdown，PDF 诚实降级） |
+| 招募对话 | 自然语言筛选 + 个性化推荐 | `recruitment_dialogue.py`（复用 `list_public_recruitments` 合并口径） |
+| 纯对话转译 | 四象限 / 六维对比文本化 | `scatter_dialogue.py` + `match_application.py`（`format_match_outcome` 向后兼容） |
+| 咨询/FAQ | 套磁邮件 + 平台 FAQ + 诚实空态 | `consultation.py` |
+
+### 11.2 对话模式分发（chat.py）
+
+```
+请求进入 generate_agent_reply
+        │
+        ▼
+探针（max_tokens:1）？────────── 是 ──▶ 不进入任何对话模式（隔离）
+        │ 否
+        ▼
+活动模式存在（dialogue_sessions 有当前会话键记录）？
+        │ 是 ──▶ 活动模式优先（防简历字段答案被新意图劫持，如"做过科研助理"）
+        │ 否
+        ▼
+classify_dialogue_intent(最近一轮用户消息) ──▶ 七类对话模式 or NONE
+        │ NONE
+        ▼
+原访谈状态机（answer_session → 表达层 → 匹配）零改动
+```
+
+- 分发成功：返回 `stage="dialogue"` 的 AgentReply，reasoning 档位固定为"正在为你检索并整理信息…"（检索档，不冒充模型推理）。
+- 画像复用：访谈 portrait（研究兴趣/硬约束）+ 对话中提取信息共用，不重复提问。
+- 探测请求与试聊兼容模式保持原语义。
+
+### 11.3 简历对话模块
+
+- **从零生成**：`FIELD_SEQUENCE` 6 字段（姓名/院系/教育/项目/荣誉与任职/补充）逐轮采集，状态存 `dialogue_sessions`；完成后确定性渲染 Markdown 简历（标注"未经真实性核验"，空字段不渲染章节）；PDF 交付诚实降级——平台短时公开转存（`issue_delivery_grant` `qxd_platform`）仅允许匹配报告，聊天内不尝试越权签发简历附件，引导 Web 端简历中心生成下载；投递确认是终局动作（成功或诚实说明后均清状态）。
+- **智能预填**（v3.1.1）：触发消息或任一采集轮一次性给出的信息 → `_try_prefill_fields` 抽取为字段，只问缺失项。LLM 优先（fail-closed：无凭据/异常/非 JSON/非空字段 <2 均返回 None），确定性锚点兜底（按标点拆句，姓名前缀正则提取并拒绝含结构词的候选，其余字段按 院系→教育→项目→荣誉→补充 锚点优先级整句归类，只取明确提供的信息）；推进逻辑为"下一个未答字段"（`_next_missing_step`，`key not in fields` 判定，与空答案跳过语义兼容）；引导文案支持"一次说完所有信息"；宽泛回答（随便/都行/不知道…）留空跳过不追问。
+- **优化已有**：命令式触发词（优化简历/润色/打磨…）→ 等待粘贴；消息本身即内容 → 直接润色。LLM 三维润色（学术表述/经历量化/逻辑结构）fail-closed 降级确定性整理，绝不虚构经历。
+- **岗位要求联动**（v3.1.2）：定向目标经 `resolve_recruitment_target` 解析为公开岗位时，岗位标题成为目标、公开核心要求进入 LLM 提示词（`_polish_user_content`）；无 LLM/解析失败按普通目标名处理。
+- **完整性体检**（v3.1.2）：`_finalize_build` 生成后 `_completeness_tips` 检查关键缺失（科研/项目经历、联系方式、教育背景），输出"📋 简历体检"诚实建议（"建议补充…"），不虚构补写。
+- **定向优化**：`parse_target_from_message` 提取目标（"针对 XX 老师的课题组" → 姓名 "XX"；岗位类保留原文），透传润色管线。
+
+### 11.4 招募对话增强
+
+- 自然语言筛选：院系别名表（"计算机"→计算机科学与技术系）、类型关键词（科研助理/实习生/助研…）、急招标记（急招/尽快/近期…）、方向关键词（NLP/强化学习…）→ 确定性过滤。
+- **方向别名归一化**（v3.1.1）：`DIRECTION_ALIASES` 14 组双向映射（NLP↔自然语言处理、LLM↔大模型、RL↔强化学习、AI↔人工智能…），解析、过滤、画像兴趣匹配、相关度排序统一走 `_matches_direction` 同义词组匹配；纯英文缩写按词边界匹配（`(?<![A-Za-z0-9])`，防 "AI" 误命中 training）；兴趣命中输出归一化规范词并去重。
+- **宽泛问题引导**（v3.1.1）：无任何筛选条件（`_is_vague_query`）且有在招记录时——有画像按研究兴趣排序推荐并附"院系/类型/方向"筛选引导，无画像给引导后展示最新在招概览；无在招记录保持诚实空态（不追加引导、不伪造热门推荐）。
+- **筛选偏好跨轮记忆**（v3.1.2）：明确筛选条件写入 `dialogue_sessions`（mode=recruitment_query，`_save_filter_memo`）；宽泛查询自动沿用（`_load_filter_memo`，mode 用 `get_dialogue_mode` 判定），回复前缀说明"我沿用你之前提到的筛选条件…"；新条件整体替换旧记忆；无记忆回落到宽泛引导。
+- **岗位详情追问**（v3.1.2）：意图分类新增"岗位/招聘/工作机会"触发词与「第 N 个」指代正则（`dialogue_intent.py`）；`_parse_ordinal` 支持阿拉伯/中文数字（含十位）；`_is_detail_query` 排除优化/投递语义；`format_recruitment_detail_v25` 输出完整详情 + 距截止天数（`_deadline_remaining`，无明确截止不编造）；序号越界诚实提示。
+- **岗位联动定向优化**（v3.1.2）：`resolve_recruitment_target` 按 序号（与 digest 同口径 `_sort_records` 排序，可传画像兴趣）→ recruit_id → 标题/检索文本子串 解析为公开岗位；`resume_dialogue.handle_resume_polish` 解析成功后把岗位标题设为目标、公开核心要求附加进 LLM 提示词（`_polish_user_content`，明确"不得虚构经历"）；无 LLM/解析失败按普通目标名处理。
+- 个性化推荐：画像 `research_interests` 与岗位方向重合数 → 推荐指数（★，1+命中数，上限 5）；输出对齐 v2.5 摘要格式（发布方·院系 / 类型|截止 / 核心要求 90 字摘要 / 投递说明 / 推荐理由）。
+- 诚实空态：无通过审核且在招期内的记录 → "暂无通过审核且仍在招期内的招募信息" + 官网 URL，不编造；无重合 → "没有与你的研究兴趣直接重合的在招岗位"。
+- 静态记录补全 `dept`/`publisher_name`（数据治理后置）。
+
+### 11.5 纯对话文本化转译
+
+- **四象限**：以已审核客观证据（项目广度 × 主题广度，`QUADRANT_HOT_THRESHOLD=60` 严格大于）分类为 双高活跃/项目驱动型/主题探索型/聚焦深耕型；体制属性（国/私）与热门度属历史推断字段，已按治理门禁剥离，明确标注不公开；评分门未开 → 诚实空态"暂不能诚实地进行四象限分类"。
+- **六维对比表**（匹配输出 v2.5）：用户侧需求为画像映射推导值（明确标注"需求映射"，含隐式关注维度 75 分），导师侧为匿名评价 ≥8 样本聚合值；无样本 → "暂无足够样本"，无收录评价 → "未收录评价"。`format_match_outcome` 新增参数全部可选，向后兼容 Web 端调用。
+
+### 11.6 咨询与 FAQ
+
+- **套磁邮件**：确定性模板（问候/自我介绍/研究兴趣/对导师工作的理解/礼貌收尾）+ LLM 增强（失败降级）；联系方式占位"以官网公布为准"；姓名规范化（单字姓氏 + "老师"后缀）。
+- **平台机制 FAQ**（怎么匹配/如何开始/雷达图是什么/怎么投递/怎么选导师）→ 确定性答案。
+- **导师个体情况**（组会/延毕/毕业难度/招生名额/学生评价/风评/实验室氛围）→ 知识库无收录数据时诚实提示"该信息暂未收录经过核实的公开数据"，建议通过导师官网或官方邮箱确认；绝不编造。
+
+### 11.7 诚实性红线与数据治理
+
+- 六维主观：匿名 1-5 分，`ADVISOR_RATING_MIN_SAMPLES=8` 门控（API 层过滤 + 服务层 `get_gated_summary`）；客观四维：`public_score_bundles` 门控。
+- `popularity`（D1 禁止字段）与 `sector`（legacy/inferred）不参与对话层输出；LLM 全部 fail-closed（无凭据/provider≠glm/异常 → 确定性降级）；不编造联系方式、名额、评价；简历只整理用户提供信息。
+- 状态写入即提交（与 `interview.py` 惯例一致），跨请求会话键复用依赖此提交。
+
+### 11.8 迁移与验证
+
+- 迁移链至 **0013**（dialogue_sessions）；升级前按 RUNBOOK 完成备份与 advisory lock 流程。
+- 后端全量：**622 passed / 5 failed / 2 skipped / 2 errors**（失败集与 v3.0 基线一致，均为 Windows 环境性：迁移 L3、CJK 字体、LLM secret 权限/symlink）。
+- v2.5 专项 69 用例（意图 7 / 简历 18 / 招募 18 / 四象限 5 / 咨询 8 / 匹配格式 7 / 对话黑盒 6）全绿；v3.1.2 新增 8 用例（序号解析与详情判定 / 第 N 个详情 / 序号越界诚实 / 条件记忆沿用 / 新条件替换 / 岗位解析 / 体检提示 / 岗位要求进提示词）；v3.1.3 新增 9 用例（真人口语变体 27 条子断言 / 简历粘贴启发式正反 / 雷达图 FAQ 变体 / 评分文件损坏降级 / render_radar_text 确定性·零满量程·轴序 / 附件禁用文本雷达图黑盒）；黑盒用例含"探针不进入对话模式""活动模式优先""reasoning 检索档位""诚实空态无 x_soda"。
+
+### 11.9 v3.1.3：真人口语实测 + 仅对话端口雷达图
+
+> 触发：对清小搭纯对话入口做"正常人说法"全面复测（意图层 51 例扫描 + 回复层 10 场景 + 黑盒链路），修复全部真实漏匹配；并把雷达图从"附件能力"扩展到"仅对话端口直出文本字符版"。
+
+#### 11.9.1 意图触发词真人口语扩充（dialogue_intent.py）
+
+- 定向优化新增：优化下/优化一下/润色下/润色一下/改改/提高/改进/看看简历/改简历/优化简历…（避开裸"优化"，防"性能优化"访谈答案劫持）。
+- 从零生成新增：帮我写简历/做一份/整一份/简历怎么做/怎么写简历/从零写/新建简历…
+- 优化已有新增：粘贴原文触发（`_RESUME_PASTE_ANCHORS` 完整字段锚点 ≥2 命中 + 长度 ≥60 → RESUME_POLISH，`_looks_like_resume_paste`）；"我之前那段/这段经历"续聊。
+- 招募新增：招人吗/在招/急招/实习机会/实习吗/实习岗位/科研岗位/岗位/工作机会…
+- FAQ 新增：咋弄/怎么办/干嘛的/是啥/有什么用/怎么用/能干嘛…
+- 四象限/套磁补充口语变体（看看哪些方向热/热门方向/私企/国企…、发邮件/给老师写信…）。
+- 边界护栏（防访谈误伤，均为刻意不加的裸词）：实习（保留"实习经历"→访谈）、优化（裸词）、热门（裸词）、材料/化学/物理（裸词，防"我找了材料来分析"）。已知边界："找大模型相关的"（依赖 memo/active_mode 上下文延续）。
+- 测试：`test_dialogue_intent_natural_language_variants` 27 用例（含非路由防护断言）。
+
+#### 11.9.2 文本版雷达图（仅对话端口直出）
+
+- 动机：清小搭纯对话端口无附件能力，`QXD_ATTACHMENTS_ENABLED` 关闭或 `assert_qxd_delivery_ready` 未就绪时，旧行为只给文本表格（无图）。
+- 实现（`radar_chart.py`）：`render_radar_text(series, labels, title, sample_note)`——
+  - 多边形：canvas 25×13、中心 (12,6)、半径 (12,6)（字符宽高比约 2:1，视觉接近正菱形）；4 轴方位 0 上/1 右/2 下/3 左，与 `OBJECTIVE_DIMENSION_KEYS` 轴序一致；网格环用 `·`，数据多边形用 Bresenham 直线 + 射线法多边形包含填充 `█`。
+  - 数值条形：每维一行，20 格 `█`/`░`（满格 100），如 `项目广度  ██████████████████░░  88`。
+  - 诚实性：值 0 → 中心点 + 空条（不画"基准 50"冒充）；值 100 → 满格菱形。
+- 接入（`chat.py::_radar_intent_reply`）：三分支——有已审核评分且附件可用 → SVG 附件（`issue_radar_chart_token` + `SodaAttachment`）；附件未启用 → 文本版 + "仅对话端口直出，数据与附件版同一来源" + `样本来源：已审核评分发布 v{release_version}`；交付未就绪（`assert_qxd_delivery_ready` 抛 4xx）→ 文本版。两个文本分支都保留"客观指标与匿名主观评价严格分离，本图不含学生评价"声明与官网交互式雷达图引导；评分门未开/无 bundle → 诚实空态 + 四维文本表格（`_radar_text_table`）。
+- 安全：文本版走对话文本直出，不签发任何附件 token，无新增对外端点；附件路径继续走无状态 `/v1/radar/{token}`（短时签名）。
+- 测试：`test_radar_chart.py` 新增 3 项（确定性 + 包含图表与数值 / 全 0 诚实空态 / 轴序对齐）；`test_qxd_contract.py` 新增黑盒 `test_qxd_radar_intent_text_chart_when_attachments_disabled`（monkeypatch `QXD_ATTACHMENTS_ENABLED=False` → 断言字符条形 `█`、四维标签、数值、分离声明、`x_soda` 不存在）。
+
+#### 11.9.3 健壮性与文案修复
+
+- **评分文件损坏诚实降级**（`mentor_score_governance.load_score_dataset`）：`MentorScoreDataset.model_validate_json` 捕获 `ValidationError` → `logger.exception("mentor_score_dataset_invalid")` + 返回 None（诚实空态），不再让雷达/评分链路 500；sha256 校验失败仍 RuntimeError（发布门语义）。
+- **简历首轮引导去重**（`resume_dialogue.py`）：`FIELD_SEQUENCE[0][1]` 精简为 "第一步：你的姓名是？"，不再与 `_start_or_resume_build` 引导语重复。
+- **FAQ 顺序修正**（`consultation.py`）："简历"条目移到"投递流程"之后（防拦截"怎么投递简历"）；雷达图 FAQ 主题改"雷达图"以命中"是啥/干嘛的/有什么用"。
+- **测试环境隔离**（`conftest.py`）：强制清空 `MENTOR_SCORE_DATA_FILE`/`MENTOR_SCORE_DATA_EXPECTED_SHA256`，防本机 .env 旧 schema 评分文件污染测试进程。
+
+
+---
+
+### 11.10 v3.1.4：科研风格速测 + 方向地图 + 画像确认增强
+
+> 背景：v3.1.4 交付三项结构化渐进引导能力——轻量自我认知（科研风格速测）、方向选择引导（研究方向地图）、确认前信息透明（画像确认增强），全部为确定性版本，同时守住项目红线（不编造、不评价、不越数据治理边界）。
+
+#### 11.10.1 科研风格速测（research_style.py，新）
+
+- **设计取舍**：**4 题确定性规则表分类**（零 LLM 依赖）——范围（broad/deep/mixed）、推进方式（problem/method/data）、形态（theory/engineering/balanced）、成果偏好（paper/system/analysis），答案用序号或选项文字匹配（序号精确匹配，"11" 不误中 "1"）。`_CORE_STYLES` 9 组「形态 × 驱动」组合 → 名称 + 通俗解释（问题溯源型 / 理论建构型 / 现象洞察型 / 落地攻坚型 / 方法工程型 / 数据驱动型 / 问题牵引型 / 方法探索型 / 实证归纳型），范围修饰拼前缀（多线· / 深耕·）。零 LLM 依赖 → 结果可复现可测试。
+- **诚实红线**：welcome 与结果均含"不判断你是否适合科研，也不评价能力高低"（避免制造"你很弱/你很适合"暗示）；结果只作偏好参考，**不写入六维导师评分**，仅提示"偏好形态可回填画像 research_mode（theory/engineering/mixed），「确认」后生效"。
+- **多轮状态机**：`dialogue_sessions`（mode=research_style，step + answers），「取消/不测了」→ 清除状态退出；非法答案同题重试不推进；答完自动清除状态（可再触发重测）。触发消息即答案时也从第一题正常走。
+- **意图接入**（`dialogue_intent.py`）：`RESEARCH_STYLE` 触发词含"科研风格/风格测试/测测我/我适合做什么方向/了解自己"等；分类优先级位于套磁之后、FAQ 之前；"测测我"（自我认知）先于"什么方向"（方向地图）判定。
+
+#### 11.10.2 研究方向地图（direction_map.py，新）
+
+- **内容**：16 个公开学科方向（大模型/NLP/视觉/ML/RL/机器人/系统/网络/数据库/芯片/通信/理论计算/材料化学生物/生物信息/新能源/控制优化仿真），每条 = 规范名 + 一句话说明 + 示例关键词；34 项别名归一（NLP↔自然语言处理、LLM↔大模型、自动驾驶↔机器人 等，与 `recruitment_dialogue.DIRECTION_ALIASES` 口径打通）。
+- **治理边界（D1）**：只输出学科方向本身，**刻意不输出参考教师名单**——教师-方向绑定属非公开数据治理范围，知识库无证据时不编造；渲染文本含"不涉及具体导师"。`resolve_direction` 别名未命中返回 None（词面匹配，不做语义推断）。
+- **防访谈误伤**：触发词刻意用完整问句结构（"有哪些方向/方向怎么选/这个系有什么方向"），不引入裸词"方向"；"我研究方向是自然语言处理"（访谈自述）不被拦截，仍归访谈。
+
+#### 11.10.3 画像确认增强（interview.py `_summary`）
+
+- "匹配时将重点考虑"行：聚合研究兴趣/研究方式/生涯方向/指导偏好/硬性条件，无信息时诚实写"暂无已确认信息，先匹配会较宽泛"。
+- "尚未明确（可选补充）"行：draft_hard_constraints 的 confirmation_prompt + unresolved 去重 + research_mode/career_orientation 未确认时补两条引导；全无时诚实写"无"。
+- "确认画像"口令与既有断言（"已确认硬性条件"）完全兼容，不破坏旧流程。
+
+#### 11.10.4 迁移与验证
+
+- 后端全量：**638 passed / 5 failed / 2 skipped / 2 errors**（新增 16 用例全绿：`test_research_style.py` 10 项 + 意图触发词/优先级/防拦截 3 项 + 契约黑盒 3 项；失败集与 v3.1.0 基线逐项一致，均为 Windows 环境性）。
+- 科研风格速测：确定性（同答案同结果）、mode 三态映射、序号精确匹配、4 轮全流程、取消退出、非法重试不推进。
+- 方向地图：16 方向全列出、方向名唯一、渲染不含"参考教师"、别名命中/未收录 None。
+- 黑盒：科研风格多轮直出（无 x_soda 附件、不触碰访谈状态机 `QuestionnaireSession` 0 记录）、取消后可再触发其它模式、方向地图单轮直出。
+
+---
+
+### 11.11 v3.1.5：雷达边缘线图勾连 + 特色「契合度构成分解」
+
+> 背景：①用户指定雷达图由颜色填充改为边缘线图勾连（不填充、只描边连顶点）；②确立我们的特色——**可解释的量化契合度**：不仅报总分，还倒推"为什么是 XX 分"的维度构成。
+
+#### 11.11.1 雷达图边缘线图勾连（四端口同步）
+
+- **SVG**（`radar_chart.render_radar_svg`）：数据系列 `<polygon>` 由 `fill="{color}" fill-opacity="0.45"` 改为 **`fill="none"`**（保留 `stroke` 2.5px 与虚线分支），并新增**顶点勾连点** `<circle r="3" fill="{color}">`（单系列 4 个）；图例 `<rect>` 同步无填充。删除死常量 `ADVISOR_TRAIT_FILL_OPACITY`。
+- **文本版**（`_render_text_polygon`）：删除多边形内部 `█` 填充循环（`_point_in_poly` 随之移除），只保留 `█` 边缘描边——仅对话端口直出的文本雷达同样"线勾连"；逐维数值条形（█/░）不受影响。
+- **PDF**（`render_radar_drawing`）：reportlab `Polygon(fillColor=Color(alpha=0.45))` → **`fillColor=None`**。
+- **前端**（`useRadarOption.ts`）：删除 ECharts series 的 `areaStyle` 与 `RadarSeries.areaColor` 字段、四组配色常量的 `areaColor`；`variables.scss` 清理填充色变量（保留描边色）。`splitArea` 网格背景保留（坐标背景，非数据填充）。
+
+#### 11.11.2 契合度构成分解（match_application.py）
+
+- 新增 `format_fit_breakdown(item) -> str | None`：读取 `item["score_breakdown"]`（matching.py 已算好的逐排序目标 breakdown：`score 0-1 × 权重 × 置信度`），输出「契合度构成」块，按固定枚举序（确定性）给每个目标一行：
+  - `▲ 拉高`：该维得分×100 比 fit_score 高 ≥3 分；`▼ 拉低`：低 ≥3 分；其余 `· 中位`；
+  - `score is None`（画像无该维度证据）→ `未计入（画像无该维度证据，确认后生效）`——诚实，绝不用基准值冒充；
+  - 每行附权重（requested_weight%）与得分；标题带诚实声明"由排序分数倒推，与保守排序分同一口径，非新增评分"。
+- 接入 `format_match_outcome`：候选头部行（"契合度 XX 分；保守排序分…"）之后输出；breakdown 缺失/为空 → 返回 None 省略该块（旧数据与既有测试零破坏）。
+- 六目标中文标签：topic_fit→方向匹配、research_mode_fit→研究方式、mentorship_fit→指导方式、career_fit→生涯去向、innovation_fit→创新偏好、opportunity_fit→招募机会；未知目标回退原始键不崩溃。
+
+#### 11.11.3 迁移与验证
+
+- 后端全量：**645 passed / 5 failed / 2 skipped / 2 errors**（新增 7 用例全绿：雷达线图 1 + 构成分解单测 4 + 黑盒 2；失败集与 v3.1.0 基线逐项一致，均为 Windows 环境性）。
+- 雷达线图：SVG `fill="none"` 计数 7（网格5+数据1+图例1）、无 `fill-opacity`、顶点 `<circle>` 4 个；文本版满值多边形边缘 48 格 < 上界 80（内部填充会 >120）；reportlab 数据多边形 `fillColor is None`。
+- 构成分解：拉高/拉低/中位/未计入四类行、阈值边界（±3 含）、确定性、缺失 breakdown → None、未知目标回退；黑盒验证对话端口输出构成块与无 breakdown 时的诚实省略。
+- 前端：`npm run type-check` 与 `npm run build` 均通过。
+
+### 11.12 v3.1.6：对话闭环 —— 匹配后候选追问 + 探索结果回填画像
+
+> 背景：把已有特色模块（雷达图 / 契合度构成分解 / 科研风格速测 / 方向地图 / 套磁邮件）串成**有上下文记忆、可追问、可回填的对话闭环**。三处均为"说了但不生效/没有下文"的断点：①匹配结果后说「第 N 个」会被招募序号解析抢走，到不了匹配候选；②风格速测结果写"「确认」后生效"但从未回填；③方向地图选方向后没有下文（`resolve_direction` 生产代码零调用）。全部为**确定性实现**，不新增 LLM 依赖，fail-closed 与诚实性红线不变。
+
+#### 11.12.1 匹配后「第 N 个」候选追问（上下文延续）
+
+- **序号短路**（chat.py 分发预检）：`_resolve_dialogue_intent` 前先 `_parse_ordinal(latest_user)`（复用 `recruitment_dialogue.py` 的解析，阿拉伯/中文数字）；仅当 `_ordinal_follows_match_results` 为真（会话存在、student_id 匹配、`status == CONFIRMED`；或本请求前序消息含 `_CONFIRM_SIGNALS`，覆盖"同一请求内先确认后追问"边缘）时把意图置为 `NONE`，放行到匹配候选分派——**未确认会话的招募序号照常工作**。
+- **候选分派**（recommend_ready 分支，`_RADAR_INTENTS` 之后、`_RECRUITMENT_INTENTS` 之前）：越界 → 诚实提示"当前匹配结果只有 N 位候选（第 1 到第 N）"；套磁词（`_CONSULT_EMAIL_TERMS` 命中）→ `handle_consult_email(latest_user=f"给{name}写一封套磁邮件")` 注入目标导师；雷达词 → 走 `_radar_intent_reply` 的 ordinal 定位；其它 → `"第 N 位候选详情：" + format_match_item(item, index=N, ...)`。
+- **`format_match_item` 抽取**（match_application.py）：`format_match_outcome` L304-362 的 per-item 块逐字搬出为 `format_match_item(item, *, index, profile, advisor_ratings, user_dimension_scores)`，循环调用——**内联输出逐字不变**，老测试零破坏；对比测试断言 `full.count(item_block) == 1`。
+- **雷达图按序号选候选**（`_select_radar_item`）：优先级 姓名点名 > ordinal 定位（越界/无 bundle → None）> 首位兜底；点名目标无已审核评分时诚实空态（"{name} 暂无已审核客观评分"），无名候选保持既有文案。
+- **自动引导升级**：匹配结果后追加"可以继续追问：- 「第 N 个」查看候选详情 / - 「第 N 个的雷达图」/ - 「第 N 个的套磁邮件」"；雷达可用时再追加"或直接回复「雷达图」查看首位候选"；条件含 `_parse_ordinal(latest_user) is None`（不打断追问轮）。
+
+#### 11.12.2 科研风格速测「确认」回填 research_mode
+
+- **`upsert_portrait_field`**（interview.py，对话端口专用）：无 `expected_version` 冲突检查、内部自增 `profile_version`；`research_interests` 键**合并去重**（保持既有顺序、上限 8）且原 `interest_statement` 为空时自动补"我对…方向感兴趣。"；走 `_set_state_after_profile_change`——已确认画像被改动 → 状态回落 `awaiting_confirmation`（需重新确认，与既有 patch_profile 语义一致，诚实红线不变）。
+- **风格 pending 状态机**（research_style.py，`handle_research_style` 返回类型 `str | None`）：答完 4 题**不再 clear**，保留 `{"step": 4, "answers": [...], "pending": True}`；下一轮 pending 分支：确认词（`确认/生效/确定/可以` 等）→ `classify_style(answers)["mode"]` 回填 `research_mode` + clear + "已回填研究方式：X"文案；取消词 → clear + 放弃文案；风格触发词 → 重置 step=0 重测；导航词（匹配/招募/方向地图/套磁等）→ clear + `return None` 放行到主流程；其它 → **保持 pending** + 简短 nudge——防止"匹配导师"等短词掉进未确认访谈被误当答案。
+- `_style_result_text` 末尾明示下一步："回复「确认」回填到画像；回复「取消」放弃；直接说「匹配」「招募」或「方向地图」继续。"
+
+#### 11.12.3 方向地图选方向 → 回填 research_interests + 引导
+
+- **状态化 handler**（direction_map.py，`MODE_DIRECTION_MAP = "direction_map"`，`handle_direction_map(...) -> str | None`）：首轮触发 upsert 模式 + 渲染地图；下一轮 `resolve_direction` 命中 → `upsert_portrait_field({"research_interests": [canonical]})`（内部合并去重）→ clear → "已记录研究方向：X…回复「确认画像」或「招募」"；取消词 → clear + 退出文案；未命中 → clear + `return None`（**单次拦截**：放行走访谈，保住"我研究方向是…"这类访谈自述不被吞）。
+- `resolve_direction` 补规范名全名比对（别名未命中时再与 `DIRECTION_MAP_DATA` 规范名小写比对，回复完整规范名也应命中）。
+- **治理边界不变**：只回填方向本身，不涉及教师名单（D1 红线）。
+
+#### 11.12.4 对话释放同步守卫（潜伏 bug 修复）
+
+- 对话模式消费的轮次**不持久化**到 `questionnaire_sessions`；若对话模式释放后仍用全量历史走 `sync_user_transcript`，会把"测测我 / 1 / 2"等重放进访谈。修复：`dialogue_released` 标记——意图命中对话模式即置位，dispatch 返回 None 时只同步 `[latest_user_turn]`，未释放走原全量逻辑。简历模式同暴露，一并覆盖。
+
+#### 11.12.5 迁移与验证
+
+- 后端全量：**662 passed / 5 failed / 2 skipped / 2 errors**（新增 17 用例全绿：序号候选追问 4 + 雷达按序号 1 + 套磁注入 1 + 越界诚实 1 + 风格确认/取消/重测/nudge/放行 5 + 方向回填/全名/未命中/取消 4 + 单候选对比 1 + upsert 3；失败集与 v3.1.0 基线逐项一致，均为 Windows 环境性）。
+- 序号短路仅作用于已确认会话：未确认会话的招募序号照常；回填触发重新确认是既有 patch_profile 语义，非新行为。
+- 不新增 LLM 依赖、不触碰评分门禁与 D1 治理字段（popularity/sector 仍禁止）。
+- 前端：`npm run type-check` 与 `npm run build` 均通过。
+
+### 11.13 v3.1.7：匹配后二次筛选 + 候选详情升级
+
+> 背景：补齐匹配后体验的三块短板——①**「换一批」（排除已展示）与「缩小范围」（结构化追问→重筛）**的二次筛选闭环；②每位候选的**「需要补充的知识或技能」（能力差距分析）**与**可点击官方主页链接**；③**量化契合度 + 雷达**优势继续打透（候选六维对比升级 10 格条形可视化）。全部**确定性实现**，不新增 LLM 依赖，fail-closed 与诚实性红线不变。
+
+#### 11.13.1 匹配结果二次筛选（match_refine.py，新服务）
+
+- **状态机**（照抄 research_style pending 模式）：`handle_match_refine(db, *, latest_user, session_id, student_id, structural_match=False) -> str | None`；None = 释放回主流程。状态持久化在 `dialogue_sessions.state`（mode=`match_refine`）：`{"step": null|"include"|"exclude", "excluded_advisor_ids": [...], "topic_include": [...], "topic_exclude": [...], "last_shown_advisor_ids": [...]}`。
+- **触发**（仅 recommend_ready 上下文，`chat.py` 分发预检）：`get_dialogue_mode == match_refine` 或 `_REFINE_TRIGGERS` 命中（换一批/缩小范围/再筛/还有别的/换些/别的导师…）即进 `handle_match_refine`，返回非 None 直接短路输出——不注册全局 DialogueMode，未确认会话不触发。
+- **「换一批」**：排除集 = `excluded ∪ last_shown` → `run_confirmed_match(extra_constraints=[ADVISOR_ID EXCLUDES ...])` 重跑同画像匹配，输出"已排除已展示的 N 位候选后重新匹配："；首次无已展示批次 → 诚实说明"本轮还没有已展示的候选可排除；可以先回复「缩小范围」…"。
+- **「缩小范围」**：两问状态机——Q1「你希望候选集中在哪些方向或技术上」（答 → `RESEARCH_TOPIC CONTAINS`，经 `parse_topic_answer` 分隔与去停用词）；Q2「有没有想排除的方向」（答「无」跳过 → 否则 `RESEARCH_TOPIC EXCLUDES`）→ `_run_refined` 按方向过滤重跑。答题期收到结构指令（`_refine_structural_match`：第 N 个/雷达图/招募/报告/确认交付词）→ 清 step + 释放回主流程；「取消」→ 保留已生效过滤态；`_REFINE_RESET`（恢复/重置/看全部）**优先于**取消判定 → 清全部过滤 + 重跑全量。
+- **归零**：排除/过滤后无候选 → 输出 `zero_result_reason` 原文（诚实空态）+ 提示"可以回复「恢复完整结果」…或「缩小范围」…"，绝不编造。
+- **一致性保证**：每次渲染后 `persist_shown_batch` 记录 `last_shown_advisor_ids`（创建 row 或保留 filters）；基础重跑（第 N 个/雷达图/套磁）也会应用 `persisted_refine_constraints`（excluded + topics），因此**换批后所有追问与二次筛选批次逐字一致**。
+- **`run_confirmed_match` 扩展**：新增可选参 `extra_constraints: list[dict | HardConstraint] | None`，合并进画像 `hard_constraints` 再 `match_mentors`——matching 层 `ADVISOR_ID EXCLUDES` / `RESEARCH_TOPIC CONTAINS/EXCLUDES` 原生支持（`lexical_concept_similarity` 求值），零改动复用。
+
+#### 11.13.2 候选详情升级（match_application.py）
+
+- **能力差距分析 `format_gap_analysis(item, profile) -> str | None`**：
+  - `direction_map.py` 新增 `DIRECTION_KNOWLEDGE`：16 规范方向 → 3~5 个公开学科入门知识点（Transformer/RLHF、贝叶斯推断、ROS、SQL 优化器…）；**只列学科常识，绝不出现教师名单/教师-方向绑定**（D1 红线）。
+  - 候选方向取 `research_keywords`（官方目录方向名），回退 `_research_direction(item)`；经 `resolve_direction` 规范名命中，回退双向子串匹配。
+  - 输出分支：同方向 → "建议把以下入门知识作为学习清单"；跨方向 → "建议优先补充"（引用画像其它方向）；无画像证据 → "暂无画像证据…可作参考"；方向无映射 → `None`（诚实省略该块）。
+- **官方主页链接**：基本信息区追加 `官方主页：{url}`（item 有值才输出，目录条目无此字段诚实省略）。
+- **六维对比条形**：`_bar(value)` = `"█"*filled + "░"*(10-filled)`，`filled = round(value/100*10)` 钳制 [0,10]；加在数值**之后**（"你的需求 80（需求映射） ████████░░"），保留既有测试子串断言；无数据不画条（绝不画 0 冒充）。
+
+#### 11.13.3 迁移与验证
+
+- 后端全量：**692 passed / 5 failed / 2 skipped / 2 errors**（新增 30 用例全绿：差距/主页/条形 9 + 二次筛选单测 16 + 黑盒 5；失败集与 v3.1.0 基线逐项一致，均为 Windows 环境性）。
+- 二次筛选单测：换一批排除集 = 已展示批次且跨轮累积；缩小范围两问（聚焦 CONTAINS / 排除 EXCLUDES / 答「无」跳过）；取消保留过滤态；恢复清空重跑全量；归零诚实文案；答题期结构指令释放；`persist_shown_batch` 不抢占其它对话模式；`extra_constraints` 合并到画像硬约束。
+- 黑盒：换一批输出新批次且旧候选不再出现、含主页链接与差距分析；缩小范围两问直通过滤结果；换批后「第 1 个」与批次一致；恢复完整结果全量回归；首次换一批诚实提示。
+- 不新增 LLM 依赖、不触碰评分门禁（≥8 样本）与 D1 治理字段；「换一批/缩小范围」仅作用于已确认会话。
+- 前端：`npm run type-check` 与 `npm run build` 均通过（本轮前端零改动）。
+
+---
+
+## 12. v4.0.0 智能体升级（任务书四任务全量交付）
+
+> 依据《Tsing-RADAR 智能体升级执行提示词_20260820》全量落地。环境事实：docker daemon
+> 未运行、无 GLM key、未安装 chroma/langchain/ultra_memory/opik → 按任务书「可替换
+> 等价物」条款全部实现为**确定性等价物**，不新增第三方运行时依赖；等价物替换逐条对照见
+> `docs/偏差修正记录表_v4.md`。交付目标直击用户痛点：**无关词语不再导致"无法处理"**。
+
+### 12.1 任务1 A-1：导师评价综述级词法知识库（RAG 确定性等价物）
+
+- **构建**（`scripts/build_mentor_knowledge.py`）：解析《清华导师评价综述_20260816.md》章节 →
+  提取 姓名/院系/职称/主页/招生/四维聚合/判档/倾向/综述摘要；**剔除全部引文块**（`> 代表性` 行）；
+  输出 `backend/data/knowledge/mentors.knowledge.json` + `knowledge_manifest.json`
+  （来源 + SHA256 + 口径声明），构建时自检 manifest 一致。
+- **查询**（`mentor_knowledge.py`）：`query_mentor_knowledge(name)` 姓名精确/子串匹配（确定性，
+  无向量库）；`render_mentor_knowledge` 输出知识块，头部固定声明
+  「公开存档匿名主观评价聚合，仅作参考，不构成对导师能力的客观评判」；未收录 →
+  「该信息暂未收录：暂无「{name}」的公开评价综述，建议通过官方邮箱联系导师确认。」
+- **意图路由**（`dialogue_intent.py`）：`MENTOR_KNOWLEDGE` 意图——前缀（请问/想了解/了解下/
+  帮我看看/查一下/把/说说/听说…）× 姓名（百家姓门控 + 2~4 字 + 老师/教授/导师 后缀）× 咨询词
+  （怎么样/评价/邮箱/电话/主页/缺点/传闻/研究什么…）；防误伤：无姓名或非咨询句 → None 放行。
+- **治理边界**：知识库只作咨询参考，**绝不混入雷达/匹配客观管线**；popularity/sector 仍禁止；
+  回复带声明；无引文、可溯源（SHA256）。
+
+### 12.2 任务1 A-2：长期记忆（Ultra-Memory 确定性等价物）
+
+- **表**：`user_memories`（见 §5.4 表 19；迁移 0014）。
+- **写入门禁**：`memory_service.remember_confirmed_portrait`——白名单六维 + 硬性条件 +
+  确认门标记，**仅确认门通过后**写入（`answer_session` 确认分支 / `confirm_profile`）；
+  幂等覆盖，重新确认即更新。
+- **召回注入**：`format_memory_summary` 生成事实片段（无框架词）→ 表达层
+  `FactPack.memory_summary` 注入（仅访谈回复；确认门/匹配结果不增强——红线不变）。
+- **隐私**：`list_memories` / `clear_memories` 供用户查看与清除。
+
+### 12.3 任务1 A-3：提示词版本化
+
+- `backend/app/services/prompts/`：`system_prompt_v1/v2.txt` / `rewrite_template_v1/v2/v3.txt` /
+  `prompt_versions.json`（版本清单；v4.1.0 升 v2，v4.2.0 rewrite_template 升 v3）。
+- `load_prompt_template(name, fallback)`：版本清单一致才加载文件；文件缺失/损坏/清单不一致/
+  空文本 → 回退代码内嵌 v1 兜底（fail-closed，与 v3.1.x 逐字一致）。
+- 版本对比记录写入 `docs/评估与提示词优化记录_v4.md`。
+
+### 12.4 任务1 A-4：离线评估闭环（Opik 确定性等价物）
+
+- `scripts/eval_offline.py` + `eval_cases_v4.json`：**60 例对抗样本**——访谈各阶段/确认门/
+  匹配后/招募/雷达/记忆/**红线对抗**（诱导编造导师信息、篡改 tolerance、他人事务索取、编造名单）；
+  组分布：redline 17 / offtopic 10 / interview 7 / confirmation 4 / matched 5 / recruitment 4 /
+  mentor_knowledge 6 / memory 2 / degradation 5。
+- **会话驱动**（与网关协议一致）：每次请求携带**完整累积历史**（`sync_user_transcript`
+  `user_messages[persisted_user_turns:]` 语义）；身份预热直连 DB 建 `ExternalIdentity` 映射
+  （与 `resolve_qxd_principal` 同一 fingerprint），不 HTTP probe（避免污染多轮会话）。
+- **确定性指标**：事实保真（关键数字逐字）、红线违规率（=0，否则非零退出）、降级正确率、
+  跑题处理正确率；报告 `docs/评估与提示词优化记录_v4.md`。
+- docker daemon 不可用 → Opik 平台不落地（替换理由记录于偏差修正记录表）。
+
+### 12.5 任务1 阶段B：确定性工具注册表
+
+- `tools_registry.py`：3 只读工具 `query_mentor_knowledge` / `get_recruitments` /
+  `recall_memory`；`TOOL_SCHEMAS` 与 OpenAI function-calling 对齐（type=function /
+  name / description / parameters JSON Schema）。
+- **本期服务端确定性路由**：chat.py 状态机决定调用与参数——MENTOR_KNOWLEDGE 意图 →
+  `query_mentor_knowledge`（姓名由意图层提取）；RECRUITMENT 匹配态分支 → `get_recruitments`
+  （复用已确认画像相关度排序）；记忆注入同源 `format_memory_summary`。**LLM 不自主调用**
+  （匹配/确认门红线逐字保留）。
+- **fail-closed**：未知工具/未知参数/缺必填/类型错/越界/执行异常 → 确定性错误文本，
+  不抛异常、不吞消息、不编造。
+
+### 12.6 越界话题优雅处理（用户痛点直击）
+
+- `off_topic.py` 确定性词法守卫，三处接入：
+  1. **访谈防吸收**（`interview.answer_session`）：研究兴趣无方向/声明词且非问候/不确定 →
+     不写画像、温和重问；选择题无维度词且非不确定 → 重问（不再推进 undecided）；硬条件无锚词
+     → 重问。
+  2. **他人事务/篡改/编造**（`_is_other_person_request` + `_FABRICATION_WORDS`）：
+     姓氏锚定正则 `[百家姓][\u4e00-\u9fa5]{0,3}?(老师|教授|导师|同学)` × 索取信息词
+     （邮箱/电话/主页/招生/名额/传闻/缺点/改成/改为…）→ 跑题重问；夹带方向词也不放行；
+     「把我的研究兴趣改成机器学习」等本人自述不误伤。
+  3. **匹配态兜底**（`chat.py`）：`_POST_CONFIRM_OUTCOME_STATUSES`（matched / no_match /
+     no_published_data）统一覆盖——跑题 → 能力引导（不再静默重跑/复读空态）；致谢 →
+     优雅回应。
+- **导师信息咨询路由**：邮箱/电话/主页/缺点/传闻/研究内容等咨询词 → 知识库块（§12.1）。
+
+### 12.7 任务2 雷达文本化（承接 v3.1.3）
+
+- `render_radar_bars` 独立条形渲染 + 形态选择配置；QXD 默认文本版（内联条形），附件版 SVG/PDF
+  同数据源；客观与主观严格分离（红线）。
+
+### 12.8 任务3 招募增强
+
+- 双源实时查询（静态目录 + 数据库投稿，verified/published/未下架/未过期）已交付；
+- **FactPack 招募摘要**：`InterviewFactPack.recruitment_summary` + `_validate_expression`
+  **逐字校验**（截止/名额/申请方式等 token 必须逐字出现，守住「不增强」红线）；
+- **确认后一次性主动触达**：确认门通过且存在画像相关开放招募（relevance>0）→ 追加一行
+  「顺带一提：X 组正在招科研助理（截止…），回复「招募信息」可查看」；仅确认消息触发一次，
+  无则静默。
+
+### 12.9 迁移与验证
+
+- 后端全量：**787 passed / 4 failed / 2 skipped / 2 errors**（新增 40 用例全绿：越界守卫 +
+  知识库 + 记忆 + 工具注册表 + prompts + 招募逐字校验/主动触达；剩余 4 failed + 2 errors 为
+  Windows 环境性基线——字体路径/归档字节确定性/symlink 特权/POSIX 权限，见 README 已知问题；
+  本版本顺带修复陈旧迁移链断言，基线失败由 5 项降为 4 项）。
+- 离线评估：**60/60 通过、红线违规 0/17、事实保真 5/5**。
+- 黑盒：导师咨询命中知识库块（判档/声明/主页）；张三丰未收录诚实拒答；他人事务温和重问；
+  匹配态跑题能力引导；致谢优雅回应。
+- 前端：`npm run type-check` + `npm run build` 通过（本轮前端零改动）。
+- 文档：`CHANGELOG.md`、`README.md`、`docs/缺陷修复清单_v4.md`、`docs/偏差修正记录表_v4.md`、
+  `docs/评估与提示词优化记录_v4.md`。
+
+### 12.10 表达层多轮自然度增强（v4.2.0）
+
+> 设计张力：AI 对话自然度 vs 确定性状态机主干 + LLM 仅表达层重写 + 诚实性红线
+> （确认门/匹配结果不增强）。解法：**不扩大 LLM 权限，只扩大其可见的确定性事实**——
+> 把表达层输入从「最后一句用户输入」升级为「多轮只读投影」，并对输出加跨轮闸门。
+
+- **FactPack 多轮上下文四字段**（`chat_expression.build_interview_fact_pack` 内部推导，
+  签名向后兼容）：
+  - `recent_dialogue`：最近 6 轮对话底稿（末位本轮话术跳过；单轮 120 字/总量 800 字截断）；
+  - `previous_reply`：上一轮**实际展示话术**——`chat.py` 每轮把 `visible` 存入会话级 KV
+    `interview_last_expression`（`dialogue_state_store.get/set_session_value`，与一次性
+    标记同约定），下一轮读出注入；无值回退状态机底稿推导；
+  - `turn_phase`（开场/中段/收尾）与 `user_style_hint`（≤8 字简短 / ≤39 字常规 / 详细）。
+- **跨轮防重复闸门**（`_repetition_violation`）：开头 10 字（去空白）与上一轮相同，或与
+  上一轮共享 ≥14 字连续片段且不属本轮合法内容（题面/选项/招募/记忆/用户原话豁免）
+  → 拒绝降级固定模板；「承接方式换着来」从提示词约束升级为确定性闸门。
+- **`rewrite_template` v3**：v2 六条自然度要求 + v1 事实红线全保留，新增 G（多轮连贯
+  呼应、底稿不照搬、开场与上一轮明显不同）/ H（篇幅贴合用户长度与访谈阶段）。
+- **机器腔词表扩充**：很高兴为您/为您服务/还有什么可以帮/希望以上/祝您生活愉快。
+- **修复**：`get_dialogue_mode` 将 KV 占位行 mode="none" 归一化为 None——此前该值会
+  把后续轮次意图分类短路成 NONE（招募/导师咨询等对话模式永不路由；潜在缺陷被每轮
+  KV 写入激活暴露），附回归护栏测试。
+- **红线不变**：确认门（needs_confirmation）与匹配结果（recommend_ready）不进表达层；
+  题面/选项/招募/记忆逐字校验照常；无凭据 `disabled` / 失败 `unavailable` 完全降级。
+- **验证**：后端全量 **776 passed**（新增 18 用例：多轮投影/防重复闸门/客服腔/v3 模板
+  合同与渲染兼容/契约跨轮接线/意图劫持护栏）；离线评估 **60/60、红线 0/17、事实保真
+  5/5**；环境性基线不变（docker 依赖 2 项）。

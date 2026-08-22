@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制源码与数据
 COPY app/ ./app/
 # 导师治理数据由生产部署以只读文件显式挂载；镜像仅提供空目录，
-# 不内置、恢复或自动生成任何导师记录。
+# 不内置、恢复或自动生成任何导师记录。综述级知识库同属数据目录，
+# 由生产 Compose 以只读目录挂载到 /app/data/knowledge。
 RUN mkdir -p /app/data
 COPY scripts/ ./scripts/
 COPY alembic/ ./alembic/
