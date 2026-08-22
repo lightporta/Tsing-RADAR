@@ -19,9 +19,12 @@ _VERSIONS_PATH = _PROMPTS_DIR / "prompt_versions.json"
 # v4.1.0：升级 v2（自然度增强：人设 + 机器腔禁令 + 承接方式轮换）。
 # v4.2.0：rewrite_template 升级 v3（多轮自然度：最近对话/上一轮话术/
 # 阶段/风格四段确定性上下文 + 防重复承接要求）。
+# v4.3.0：双模板升级 v4（RADAR娘人设 + 三明治法则 + 四类钩子 +
+# 纯文本输出禁 Markdown；任务书原定 v3 版本号已被 v4.2.0 多轮模板
+# 占用，顺延为 v4）。
 _CURRENT_VERSIONS: dict[str, str] = {
-    "system_prompt": "v2",
-    "rewrite_template": "v3",
+    "system_prompt": "v4",
+    "rewrite_template": "v4",
 }
 
 

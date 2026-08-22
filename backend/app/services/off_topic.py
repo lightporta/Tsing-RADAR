@@ -342,3 +342,89 @@ def detect_off_topic_matched(text: str) -> bool:
     if contains_any(cleaned.lower(), _matched_capability_words()):
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# v4.3.0 轻闲聊（三明治容忍）与敏感话题（明确拒绝）
+# ---------------------------------------------------------------------------
+
+# 轻闲聊词表：非科研、非硬红线的日常话题。与问候（_GREETING_WORDS）、
+# 致谢（_THANKS_WORDS）、他人事务（_OTHER_PERSON_INFO_WORDS）、编造
+# （_FABRICATION_WORDS）严格互斥——命中那些类别的消息绝不进闲聊分支。
+_CHITCHAT_WORDS: tuple[str, ...] = (
+    "天气", "下雨", "下雪", "晴天", "刮风", "降温", "笑话", "段子", "无聊",
+    "心情", "开心", "难过", "烦", "累", "困", " emo", "emo了", "游戏",
+    "打游戏", "上分", "排位", "吃饭", "吃什么", "早饭", "午饭", "晚饭",
+    "外卖", "睡觉", "熬夜", "失眠", "追剧", "电视剧", "综艺", "看电影",
+    "音乐", "听歌", "唱歌", "逛街", "购物", "快递", "猫", "狗", "撸猫",
+    "周末", "放假", "假期", "放假了", "旅游", "旅行", "运动", "健身",
+    "打球", "跑步",
+)
+
+
+def is_light_chitchat(text: str) -> bool:
+    """轻闲聊判定（v4.3.0 三明治容忍的前置条件）。
+
+    确定性词法：命中闲聊词表，且不属问候/致谢/不确定/他人事务/编造，
+    也不含任何科研/方向/声明锚词（"我对机器学习感兴趣"不是闲聊）。
+    """
+    cleaned = text.strip()
+    if not cleaned or len(cleaned) < 2:
+        return False
+    lowered = cleaned.lower()
+    if is_greeting(cleaned) or is_uncertain(cleaned) or is_acknowledgment(cleaned):
+        return False
+    if _is_other_person_request(cleaned):
+        return False
+    if contains_any(lowered, _FABRICATION_WORDS):
+        return False
+    if contains_any(lowered, _direction_words() + _RESEARCH_WORDS):
+        return False
+    if contains_any(lowered, _DECLARATION_ANCHORS):
+        return False
+    return contains_any(lowered, _CHITCHAT_WORDS)
+
+
+_SENSITIVE_WORDS_CACHE: tuple[str, ...] | None = None
+
+
+def sensitive_words() -> tuple[str, ...]:
+    """敏感词表（外置配置，默认空 = 不拦截任何话题）。
+
+    政治类/宗教类词表由部署方经 CHAT_SENSITIVE_WORDS（逗号分隔）或
+    CHAT_SENSITIVE_WORDS_FILE（每行一词）注入，代码不硬编码大词表
+    （与 CONTENT_SENSITIVE_WORDS 同一模式）。
+    """
+    global _SENSITIVE_WORDS_CACHE
+    if _SENSITIVE_WORDS_CACHE is None:
+        from app.core.config import settings
+
+        words: list[str] = [
+            word.strip()
+            for word in (settings.CHAT_SENSITIVE_WORDS or "").split(",")
+            if word.strip()
+        ]
+        path = settings.CHAT_SENSITIVE_WORDS_FILE
+        if path:
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    words.extend(
+                        line.strip()
+                        for line in handle
+                        if line.strip() and not line.startswith("#")
+                    )
+            except OSError:
+                pass  # 文件缺失 → 词表保持已加载部分（fail-open 到空表=不拦截）
+        _SENSITIVE_WORDS_CACHE = tuple(dict.fromkeys(words))
+    return _SENSITIVE_WORDS_CACHE
+
+
+def is_sensitive(text: str) -> bool:
+    """敏感话题判定：命中外置词表 → 明确拒绝并回主线（v4.3.0）。"""
+    cleaned = text.strip()
+    if not cleaned:
+        return False
+    words = sensitive_words()
+    if not words:
+        return False
+    return contains_any(cleaned.lower(), words)

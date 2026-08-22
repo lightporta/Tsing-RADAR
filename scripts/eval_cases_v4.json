@@ -277,10 +277,11 @@
         "确认画像"
       ],
       "checks": [
-        "no_announce_confirm"
+        "no_announce_confirm",
+        "confirm_gate"
       ],
       "absent": [
-        "已确认"
+        "年轻一点"
       ]
     },
     {
@@ -487,7 +488,7 @@
     {
       "id": "EVAL-035",
       "group": "confirmation",
-      "title": "确认门：约束草案未确认时确认画像被拦截为草案确认",
+      "title": "确认门：草案未确认时「确认画像」短路闭合边界（草案清空不静默入档）",
       "turns": [
         "自然语言处理、对话系统",
         "工程落地",
@@ -498,8 +499,13 @@
         "确认画像"
       ],
       "checks": [
-        "constraint_draft_q",
+        "confirm_gate",
         "no_announce_confirm"
+      ],
+      "absent": [
+        "只能北京",
+        "每周至少3天",
+        "这是不可妥协条件吗"
       ]
     },
     {

@@ -134,6 +134,10 @@ class Settings(BaseSettings):
     # 敏感词表外置：逗号分隔内联词表 + 外部文件（每行一词），代码不硬编码词表
     CONTENT_SENSITIVE_WORDS: str = ""
     CONTENT_SENSITIVE_WORDS_FILE: Optional[str] = None
+    # 对话敏感话题词表（v4.3.0）：政治/宗教等对话红线话题，命中即明确拒绝
+    # 并回主线；默认空 = 不拦截任何话题（部署方按需注入）
+    CHAT_SENSITIVE_WORDS: str = ""
+    CHAT_SENSITIVE_WORDS_FILE: Optional[str] = None
 
     # —— CORS ——
     CORS_ORIGINS: str = (

@@ -306,6 +306,34 @@ def _naturalness_violation(text: str, fact_pack: InterviewFactPack) -> bool:
     )
 
 
+# v4.3.0 纯文本输出闸门：QXD 渠道不渲染 Markdown，LLM 输出含加粗/
+# 标题/代码块/行首列表符号 → 拒绝降级固定模板。保守规则（行首 "- " 只在
+# 确为列表时命中），防误伤正常中文文本；标记来自事实包内容（题面本身
+# 含列表等）时不视为违规。
+_MARKDOWN_INLINE_TOKENS = ("**", "```")
+_MARKDOWN_LINE_RE = re.compile(r"^(?:#{1,6}\s|-\s)", re.MULTILINE)
+
+
+def _markdown_violation(text: str, fact_pack: InterviewFactPack) -> bool:
+    allowed = "\n".join(
+        part
+        for part in (
+            fact_pack.question_prompt,
+            "\n".join(fact_pack.options),
+            fact_pack.recruitment_summary,
+            fact_pack.memory_summary,
+            fact_pack.user_message,
+        )
+        if part
+    )
+    for token in _MARKDOWN_INLINE_TOKENS:
+        if token in text and token not in allowed:
+            return True
+    if _MARKDOWN_LINE_RE.search(text) and not _MARKDOWN_LINE_RE.search(allowed):
+        return True
+    return False
+
+
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
@@ -390,6 +418,9 @@ def _validate_expression(text: str, fact_pack: InterviewFactPack) -> bool:
     if any(token in text for token in _FORBIDDEN_TOKENS):
         return False
     if _naturalness_violation(text, fact_pack):
+        return False
+    # v4.3.0 纯文本闸门：Markdown 标记 → 拒绝降级（QXD 渠道不渲染）。
+    if _markdown_violation(text, fact_pack):
         return False
     # v4.2.0 跨轮防重复：与上一轮话术雷同（开头逐字相同 / 长片段复用）
     # → 拒绝降级，倒逼承接方式轮换（宁降级不出戏）。

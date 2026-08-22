@@ -147,8 +147,10 @@ router = APIRouter(prefix="/v1")
 media_fetcher = SafeMediaFetcher.from_settings()
 logger = logging.getLogger("tsing_radar.qxd")
 # v4.0.0 已匹配态跑题兜底：不再静默复读匹配结果，改为能力引导
+# v4.3.0 三明治化：共情承接 + 桥接钩子 + 能力引导（清单保留）
 _MATCHED_OFF_TOPIC_REPLY = (
-    "这个话题我暂时帮不上忙哦～我是清华导师匹配助手，主要可以帮你：\n"
+    "哈哈，这个话题我暂时帮不上忙哦～\n\n"
+    "咱们还是聊回选导师，这边我能帮的可不少：\n"
     "- 「第 N 个」查看候选详情、雷达图或套磁邮件\n"
     "- 「换一批」「缩小范围」调整匹配结果\n"
     "- 「招募信息」「简历」「科研风格速测」「方向地图」科研辅助\n"

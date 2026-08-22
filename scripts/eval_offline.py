@@ -82,7 +82,12 @@ def _predicates() -> dict[str, callable]:
     return {
         "non_empty": lambda c: bool(c.strip()),
         "question_advanced": lambda c: ("？" in c or "?" in c),
-        "off_topic_nudge": lambda c: "刚才这句好像和导师匹配的话题有点远" in c,
+        "off_topic_nudge": lambda c: (
+            # v4.3.0：轻闲聊走三明治 nudge、其余走统一 nudge——稳定锚
+            # 是「不写入画像」（两条 nudge 均含，防吸收语义不变）
+            "不写入画像" in c
+            or "刚才这句好像和导师匹配的话题有点远" in c
+        ),
         "matched_off_topic": lambda c: "这个话题我暂时帮不上忙哦" in c,
         "honest_unknown": lambda c: any(
             token in c

@@ -295,6 +295,49 @@ class TestNaturalnessGate:
             assert expr._validate_expression(text, pack) is False, text
 
 
+# —— v4.3.0 纯文本输出闸门：Markdown 标记 → 拒绝降级（验收①-⑥） ——
+
+
+class TestMarkdownGate:
+    def test_bold_markup_rejected(self):
+        pack = _plain_pack()
+        text = "**好的**，说说你喜欢什么？"
+        assert expr._validate_expression(text, pack) is False
+
+    def test_code_fence_rejected(self):
+        pack = _plain_pack()
+        text = "我们来聊聊：```\n喜欢什么\n```"
+        assert expr._validate_expression(text, pack) is False
+
+    def test_heading_rejected(self):
+        pack = _plain_pack()
+        text = "## 聊聊\n你喜欢什么？"
+        assert expr._validate_expression(text, pack) is False
+
+    def test_list_marker_rejected(self):
+        pack = _plain_pack()
+        text = "- 喜欢什么？"
+        assert expr._validate_expression(text, pack) is False
+
+    def test_normal_chinese_text_not_misjudged(self):
+        pack = _plain_pack()
+        # 破折号/连字符/编号正文不误伤（保守规则只命中行首 "- "）
+        for text in (
+            "这个——或者那个，你喜欢什么？",
+            "a-b 方案你选哪个？你喜欢什么？",
+            "第1个还是第2个，你喜欢什么？",
+        ):
+            assert expr._validate_expression(text, pack) is True, text
+
+    def test_marker_from_fact_pack_content_allowed(self):
+        # 题面本身含列表/加粗时，复述题面不视为违规（防误伤合法题面）
+        pack = _plain_pack(
+            question_prompt="- 说说你的兴趣\n- 或者研究方向"
+        )
+        text = "- 说说你的兴趣\n- 或者研究方向"
+        assert expr._validate_expression(text, pack) is True
+
+
 # —— v4.2.0 多轮自然度：事实包多轮上下文投影 ——
 
 

@@ -82,33 +82,49 @@ def test_empty_template_file_returns_fallback(monkeypatch, tmp_path):
 
 # —— v4.1.0 自然度增强：v2 模板合同 ——
 # —— v4.2.0 多轮自然度：rewrite_template 升级 v3 ——
+# —— v4.3.0 RADAR娘人设 + 三明治：双模板升级 v4 ——
 
 
 def test_active_versions_are_current():
-    assert _CURRENT_VERSIONS["system_prompt"] == "v2"
-    assert _CURRENT_VERSIONS["rewrite_template"] == "v3"
+    assert _CURRENT_VERSIONS["system_prompt"] == "v4"
+    assert _CURRENT_VERSIONS["rewrite_template"] == "v4"
 
 
 def test_rewrite_template_carries_naturalness_contract():
     text = _real_text("rewrite_template")
     # 六条自然度要求的关键指令齐全
     for directive in (
-        "承接方式要换着来",       # B：不每轮同一开场
-        "融进句子里",             # C：选项不编号复述
-        "禁止机器腔",             # D：客服腔/AI 自称禁令
-        "自然停在问题上",         # E：不挂"请回答"尾巴
+        "承接方式要换着来",       # C：不每轮同一开场
+        "融进句子里",             # D：选项不编号复述
+        "禁止机器腔",             # E：客服腔/AI 自称禁令
+        "自然停在问题上",         # F：不挂"请回答"尾巴
         "语气词",                 # F：松弛但不堆砌
         "像真人对话，不像模板播报",
     ):
         assert directive in text, directive
-    # v4.2.0 多轮自然度要求（G/H）
+    # v4.2.0 多轮自然度要求（G/H，v4.3.0 顺延为 H/I）
     for directive in (
         "多轮要连贯",             # G：参考最近对话自然呼应
         "不要照搬其措辞",         # G：系统底稿仅作上下文
-        "本轮开场必须与「上一轮话术」明显不同",  # B/G：防重复承接
+        "本轮开场必须与「上一轮话术」明显不同",  # C/G：防重复承接
         "篇幅贴合用户与阶段",     # H：镜像用户长度 + 阶段语气
     ):
         assert directive in text, directive
+    # v4.3.0 三明治法则与四类钩子（B）
+    for directive in (
+        "三明治法则",
+        "共情承接",
+        "回忆钩子",
+        "类比钩子",
+        "延迟钩子",
+        "反向钩子",
+        "至少选一个",
+    ):
+        assert directive in text, directive
+    # v4.3.0 上下文黏性与纯文本输出（I / 硬性要求 7）
+    assert "首句必须承接上轮内容" in text
+    assert "隐性提及一次" in text
+    assert "不使用任何 Markdown 标记" in text
     # v1 事实红线全部保留
     for redline in (
         "必须完整保留服务端题目要传达的信息",
@@ -137,14 +153,20 @@ def test_rewrite_template_carries_naturalness_contract():
         assert placeholder in text, placeholder
 
 
-def test_system_prompt_v2_keeps_state_machine_rules_with_persona():
+def test_system_prompt_v4_radar_girl_persona_keeps_control_rules():
     text = _real_text("system_prompt")
     # v1 控制规则保留（test_load_versioned_template_matches_file 也断言
     # "Tsing-RADAR" 在文本中）
     assert "服务端状态机控制" in text
     assert "不得输出控制标记" in text
     assert "不得自行宣布画像已确认或触发导师匹配" in text
-    # v2 人设与自然度基调
-    assert "学长/学姐" in text
+    # v4.3.0 RADAR娘人设要素
+    assert "RADAR娘" in text
+    assert "选师经验" in text
+    assert "避坑经验" in text
+    assert "网络语气" in text
+    assert "3~5 句" in text
+    assert "emoji" in text
+    # v2 机器腔禁令保留
     assert "客服" in text
     assert "语言模型" in text

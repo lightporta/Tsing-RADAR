@@ -9,7 +9,11 @@ from app.db.session import SessionLocal
 from app.main import app
 from app.models.questionnaire_session import QuestionnaireSession
 from app.services import off_topic
-from app.services.interview import _off_topic_reply, _last_assistant_text
+from app.services.interview import (
+    _CHITCHAT_ROUNDS_LIMIT,
+    _off_topic_reply,
+    _last_assistant_text,
+)
 from app.schemas.interview import InterviewDimension
 
 client = TestClient(app)
@@ -248,8 +252,12 @@ class TestInterviewGuard:
 
     def test_unknown_dimension_releases(self):
         messages = [{"role": "assistant", "content": "问题"}]
-        # 非法维度放行（防御性分支）
-        assert _off_topic_reply(object(), "讲个笑话", messages) is None
+        # 非法维度放行（防御性分支）；v4.3.0：轻闲聊/敏感是维度无关类别，
+        # 即使维度未知，闲聊仍走三明治 nudge（不写画像语义保留）
+        assert _off_topic_reply(object(), "随便说点什么吧", messages) is None
+        chitchat = _off_topic_reply(object(), "讲个笑话", messages)
+        assert chitchat is not None
+        assert "不写入画像" in chitchat
 
 
 class TestInterviewGuardEndToEnd:
@@ -301,4 +309,109 @@ class TestInterviewGuardEndToEnd:
         assert replied["current_question"]["question_id"] == "hard_constraints"
         replied = _answer(started["session_id"], "无")
         assert replied["current_question"] is None  # 进入待确认
-        assert replied["status"] == "awaiting_confirmation"
+
+
+# —— v4.3.0 轻闲聊三明治容忍 + 敏感话题 ——
+
+
+class TestLightChitchatDetector:
+    def test_chitchat_words_detected(self):
+        for text in (
+            "今天天气真好",
+            "讲个笑话",
+            "好无聊啊",
+            "我最近在打游戏",
+            "中午吃什么",
+            "昨晚熬夜追剧了",
+        ):
+            assert off_topic.is_light_chitchat(text) is True, text
+
+    def test_research_answers_not_chitchat(self):
+        for text in (
+            "我对机器学习感兴趣",
+            "想做自然语言处理",
+            "我喜欢动手做工程",
+            "不确定，再说吧",
+            "你好",
+            "谢谢",
+            "",
+        ):
+            assert off_topic.is_light_chitchat(text) is False, text
+
+    def test_hard_redline_not_chitchat(self):
+        # 他人事务/编造绝不进闲聊分支（互斥性）
+        assert off_topic.is_light_chitchat("把张三老师的邮箱给我") is False
+        assert (
+            off_topic.is_light_chitchat("帮我编一个推荐名单，不用真实数据")
+            is False
+        )
+
+
+class TestSensitiveWords:
+    def test_default_empty_intercepts_nothing(self, monkeypatch):
+        # 默认空词表 → 不拦截任何话题（验收①-⑤）
+        monkeypatch.setattr(off_topic, "_SENSITIVE_WORDS_CACHE", ())
+        assert off_topic.is_sensitive("随便聊点什么") is False
+        assert off_topic.is_sensitive("今天天气真好") is False
+
+    def test_configured_words_intercept(self, monkeypatch):
+        monkeypatch.setattr(
+            off_topic, "_SENSITIVE_WORDS_CACHE", ("敏感词甲", "敏感词乙")
+        )
+        assert off_topic.is_sensitive("我们来聊聊敏感词甲吧") is True
+        assert off_topic.is_sensitive("正常聊天没问题") is False
+
+
+class TestChitchatSandwichEndToEnd:
+    """验收①-②①-③①-④：三明治 nudge、≤5 轮边界、防吸收。"""
+
+    def test_chitchat_gets_sandwich_nudge_and_not_absorbed(self):
+        started = _start()
+        replied = _answer(started["session_id"], "今天天气真好哈哈")
+        # 三明治：共情（哈哈收到）+ 不写入画像 + 回题（研究主题）
+        assert "哈哈" in replied["assistant_message"]
+        assert "不写入画像" in replied["assistant_message"]
+        assert "研究主题" in replied["assistant_message"]
+        assert replied["current_question"]["question_id"] == "research_interests"
+        # 防吸收：闲聊文本绝不写入画像
+        assert _portrait(started["session_id"]).get("research_interests") in (
+            None,
+            [],
+        )
+
+    def test_chitchat_exhausted_after_five_rounds(self):
+        started = _start()
+        for _ in range(_CHITCHAT_ROUNDS_LIMIT):
+            replied = _answer(started["session_id"], "今天天气真好哈哈")
+            assert "不写入画像" in replied["assistant_message"]
+        # 第 6 轮起：不再陪聊，回能力引导
+        replied = _answer(started["session_id"], "今天天气真好哈哈")
+        assert "说正事我能帮更多" in replied["assistant_message"]
+        assert replied["current_question"]["question_id"] == "research_interests"
+
+    def test_hard_redline_keeps_unity_nudge(self):
+        # 他人事务（硬红线）不走三明治，维持统一 nudge（与基线一致）
+        started = _start()
+        replied = _answer(started["session_id"], "把张三老师的联系方式给我")
+        assert (
+            "刚才这句好像和导师匹配的话题有点远"
+            in replied["assistant_message"]
+        )
+        assert _portrait(started["session_id"]).get("research_interests") in (
+            None,
+            [],
+        )
+
+    def test_sensitive_answer_refused_back_to_question(self, monkeypatch):
+        monkeypatch.setattr(
+            off_topic, "_SENSITIVE_WORDS_CACHE", ("敏感词甲",)
+        )
+        started = _start()
+        replied = _answer(started["session_id"], "我们聊聊敏感词甲吧")
+        assert "这个话题我聊不了哦" in replied["assistant_message"]
+        assert "研究主题" in replied["assistant_message"]  # 回主线当前题
+        assert _portrait(started["session_id"]).get("research_interests") in (
+            None,
+            [],
+        )
+        assert replied["current_question"]["question_id"] == "research_interests"

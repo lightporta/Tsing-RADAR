@@ -934,6 +934,27 @@ _OFF_TOPIC_NUDGE = (
     "刚才这句好像和导师匹配的话题有点远，我担心会记错你的想法，"
     "所以先不写入画像～\n\n我们还是继续刚才的问题："
 )
+# v4.3.0 敏感话题（外置词表命中）：明确拒绝并回主线，绝不陪聊
+_SENSITIVE_REFUSAL = (
+    "这个话题我聊不了哦，我们继续说选导师的事～\n\n"
+    "回到刚才的问题："
+)
+# v4.3.0 轻闲聊三明治 nudge：共情（哈哈收到/不写入画像）→ 桥接钩子
+# （比起这个，选导师更要紧）→ 回题（接着聊 + 当前题）。
+_LIGHT_CHITCHAT_NUDGE = (
+    "哈哈，收到～这句闲聊我就先不写入画像啦。\n\n"
+    "比起这个，选导师可是更要紧的事，咱们接着聊："
+)
+# v4.3.0 闲聊容忍上限：第 6 轮起不再陪聊，回能力引导
+_CHITCHAT_ROUNDS_LIMIT = 5
+_CHITCHAT_COUNT_KEY = "interview_chitchat_count"
+_CHITCHAT_EXHAUSTED_REPLY = (
+    "咱们已经闲聊好几轮啦，我是导师匹配助手，说正事我能帮更多：\n"
+    "- 回答刚才的访谈问题，继续完善你的画像\n"
+    "- 「方向地图」看看有哪些研究方向\n"
+    "- 直接说说你的研究兴趣或硬性条件\n\n"
+    "先回到刚才的问题："
+)
 _CLARIFY_STALL_NOTE = (
     "这几轮澄清没有收敛到可确认的硬性条件，我先不再追问："
     "已确认的保留，其余按“无硬性条件”处理。可随时在画像卡里补充或修改。\n\n"
@@ -961,12 +982,28 @@ def _off_topic_reply(
     current_dimension: InterviewDimension,
     answer: str,
     messages: list[dict[str, str]],
+    *,
+    db=None,
+    session_id: str | None = None,
+    student_id: str | None = None,
 ) -> str | None:
     """跑题检测（v4.0.0）：命中返回温和重问文案，未命中返回 None 放行。
 
+    v4.3.0：敏感话题（外置词表）→ 明确拒绝回主线；轻闲聊 → 三明治
+    nudge（共情 + 钩子 + 回题），会话级 ≤5 轮，第 6 轮起回能力引导；
+    其余硬红线类别（他人事务/篡改/编造/纯跑题）维持 v4.0.0 统一 nudge。
     只在"当前题"上下文生效；已确认/待确认状态（current_question_id 为空）
     不会走到这里，自由文本修正照旧。
     """
+    last_question = _last_assistant_text(messages) or ""
+    if off_topic.is_sensitive(answer):
+        return f"{_SENSITIVE_REFUSAL}{last_question}"
+    if off_topic.is_light_chitchat(answer):
+        count = _read_chitchat_count(db, session_id, student_id)
+        if count >= _CHITCHAT_ROUNDS_LIMIT:
+            return f"{_CHITCHAT_EXHAUSTED_REPLY}{last_question}"
+        _write_chitchat_count(db, session_id, student_id, count + 1)
+        return f"{_LIGHT_CHITCHAT_NUDGE}{last_question}"
     if current_dimension == InterviewDimension.RESEARCH_INTERESTS:
         if not off_topic.detect_off_topic_interests(answer):
             return None
@@ -995,8 +1032,42 @@ def _off_topic_reply(
             return None
     else:
         return None
-    last_question = _last_assistant_text(messages) or ""
     return f"{_OFF_TOPIC_NUDGE}{last_question}"
+
+
+def _read_chitchat_count(db, session_id: str | None, student_id: str | None) -> int:
+    """会话级闲聊计数读取（dialogue_sessions KV，无库访问时视为 0）。"""
+    if db is None or not session_id or not student_id:
+        return 0
+    from app.services.dialogue_state_store import get_session_value
+
+    raw = get_session_value(
+        db,
+        session_id=session_id,
+        student_id=student_id,
+        key=_CHITCHAT_COUNT_KEY,
+    )
+    try:
+        return max(0, int(raw)) if raw else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _write_chitchat_count(
+    db, session_id: str | None, student_id: str | None, value: int
+) -> None:
+    """会话级闲聊计数写入（best-effort；无库访问时跳过，仅影响计数）。"""
+    if db is None or not session_id or not student_id:
+        return
+    from app.services.dialogue_state_store import set_session_value
+
+    set_session_value(
+        db,
+        session_id=session_id,
+        student_id=student_id,
+        key=_CHITCHAT_COUNT_KEY,
+        value=str(value),
+    )
 
 
 def answer_session(
@@ -1104,8 +1175,14 @@ def answer_session(
     )
     if not handled_constraint_followup and current_dimension is not None:
         # v4.0.0 防吸收守卫：跑题文本温和重问，不写入画像
+        # v4.3.0：传入会话键供闲聊计数（三明治容忍 ≤5 轮）
         off_topic_reply = _off_topic_reply(
-            current_dimension, cleaned_answer, messages
+            current_dimension,
+            cleaned_answer,
+            messages,
+            db=db,
+            session_id=session_id,
+            student_id=student_id,
         )
         if off_topic_reply is not None:
             messages.extend(
