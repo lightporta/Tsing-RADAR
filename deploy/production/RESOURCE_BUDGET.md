@@ -69,6 +69,16 @@ page-cache backed, mounted via `KNOWLEDGE_DATA_DIR`); `user_memories` and
 `dialogue_sessions` are tables inside the existing PostgreSQL limit; the
 tools registry, versioned prompt templates and expression gates execute
 in-process inside the backend limit; the 60-case offline evaluation runs on
-a developer machine, never on this host. If a later batch introduces a vector
-index or a scheduled rebuild job, it must extend this contract with a new
-row and a recalculated combination matrix before deployment.
+a developer machine, never on this host.
+
+v4.3.0 adds the optional vector recall file
+(`backend/data/knowledge/mentors.knowledge.vectors.json`, same read-only
+knowledge mount). It changes no service or limit: it is one JSON read at
+backend startup (page-cache backed; roughly 15 MiB at the 340-mentor scale),
+and the pure-Python cosine pass over 339 vectors runs in-process only on a
+lexical miss, inside the existing backend CPU/memory limits. The file is
+built manually with a GLM key on a developer machine
+(`python scripts/build_mentor_knowledge.py --rebuild-vectors`) and is never
+produced on this host; when absent the recall path degrades to the lexical
+baseline with identical behavior. Rebuilding the index is a human-triggered
+batch, never a scheduled host job.

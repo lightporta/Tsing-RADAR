@@ -14,12 +14,17 @@
 
 用法：
     python scripts/build_mentor_knowledge.py [--source 清华导师评价综述_20260816.md]
-默认按「仓库上一级目录」（AIProject/，与综述源文件同目录）寻找源文件。
+    python scripts/build_mentor_knowledge.py --rebuild-vectors
+默认按「仓库上一级目录」（AIProject/，与综述源文件同目录）寻找源文件；
+--rebuild-vectors 从既有知识本体构建向量索引（人工触发，月度重建），
+需 GLM 凭据（GLM_API_KEY 或 LLM_API_KEY_FILE）——无 key / 嵌入失败 /
+维度不一致均诚实退出，绝不产出半成品或无语义的 hash 兜底向量。
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import re
@@ -32,6 +37,7 @@ DEFAULT_SOURCE = REPO_ROOT.parent / "清华导师评价综述_20260816.md"
 OUT_DIR = REPO_ROOT / "backend" / "data" / "knowledge"
 KNOWLEDGE_OUT = OUT_DIR / "mentors.knowledge.json"
 MANIFEST_OUT = OUT_DIR / "knowledge_manifest.json"
+VECTORS_OUT = OUT_DIR / "mentors.knowledge.vectors.json"
 
 _HEADER_RE = re.compile(r"^### (\d+)\.\s*(.+?)[|｜](\d+) 条评价\s*$")
 _NAME_RE = re.compile(r"^(?P<name>[^（(]+)[（(](?P<inner>.*)[)）]$")
@@ -271,13 +277,126 @@ def build(source: Path) -> None:
     print(f"   → {MANIFEST_OUT.relative_to(REPO_ROOT)}")
 
 
+def _block_text(mentor: dict) -> str:
+    """导师块的嵌入文本单元（确定性）：姓名（院系）：综述摘要。"""
+    name = str(mentor.get("name") or "").strip()
+    dept = str(mentor.get("department_header") or "").strip()
+    summary = str(mentor.get("summary") or "").strip()
+    return f"{name}（{dept}）：{summary}"
+
+
+def build_vectors() -> None:
+    """从既有知识本体构建向量索引（--rebuild-vectors，人工触发）。
+
+    诚实退出条件（均不写任何文件）：无 GLM 凭据 / 知识本体缺失 /
+    manifest 缺失 / 任一导师嵌入失败 / 嵌入维度不一致。
+    """
+    if str(REPO_ROOT / "backend") not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT / "backend"))
+    from app.core.config import settings
+    from app.services.llm import embed_text_strict
+
+    if not any(
+        provider == "glm" for provider, _ in settings.llm_credentials
+    ):
+        sys.exit(
+            "未配置 GLM 凭据（GLM_API_KEY / LLM_API_KEY_FILE）：向量索引"
+            "需要真实 embedding，拒绝生成无语义的 hash 兜底向量。"
+        )
+    if not KNOWLEDGE_OUT.exists():
+        sys.exit(f"知识本体不存在，先运行基础构建：{KNOWLEDGE_OUT}")
+    if not MANIFEST_OUT.exists():
+        sys.exit(f"manifest 不存在，先运行基础构建：{MANIFEST_OUT}")
+
+    payload = json.loads(KNOWLEDGE_OUT.read_text(encoding="utf-8"))
+    mentors = payload.get("mentors") or []
+    # 与服务端 _read_index 同一去重口径：首个同名优先（块 id 对齐词法索引）
+    blocks: dict[str, str] = {}
+    for mentor in mentors:
+        name = str(mentor.get("name") or "").strip()
+        if name and name not in blocks:
+            blocks[name] = _block_text(mentor)
+    if not blocks:
+        sys.exit("知识本体为空，无可嵌入块")
+
+    async def _embed_all() -> dict[str, list[float] | None]:
+        results: dict[str, list[float] | None] = {}
+        for name, text in blocks.items():
+            results[name] = await embed_text_strict(text)
+        return results
+
+    print(f"嵌入 {len(blocks)} 个导师块（{settings.GLM_EMBED_MODEL}）…")
+    embedded = asyncio.run(_embed_all())
+
+    dim: int | None = None
+    vectors: dict[str, list[float]] = {}
+    for name, vector in embedded.items():
+        if not vector:
+            sys.exit(f"嵌入失败（{name}）：诚实退出，不写半成品索引")
+        if dim is None:
+            dim = len(vector)
+        elif len(vector) != dim:
+            sys.exit(
+                f"嵌入维度不一致（{name}：{len(vector)} != {dim}）：诚实退出"
+            )
+        vectors[name] = vector
+
+    vectors_payload = {
+        "schema_version": "1.0",
+        "notice": (
+            "向量索引仅用于词法未命中后的语义补充召回（阈值门控）；"
+            "只作咨询参考，绝不混入雷达/匹配客观管线。"
+        ),
+        "model": settings.GLM_EMBED_MODEL,
+        "dim": dim,
+        "count": len(vectors),
+        "knowledge_sha256": _sha256(KNOWLEDGE_OUT),
+        "generated_at": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        ),
+        "vectors": vectors,
+    }
+    VECTORS_OUT.write_text(
+        json.dumps(vectors_payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+    manifest = json.loads(MANIFEST_OUT.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "vectors_artifact": VECTORS_OUT.name,
+            "vectors_sha256": _sha256(VECTORS_OUT),
+            "vectors_model": settings.GLM_EMBED_MODEL,
+            "vectors_dim": dim,
+            "vectors_count": len(vectors),
+            "vectors_knowledge_sha256": _sha256(KNOWLEDGE_OUT),
+        }
+    )
+    MANIFEST_OUT.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(
+        f"OK：向量索引 {len(vectors)} 块 × {dim} 维"
+        f"（model={settings.GLM_EMBED_MODEL}）"
+    )
+    print(f"   → {VECTORS_OUT.relative_to(REPO_ROOT)}")
+    print(f"   → manifest 已增补 vectors_sha256")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--source", default=str(DEFAULT_SOURCE), help="综述源文件路径"
     )
+    parser.add_argument(
+        "--rebuild-vectors",
+        action="store_true",
+        help="从既有知识本体构建向量索引（需 GLM 凭据）",
+    )
     args = parser.parse_args()
-    build(Path(args.source))
+    if args.rebuild_vectors:
+        build_vectors()
+    else:
+        build(Path(args.source))
 
 
 if __name__ == "__main__":

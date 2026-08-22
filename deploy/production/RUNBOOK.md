@@ -52,6 +52,16 @@ read-only into the backend at `/app/data/knowledge` through
 - The knowledge base is public repository content and is never treated as
   evidence data; `mentors.evidence.json` and the mentor score governance file
   remain separate explicitly managed read-only bind mounts.
+- v4.3.0 optional vector recall: `mentors.knowledge.vectors.json` in the same
+  directory enables semantic supplements after a lexical miss (threshold
+  gated, honest refusal preserved). It is built manually on a developer
+  machine with a GLM key
+  (`python scripts/build_mentor_knowledge.py --rebuild-vectors`; the script
+  exits without writing anything when the key is missing or any embedding
+  fails) and travels with the release like the knowledge JSON. A missing or
+  corrupt file degrades to the lexical baseline; the file must be rebuilt
+  whenever the knowledge JSON is rebuilt, otherwise the recorded dimension
+  or ids may drift (mismatched dimensions degrade safely to lexical).
 
 Migrations 0013 (`dialogue_sessions`) and 0014 (`user_memories`) are
 expand-only: they create new tables and change no existing columns. They run

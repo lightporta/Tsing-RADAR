@@ -134,6 +134,8 @@ from app.services.memory_service import (
     format_memory_listing,
     format_memory_summary,
 )
+from app.services import mentor_knowledge
+from app.services.mentor_knowledge_vector import vector_recall
 from app.services.tools_registry import (
     TOOL_GET_RECRUITMENTS,
     TOOL_QUERY_MENTOR_KNOWLEDGE,
@@ -530,12 +532,22 @@ async def _dispatch_dialogue_mode(
         name = extract_mentor_query_name(latest_user)
         if not name:
             return None
+        lexical_miss = mentor_knowledge.query_mentor_knowledge(name) is None
         runtime = build_tool_runtime(db=db, student_id=student_id)
         text = dispatch_tool_call(
             runtime,
             name=TOOL_QUERY_MENTOR_KNOWLEDGE,
             arguments={"name": name},
         )
+        if lexical_miss:
+            # v4.3.0 阶段三：词法未命中 → 向量语义补充（阈值门控）；
+            # 无索引/无 key/嵌入失败/全不达标 → 空列表，上方拒答文本
+            # 逐字保留（拒答门红线不变）。
+            supplements = await vector_recall(latest_user)
+            if supplements:
+                text = mentor_knowledge.render_semantic_supplement(
+                    name, supplements
+                )
         # v4.1.0 任务3 补齐：问导师时附带其实时在招信息（确定性、双源、
         # 只引用记录内原文事实）；无在招则不追加。
         brief = format_mentor_recruitment_brief(

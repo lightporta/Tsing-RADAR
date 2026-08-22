@@ -138,6 +138,12 @@ class Settings(BaseSettings):
     # 并回主线；默认空 = 不拦截任何话题（部署方按需注入）
     CHAT_SENSITIVE_WORDS: str = ""
     CHAT_SENSITIVE_WORDS_FILE: Optional[str] = None
+    # v4.3.0 阶段三：知识库向量语义补充的余弦相似度阈值——词法未命中时，
+    # 仅相似度 ≥ 阈值的导师块进入 top-K 补充；全不达标则保持诚实拒答
+    # （拒答门红线）。默认 0.60，生产可按实测分布调优。
+    KNOWLEDGE_VECTOR_MIN_SIMILARITY: float = Field(
+        default=0.60, ge=0.0, le=1.0
+    )
 
     # —— CORS ——
     CORS_ORIGINS: str = (

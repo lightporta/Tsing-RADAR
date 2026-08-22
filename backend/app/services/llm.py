@@ -163,11 +163,12 @@ async def enhance_interview_reply(
     )
 
 
-async def embed_text(text: str) -> list[float]:
-    """文本向量化。
+async def embed_text_strict(text: str) -> list[float] | None:
+    """严格 GLM 向量化：无 key / 任何失败返回 None（绝不落 hash 兜底）。
 
-    优先 GLM embedding，失败/无 key 时使用确定性的词项特征哈希。
-    A4 匹配默认不调用本函数，而使用明确标注的词法/概念召回回退。
+    v4.3.0 阶段三：hash 兜底向量无语义意义，混入向量知识索引会污染
+    余弦相似度——索引构建与混合召回只用本函数；embed_text 的兜底行为
+    保持不变（A4 匹配链路不受影响）。
     """
     glm_key = next(
         (
@@ -177,25 +178,38 @@ async def embed_text(text: str) -> list[float]:
         ),
         None,
     )
-    if glm_key:
-        try:
-            async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
-                resp = await client.post(
-                    f"{settings.GLM_BASE_URL}/embeddings",
-                    headers={
-                        "Authorization": f"Bearer {glm_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"model": settings.GLM_EMBED_MODEL, "input": text},
-                )
-                resp.raise_for_status()
-                return resp.json()["data"][0]["embedding"]
-        except Exception as exc:
-            logger.warning(
-                "llm_embedding provider=glm model=%s status=failed error_type=%s",
-                settings.GLM_EMBED_MODEL,
-                type(exc).__name__,
+    if not glm_key:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
+            resp = await client.post(
+                f"{settings.GLM_BASE_URL}/embeddings",
+                headers={
+                    "Authorization": f"Bearer {glm_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": settings.GLM_EMBED_MODEL, "input": text},
             )
+            resp.raise_for_status()
+            return resp.json()["data"][0]["embedding"]
+    except Exception as exc:
+        logger.warning(
+            "llm_embedding_strict provider=glm model=%s status=failed error_type=%s",
+            settings.GLM_EMBED_MODEL,
+            type(exc).__name__,
+        )
+        return None
+
+
+async def embed_text(text: str) -> list[float]:
+    """文本向量化。
+
+    优先 GLM embedding，失败/无 key 时使用确定性的词项特征哈希。
+    A4 匹配默认不调用本函数，而使用明确标注的词法/概念召回回退。
+    """
+    result = await embed_text_strict(text)
+    if result is not None:
+        return result
     from app.services.matching import hash_embedding
 
     return hash_embedding(text, 128)

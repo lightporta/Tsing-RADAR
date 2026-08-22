@@ -176,6 +176,22 @@ def render_mentor_not_found(name: str) -> str:
     return _NOT_FOUND_TEMPLATE.format(name=name)
 
 
+_SEMANTIC_SUPPLEMENT_HEADER = (
+    "「{name}」的公开评价综述暂未收录；按语义相近补充以下导师的综述"
+    "（匿名主观评价聚合，仅作参考）：\n\n"
+)
+
+
+def render_semantic_supplement(name: str, records: list[dict[str, Any]]) -> str:
+    """词法未命中后的向量语义补充渲染（v4.3.0 阶段三，确定性文本）。
+
+    记录仍走 render_mentor_knowledge（声明/来源口径逐字不变）；头部
+    明示"未收录 + 语义相近"口径，不冒充精确匹配。
+    """
+    blocks = "\n\n".join(render_mentor_knowledge(record) for record in records)
+    return _SEMANTIC_SUPPLEMENT_HEADER.format(name=name) + blocks
+
+
 def handle_mentor_knowledge(latest_user: str) -> tuple[str, None] | None:
     """对话模式 handler：确定性知识块，不经 LLM。
 
