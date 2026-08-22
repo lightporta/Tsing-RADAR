@@ -7,6 +7,15 @@
   `interview.confirm_profile`（Web 画像卡确认）——两者都发生在
   确认门通过之后。
 
+v4.3.0 阶段二新增「沟通阶段」白名单键（communication_stage）：
+- 值域为固定枚举（初选/联系中/已约谈），由**确定性服务端事件**触发
+  （匹配候选展示 / 套磁邮件生成成功 / 站内投递成功）；
+- `remember_communication_stage` 是唯一写入口，stage 实参在函数签名层
+  即封闭为枚举——LLM/用户自由文本在结构上无法到达本函数；
+- 只前进不回退（初选→联系中→已约谈）；画像确认写入不触碰该键；
+- 阶段值 <4 字，不在表达层逐字校验范围内（软性上下文，非硬事实）；
+  匹配/确认/评分等一切管线决策均不读取该键。
+
 召回侧：`format_memory_summary` 生成"事实片段"（不含框架词），供
 表达层 FactPack.memory_summary 注入；逐字校验保证表达层不得改写事实。
 隐私侧：`list_memories` / `clear_memories` 供用户查看与清除。
@@ -22,6 +31,16 @@ from sqlalchemy.orm import Session
 from app.models.user_memory import UserMemory
 
 MEMORY_SOURCE = "portrait_confirmed"
+STAGE_SOURCE = "communication_event"
+
+# v4.3.0 沟通阶段：值域封闭枚举（顺序即阶段序，只前进不回退）
+_COMMUNICATION_STAGES = ("初选", "联系中", "已约谈")
+_STAGE_RANK = {stage: rank for rank, stage in enumerate(_COMMUNICATION_STAGES)}
+STAGE_KEY = "communication_stage"
+# 触发点使用的语义常量（服务端代码专用，不接受外部文本）
+STAGE_INITIAL = _COMMUNICATION_STAGES[0]
+STAGE_CONTACTING = _COMMUNICATION_STAGES[1]
+STAGE_INTERVIEWED = _COMMUNICATION_STAGES[2]
 
 # 白名单键序（格式化摘要时也按此顺序输出）
 _DIMENSION_KEYS = (
@@ -35,11 +54,13 @@ _CONSTRAINT_KEY = "hard_constraints"
 _CONFIRMED_MARKER_KEY = "portrait_confirmed"
 
 # 注入 FactPack 的摘要只含事实片段（>=4 字片段会被逐字校验），
-# 不包含任何框架词，表达层只能原样引用。
+# 不包含任何框架词，表达层只能原样引用。沟通阶段缀在画像事实之后
+# （软性上下文；<4 字不参与逐字校验）。
 _SUMMARY_KEY_ORDER = (
     _INTEREST_KEY,
     *_DIMENSION_KEYS,
     _CONSTRAINT_KEY,
+    STAGE_KEY,
 )
 
 _VALUE_LABELS_CACHE: dict[str, str] | None = None
@@ -143,6 +164,56 @@ def recall_memories(db: Session, student_id: str) -> dict[str, str]:
     return {record.memory_key: str(record.memory_value) for record in records}
 
 
+def remember_communication_stage(
+    db: Session,
+    *,
+    student_id: str,
+    stage: str,
+) -> bool:
+    """确定性事件触发的沟通阶段更新（v4.3.0 阶段二）。
+
+    红线：stage 必须是固定枚举常量（STAGE_INITIAL/CONTACTING/INTERVIEWED
+    之一）——本函数是该键的唯一写入口，枚举校验使 LLM/用户自由文本在
+    结构上无法写库（传入任何非枚举值直接拒绝，属编程错误）。
+    只前进不回退：当前阶段序 ≥ 新阶段序时幂等跳过（返回 False）。
+    """
+    if stage not in _STAGE_RANK:
+        raise ValueError(f"未知沟通阶段：{stage!r}")
+    current = (
+        db.query(UserMemory.memory_value)
+        .filter(
+            UserMemory.student_id == student_id,
+            UserMemory.memory_key == STAGE_KEY,
+        )
+        .scalar()
+    )
+    if current in _STAGE_RANK and _STAGE_RANK[stage] <= _STAGE_RANK[current]:
+        return False
+    record = (
+        db.query(UserMemory)
+        .filter(
+            UserMemory.student_id == student_id,
+            UserMemory.memory_key == STAGE_KEY,
+        )
+        .one_or_none()
+    )
+    if record is None:
+        db.add(
+            UserMemory(
+                student_id=student_id,
+                memory_key=STAGE_KEY,
+                memory_value=stage,
+                source=STAGE_SOURCE,
+            )
+        )
+    else:
+        record.memory_value = stage
+        record.source = STAGE_SOURCE
+        record.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
 def format_memory_summary(db: Session, student_id: str) -> str:
     """已确认事实的、可注入表达层 FactPack 的摘要（事实片段，无框架词）。"""
     memories = recall_memories(db, student_id)
@@ -197,6 +268,7 @@ _MEMORY_KEY_LABELS = {
     "innovation_risk": "创新风险",
     _CONSTRAINT_KEY: "硬性条件",
     _CONFIRMED_MARKER_KEY: "画像确认时间",
+    STAGE_KEY: "沟通阶段",
 }
 
 

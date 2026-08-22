@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import HTTPException
@@ -18,6 +19,29 @@ from app.services.idempotency import (
     fail_idempotency,
 )
 from app.services.document_locking import lock_private_document
+from app.services.memory_service import (
+    STAGE_INTERVIEWED,
+    remember_communication_stage,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _remember_stage_best_effort(db: Session, subject_id: str) -> None:
+    """v4.3.0 阶段二：站内投递成功 → 沟通阶段「已约谈」。
+
+    投递事务已提交；阶段记录为辅助簿记，失败仅告警，绝不影响
+    投递结果与确认回复。
+    """
+    try:
+        remember_communication_stage(
+            db, student_id=subject_id, stage=STAGE_INTERVIEWED
+        )
+    except Exception:
+        logger.warning(
+            "communication_stage 记录失败（投递不受影响）",
+            exc_info=True,
+        )
 
 
 def _published_recruitment_ids(db: Session) -> set[str]:
@@ -67,6 +91,8 @@ def create_in_app_application(
         application = db.get(Application, claim.record.resource_id)
         if application is None or application.student_id != subject_id:
             raise HTTPException(status_code=410, detail="此前站内投递记录已不可用")
+        # 重放路径：原次调用可能已提交投递但阶段簿记中断，此处自愈
+        _remember_stage_best_effort(db, subject_id)
         return application
 
     try:
@@ -103,6 +129,8 @@ def create_in_app_application(
         )
         db.commit()
         db.refresh(application)
+        # v4.3.0 阶段二：投递事务提交成功 → 沟通阶段「已约谈」
+        _remember_stage_best_effort(db, subject_id)
         return application
     except IntegrityError as exc:
         db.rollback()

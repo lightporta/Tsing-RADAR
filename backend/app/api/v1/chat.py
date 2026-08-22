@@ -130,9 +130,12 @@ from app.services.qxd_media import (
 )
 from app.services.off_topic import detect_off_topic_matched, is_acknowledgment
 from app.services.memory_service import (
+    STAGE_CONTACTING,
+    STAGE_INITIAL,
     clear_memories,
     format_memory_listing,
     format_memory_summary,
+    remember_communication_stage,
 )
 from app.services import mentor_knowledge
 from app.services.mentor_knowledge_vector import vector_recall
@@ -499,6 +502,11 @@ async def _dispatch_dialogue_mode(
     elif intent == DialogueMode.CONSULT_EMAIL:
         text, attachment = await handle_consult_email(
             latest_user=latest_user, portrait=portrait
+        )
+        # v4.3.0 阶段二：套磁邮件生成成功 → 沟通阶段「联系中」
+        # （确定性事件触发，枚举写入口，只前进不回退）。
+        remember_communication_stage(
+            db, student_id=student_id, stage=STAGE_CONTACTING
         )
     elif intent == DialogueMode.RESEARCH_STYLE:
         # v3.1.6：pending 态导航词返回 None（放行走主流程，不吞消息）
@@ -974,6 +982,12 @@ async def generate_agent_reply(
                 reply_stage = (
                     "matched" if outcome.status == "matched" else "recommend_ready"
                 )
+                # v4.3.0 阶段二：匹配候选展示 → 沟通阶段进入「初选」
+                # （确定性事件；空结果不触发；幂等只前进不回退）。
+                if outcome.status == "matched" and outcome.items:
+                    remember_communication_stage(
+                        db, student_id=student_id, stage=STAGE_INITIAL
+                    )
                 # v2.5 匹配输出：六维度对比（导师侧 ≥8 样本匿名评价；
                 # 用户侧为画像需求映射 + 隐式关注维度，均明确标注，不参与排序）
                 ratings: dict[str, dict] = {}
@@ -1066,6 +1080,10 @@ async def generate_agent_reply(
                         email_text, email_attachment = await handle_consult_email(
                             latest_user=f"给{name}写一封套磁邮件",
                             portrait=portrait,
+                        )
+                        # v4.3.0 阶段二：候选定向套磁生成成功 → 「联系中」
+                        remember_communication_stage(
+                            db, student_id=student_id, stage=STAGE_CONTACTING
                         )
                         visible = (
                             f"为第 {ordinal} 位候选 {name} 生成套磁邮件：\n\n"
