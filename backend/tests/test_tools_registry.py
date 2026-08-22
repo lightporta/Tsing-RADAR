@@ -12,6 +12,8 @@ from app.services.tools_registry import (
     TOOL_GET_RECRUITMENTS,
     TOOL_QUERY_MENTOR_KNOWLEDGE,
     TOOL_RECALL_MEMORY,
+    TOOL_SAVE_FAVORITE,
+    TOOL_SEND_CONTACT_REQUEST,
     TOOL_SCHEMAS,
     build_tool_runtime,
     dispatch_tool_call,
@@ -63,7 +65,7 @@ def _seed_recruitment(**overrides) -> str:
 class TestToolSchemas:
     """OpenAI function-calling 对齐的 Schema 契约。"""
 
-    def test_exactly_three_tools(self):
+    def test_registered_tools_ordered(self):
         names = [
             schema["function"]["name"] for schema in TOOL_SCHEMAS
         ]
@@ -71,6 +73,8 @@ class TestToolSchemas:
             TOOL_QUERY_MENTOR_KNOWLEDGE,
             TOOL_GET_RECRUITMENTS,
             TOOL_RECALL_MEMORY,
+            TOOL_SAVE_FAVORITE,
+            TOOL_SEND_CONTACT_REQUEST,
         ]
 
     def test_schema_shape(self):

@@ -264,7 +264,7 @@ Tsing-RADAR/
 │   ├── app/
 │   │   ├── api/v1/            # 26 个路由模块（导师服务 7 个 / 评分 / 评论 / 兴趣探索 / 审批）
 │   │   ├── core/              # config / deps / qxd_auth / 安全校验
-│   │   ├── models/            # SQLAlchemy ORM（29 张表，含 user_memories / dialogue_sessions）
+│   │   ├── models/            # SQLAlchemy ORM（30 张表，含 user_memories / dialogue_sessions / mentor_favorites）
 │   │   ├── schemas/           # Pydantic 请求/响应模型
 │   │   ├── services/          # matching / llm / interview / chat_expression / mentor_knowledge / memory_service / tools_registry / off_topic / prompts / recruitment_*
 │   │   ├── db/                # session / base / redis_client

@@ -39,10 +39,25 @@ def _build_payload_messages(messages: list[LLMMessage]) -> list[dict[str, str]]:
 
 
 @dataclass(frozen=True)
+class LLMToolCall:
+    """LLM 自主工具调用（OpenAI tool_calls 协议解析结果）。
+
+    arguments 为已解析的 JSON 对象；解析失败为 None（交由注册表
+    参数校验 fail-closed 拒绝，不编造默认值）。
+    """
+
+    name: str
+    arguments: dict[str, Any] | None
+    call_id: str
+
+
+@dataclass(frozen=True)
 class LLMCompletionResult:
     text: str
     provider: str
     model: str
+    # v4.3.0 阶段五：LLM 返回的自主工具调用（最多 3 个，防滥用截断）
+    tool_calls: tuple[LLMToolCall, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,9 +67,46 @@ class InterviewEnhancement:
     status: str
 
 
+def _parse_tool_calls(raw_calls: Any) -> tuple[LLMToolCall, ...]:
+    """解析 OpenAI 协议 tool_calls（保守截断至 3 个；畸形条目跳过）。
+
+    arguments JSON 解析失败 → None（注册表参数校验将 fail-closed 拒绝，
+    绝不猜测默认参数）。
+    """
+    if not isinstance(raw_calls, list):
+        return ()
+    calls: list[LLMToolCall] = []
+    for raw in raw_calls[:3]:
+        if not isinstance(raw, dict):
+            continue
+        function = raw.get("function") or {}
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        raw_arguments = function.get("arguments")
+        if isinstance(raw_arguments, str):
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError:
+                arguments = None
+        elif isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+        else:
+            arguments = None
+        calls.append(
+            LLMToolCall(
+                name=name,
+                arguments=arguments if isinstance(arguments, dict) else None,
+                call_id=str(raw.get("id") or ""),
+            )
+        )
+    return tuple(calls)
+
+
 async def _llm_complete_result(
     messages: list[LLMMessage],
     *,
+    tools: list[dict[str, Any]] | None = None,
     timeout_seconds: float | None = None,
 ) -> LLMCompletionResult | None:
     if not settings.llm_credentials:
@@ -67,6 +119,16 @@ async def _llm_complete_result(
         return None
     payload_messages = _build_payload_messages(messages)
     model = settings.GLM_CHAT_MODEL
+    # v4.3.0 阶段五：tools 参数（OpenAI function-calling 协议）。
+    # 只有显式传入时才携带（表达层重写等既有调用不受影响）。
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": payload_messages,
+        "stream": False,
+    }
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = "auto"
     started = time.monotonic()
     try:
         async with httpx.AsyncClient(
@@ -78,20 +140,25 @@ async def _llm_complete_result(
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": model,
-                    "messages": payload_messages,
-                    "stream": False,
-                },
+                json=body,
             )
             resp.raise_for_status()
-            text = str(resp.json()["choices"][0]["message"]["content"])
+            message = resp.json()["choices"][0]["message"]
+            text = str(message.get("content") or "")
+            tool_calls = _parse_tool_calls(message.get("tool_calls"))
             logger.info(
-                "llm_completion provider=glm model=%s status=success latency_ms=%d",
+                "llm_completion provider=glm model=%s status=success "
+                "tool_calls=%d latency_ms=%d",
                 model,
+                len(tool_calls),
                 round((time.monotonic() - started) * 1000),
             )
-            return LLMCompletionResult(text=text, provider="glm", model=model)
+            return LLMCompletionResult(
+                text=text,
+                provider="glm",
+                model=model,
+                tool_calls=tool_calls,
+            )
     except Exception as exc:
         status_code = getattr(getattr(exc, "response", None), "status_code", None)
         logger.warning(

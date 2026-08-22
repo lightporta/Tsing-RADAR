@@ -139,11 +139,21 @@ from app.services.memory_service import (
 )
 from app.services import mentor_knowledge
 from app.services.mentor_knowledge_vector import vector_recall
+from app.services.autonomous_tools import (
+    clear_pending_contact,
+    is_contact_cancellation,
+    is_contact_confirmation,
+    load_pending_contact,
+    try_autonomous_tool_call,
+)
 from app.services.tools_registry import (
     TOOL_GET_RECRUITMENTS,
     TOOL_QUERY_MENTOR_KNOWLEDGE,
+    TOOL_SAVE_FAVORITE,
     build_tool_runtime,
     dispatch_tool_call,
+    format_favorite_listing,
+    remove_favorite,
 )
 from app.services.identity import Principal
 from sqlalchemy.orm import Session
@@ -271,6 +281,76 @@ def _append_no_candidate_card(
         key=_NO_CANDIDATE_CARD_FLAG,
     )
     return f"{visible}\n\n{_NO_CANDIDATE_FALLBACK_CARD}"
+
+
+# —— v4.3.0 阶段五：收藏意图词路由（确定性；与 LLM 自主调用并存）——
+
+_FAVORITE_LIST_TERMS = ("我的收藏", "收藏列表", "查看收藏", "看看收藏")
+_FAVORITE_REMOVE_TERMS = ("取消收藏", "移除收藏")
+_FAVORITE_NAME_SUFFIXES = ("老师", "教授", "导师")
+# 姓名路径防误伤：含这些字/词的余文不是导师姓名（如"第二个但先看看详情"）
+_FAVORITE_NAME_STOP_CHARS = (
+    "第", "但", "先", "帮", "请", "我", "你", "怎", "吗",
+    "？", "?", "看看", "详情", "一下", "顺便",
+)
+
+
+def _parse_favorite_command(text: str) -> tuple[str | None, str | None]:
+    """解析收藏指令 → (action, target)。
+
+    action ∈ {"list", "add", "remove"}；target 为序号数字字符串或导师
+    姓名；非收藏指令返回 (None, None) 放行。词法保守：目标必须能解析
+    为序号或不含停用字的 ≤12 字姓名，否则不拦截（防误伤正常陈述句）。
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None, None
+    if any(term in cleaned for term in _FAVORITE_LIST_TERMS):
+        return "list", None
+    remove = False
+    remainder = cleaned
+    for term in _FAVORITE_REMOVE_TERMS:
+        if term in remainder:
+            remove = True
+            remainder = remainder.replace(term, "")
+    if not remove:
+        if "收藏" not in cleaned:
+            return None, None
+        remainder = cleaned.replace("收藏", "")
+    remainder = remainder.strip()
+    if not remainder:
+        return None, None
+    ordinal = _parse_ordinal(remainder)
+    if ordinal is not None:
+        return ("remove" if remove else "add"), str(ordinal)
+    name = remainder
+    for suffix in _FAVORITE_NAME_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    name = name.strip()
+    if (
+        name
+        and 1 <= len(name) <= 12
+        and not any(stop in name for stop in _FAVORITE_NAME_STOP_CHARS)
+    ):
+        return ("remove" if remove else "add"), name
+    return None, None
+
+
+def _resolve_favorite_item(
+    target: str, items: list[dict]
+) -> dict | None:
+    """收藏目标 → 当前匹配候选项（序号或姓名；姓名前缀匹配）。"""
+    if target.isdigit():
+        index = int(target)
+        if 1 <= index <= len(items):
+            return items[index - 1]
+        return None
+    for item in items:
+        name = str(item.get("name") or "")
+        if name and (name == target or name.startswith(target)):
+            return item
+    return None
 _TRIAL_RESET_UTTERANCES = {
     "重新开始",
     "开始新访谈",
@@ -777,6 +857,77 @@ async def generate_agent_reply(
             intent = DialogueMode.NONE
             dialogue_released = False
             if not probe:
+                # v4.3.0 阶段五：敏感工具（send_contact_request）二次确认门
+                # ——先于意图分类（防确认词被误路由）。精确确认词 → 走既有
+                # 套磁链路；取消词 → 放弃；其他消息 → 清除待确认动作并放行
+                # （反骚扰：一条无关消息即失效，绝不静默执行）。
+                pending_contact = load_pending_contact(
+                    db, session_id=session_id, student_id=student_id
+                )
+                if pending_contact is not None:
+                    advisor_name = pending_contact["advisor_name"]
+                    if is_contact_confirmation(latest_user_turn, advisor_name):
+                        clear_pending_contact(
+                            db,
+                            session_id=session_id,
+                            student_id=student_id,
+                        )
+                        contact_portrait = _safe_confirmed_portrait(
+                            db, session_id=session_id, student_id=student_id
+                        )
+                        contact_text, contact_attachment = (
+                            await handle_consult_email(
+                                latest_user=f"给{advisor_name}写一封套磁邮件",
+                                portrait=contact_portrait,
+                            )
+                        )
+                        remember_communication_stage(
+                            db, student_id=student_id, stage=STAGE_CONTACTING
+                        )
+                        if trial_state is not None:
+                            _complete_trial_request(
+                                trial_state,
+                                consumed_answer=bool(effective_user_messages),
+                            )
+                        return AgentReply(
+                            content=(
+                                f"已确认联系 {advisor_name}，"
+                                f"套磁邮件初稿如下：\n\n{contact_text}"
+                            ),
+                            attachments=(
+                                (contact_attachment,)
+                                if contact_attachment is not None
+                                else ()
+                            ),
+                            reasoning=_reply_reasoning_steps(
+                                stage="dialogue", attachments_count=0
+                            ),
+                        )
+                    if is_contact_cancellation(latest_user_turn):
+                        clear_pending_contact(
+                            db,
+                            session_id=session_id,
+                            student_id=student_id,
+                        )
+                        if trial_state is not None:
+                            _complete_trial_request(
+                                trial_state,
+                                consumed_answer=bool(effective_user_messages),
+                            )
+                        return AgentReply(
+                            content=(
+                                f"已取消联系 {advisor_name}，"
+                                "未执行任何联系操作。"
+                            ),
+                            attachments=(),
+                            reasoning=_reply_reasoning_steps(
+                                stage="dialogue", attachments_count=0
+                            ),
+                        )
+                    # 其他消息：待确认动作失效（防骚扰），清除后放行
+                    clear_pending_contact(
+                        db, session_id=session_id, student_id=student_id
+                    )
                 # v3.1.6：匹配结果后的「第 N 个」追问优先于招募列表序号解析。
                 # 仅当会话已确认（或本请求前序消息刚完成画像确认）时短路；
                 # 未确认会话的招募序号行为不变。
@@ -1059,6 +1210,60 @@ async def generate_agent_reply(
                     visible = radar_text
                     if radar_attachment is not None:
                         pending_attachments.append(radar_attachment)
+                elif _parse_favorite_command(latest_user)[0] is not None:
+                    # v4.3.0 阶段五：收藏意图词路由（确定性，先于序号解析，
+                    # 「收藏第 N 个」不再被当成候选详情追问）。add 走注册表
+                    # save_favorite 执行体（与 LLM 自主调用同一校验/幂等路径）。
+                    favorite_action, favorite_target = _parse_favorite_command(
+                        latest_user
+                    )
+                    if favorite_action == "list":
+                        visible = format_favorite_listing(db, student_id)
+                    elif favorite_action == "remove":
+                        if favorite_target is None or not favorite_target.isdigit():
+                            visible = (
+                                "取消收藏请用收藏列表序号，"
+                                "例如「取消收藏第 1 个」；先回复「我的收藏」查看列表。"
+                            )
+                        else:
+                            visible = remove_favorite(
+                                db,
+                                student_id=student_id,
+                                ordinal=int(favorite_target),
+                            )
+                    else:
+                        if not outcome.items:
+                            visible = (
+                                "当前没有匹配候选可收藏；先完成匹配，"
+                                "再回复「收藏第 N 个」。"
+                            )
+                        else:
+                            item = _resolve_favorite_item(
+                                favorite_target or "", outcome.items
+                            )
+                            if item is None:
+                                visible = (
+                                    f"当前匹配结果只有 {len(outcome.items)} 位候选"
+                                    "，收藏目标不在其中。可回复「第 N 个」查看详情，"
+                                    "或「收藏第 N 个」收藏对应导师。"
+                                )
+                            else:
+                                favorite_runtime = build_tool_runtime(
+                                    db=db,
+                                    student_id=student_id,
+                                    portrait=portrait,
+                                    session_id=session_id,
+                                    match_items=outcome.items,
+                                )
+                                visible = dispatch_tool_call(
+                                    favorite_runtime,
+                                    name=TOOL_SAVE_FAVORITE,
+                                    arguments={
+                                        "advisor_id": str(
+                                            item.get("advisor_id") or ""
+                                        )
+                                    },
+                                )
                 elif (
                     _parse_ordinal(latest_user) is not None
                     and outcome.status == "matched"
@@ -1185,6 +1390,7 @@ async def generate_agent_reply(
                     outcome.status in _POST_CONFIRM_OUTCOME_STATUSES
                     and not pending_attachments
                     and _parse_ordinal(latest_user) is None
+                    and _parse_favorite_command(latest_user)[0] is None
                     and not any(
                         intent in latest_user
                         for intent in (
@@ -1195,10 +1401,26 @@ async def generate_agent_reply(
                     )
                     and latest_user != _REPORT_DELIVERY_CONFIRMATION
                 ):
+                    # v4.3.0 阶段五：确定性 handler（雷达/序号/收藏/招募/报告）
+                    # 全部未命中 → LLM 自主工具调用（仅工具域）。无 key / 开关
+                    # 关闭 / 失败 / 无 tool_calls → None，落回既有兜底（行为与
+                    # 基线一致）。致谢类消息跳过（省时延，LLM 也不应调工具）。
+                    autonomous_reply = None
+                    if not is_acknowledgment(latest_user):
+                        autonomous_reply = await try_autonomous_tool_call(
+                            db,
+                            latest_user=latest_user,
+                            session_id=session_id,
+                            student_id=student_id,
+                            portrait=portrait,
+                            match_items=outcome.items,
+                        )
                     # v4.0.0 已匹配态兜底：跑题消息给能力引导（不再静默复读匹配）；
                     # 致谢/确认类消息保留引导但不复读大段结果。空结果同样适用：
                     # 诚实空态会随 outcome.message 保留，跑题不再重复空态。
-                    if (
+                    if autonomous_reply is not None:
+                        visible = autonomous_reply
+                    elif (
                         detect_off_topic_matched(latest_user)
                         and not _fallback_command(latest_user)
                     ):

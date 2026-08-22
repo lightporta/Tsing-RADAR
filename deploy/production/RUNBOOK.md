@@ -63,13 +63,14 @@ read-only into the backend at `/app/data/knowledge` through
   whenever the knowledge JSON is rebuilt, otherwise the recorded dimension
   or ids may drift (mismatched dimensions degrade safely to lexical).
 
-Migrations 0013 (`dialogue_sessions`) and 0014 (`user_memories`) are
-expand-only: they create new tables and change no existing columns. They run
-through the same locked migration job as every other migration. A schema that
-has applied them stays expand/contract compatible with the previous backend
-image for the whole rollback window, so rollback means repointing to the old
-release with no schema downgrade; a downgrade must never be executed and any
-contract step would be a separately approved batch.
+Migrations 0013 (`dialogue_sessions`), 0014 (`user_memories`) and 0015
+(`mentor_favorites`) are expand-only: they create new tables and change no
+existing columns. They run through the same locked migration job as every
+other migration. A schema that has applied them stays expand/contract
+compatible with the previous backend image for the whole rollback window, so
+rollback means repointing to the old release with no schema downgrade; a
+downgrade must never be executed and any contract step would be a separately
+approved batch.
 
 ## First deployment
 

@@ -121,8 +121,8 @@ def test_a6_migration_reaches_head_with_private_delivery_and_delete_tables(tmp_p
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
     # 迁移链随版本合法推进：0013（v3.1.7 dialogue_sessions）/ 0014（v4.0.0
-    # user_memories）；断言跟随当前唯一头，避免陈旧硬编码。
-    assert revision == "0014"
+    # user_memories）/ 0015（v4.3.0 mentor_favorites）；断言跟随当前唯一头。
+    assert revision == "0015"
     engine.dispose()
 
 

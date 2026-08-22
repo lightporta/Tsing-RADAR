@@ -144,6 +144,10 @@ class Settings(BaseSettings):
     KNOWLEDGE_VECTOR_MIN_SIMILARITY: float = Field(
         default=0.60, ge=0.0, le=1.0
     )
+    # v4.3.0 阶段五：LLM 自主工具调用开关（工具域转正）。关闭或无 GLM
+    # key 时整链路不生效，降级为服务端确定性意图词路由（行为与基线
+    # 一致）；画像确认/匹配触发/记忆写入永不注册为 LLM 可调工具。
+    QXD_AUTONOMOUS_TOOLS_ENABLED: bool = True
 
     # —— CORS ——
     CORS_ORIGINS: str = (

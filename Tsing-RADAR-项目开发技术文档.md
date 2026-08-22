@@ -226,7 +226,7 @@ popularity = 0.4 × norm(领域关键词近1年论文频次) + 0.3 × norm(领�
 | 大模型层 | 智谱 GLM 系列 | 语义分析、匹配推理、自然语言生成（单 provider，文件型密钥）；LLM 仅做表达层重写，题序/画像/确认门/匹配由确定性状态机控制 |
 | 智能体组件层（v4） | 词法知识库 + 长期记忆 + 工具注册表 + 提示词版本化 | 导师评价综述级知识库（`backend/data/knowledge/`，SHA256 溯源，只读挂载）；`user_memories` 白名单记忆（仅已确认画像事实）；确定性工具注册表（3 只读工具，服务端路由）；`prompts/` 版本化模板（fail-closed 兜底） |
 | 离线评估闭环（v4） | 确定性谓词评估脚本 | `scripts/eval_offline.py` 60 例对抗样本：红线违规率（=0）/ 事实保真 / 降级正确率 / 跑题处理，报告写入 docs/（Opik 等价物） |
-| 关系数据库 | PostgreSQL | 学生、导师、业务流程结构化数据存储（29 张表，含 `user_memories` / `dialogue_sessions`） |
+| 关系数据库 | PostgreSQL | 学生、导师、业务流程结构化数据存储（30 张表，含 `user_memories` / `dialogue_sessions` / `mentor_favorites`） |
 | 缓存层 | Redis | 对话上下文缓存、推荐结果缓存 |
 | 数据采集层 | Scrapy + Playwright | 师资页面抓取、个人主页信息采集 |
 | 邮件服务 | 清华邮箱 SMTP | 通过 OAuth 2.0 授权发送邮件 |
