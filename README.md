@@ -8,7 +8,7 @@
 
 从"被动求职"到"主动寻找学术合伙人"
 
-![Version](https://img.shields.io/badge/version-4.2.0-409EFF?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.2.1-409EFF?style=flat-square)
 ![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?style=flat-square)
@@ -262,9 +262,9 @@ Tsing-RADAR/
 │
 ├── backend/                   # FastAPI 模块化后端
 │   ├── app/
-│   │   ├── api/v1/            # 30 个路由模块（导师服务 7 个 / 评分 / 评论 / 兴趣探索 / 审批）
+│   │   ├── api/v1/            # 26 个路由模块（导师服务 7 个 / 评分 / 评论 / 兴趣探索 / 审批）
 │   │   ├── core/              # config / deps / qxd_auth / 安全校验
-│   │   ├── models/            # SQLAlchemy ORM（28 张表，含 user_memories）
+│   │   ├── models/            # SQLAlchemy ORM（29 张表，含 user_memories / dialogue_sessions）
 │   │   ├── schemas/           # Pydantic 请求/响应模型
 │   │   ├── services/          # matching / llm / interview / chat_expression / mentor_knowledge / memory_service / tools_registry / off_topic / prompts / recruitment_*
 │   │   ├── db/                # session / base / redis_client
@@ -416,6 +416,7 @@ provider Key；生产部署必须由只读文件提供密钥，并同时设置
 | `test_l3_handoff.py::test_source_archive_is_byte_deterministic` | 需本地 docker daemon 已构建应用镜像（L3 交接验收口径），本机 docker daemon 未运行 |
 | `test_llm_configuration.py::test_missing_and_symlinked_llm_secret_files_fail_closed` + 2 errors | 创建符号链接需管理员/开发者模式特权（`WinError 1314`） |
 | `test_llm_configuration.py::test_llm_secret_permissions_reject_group_or_other_access` | Windows 文件系统不强制 POSIX 组/其他权限位 |
+| `test_l1_production.py`（整文件收集错误，macOS 开发机） | L1 用例依赖 docker CLI（本地无 docker daemon 时无法收集）；Linux 生产/CI 预期通过，非回归 |
 
 > 完整四段式记录见 [docs/缺陷修复清单_v4.md](./docs/缺陷修复清单_v4.md) 第二节。
 
@@ -425,6 +426,9 @@ provider Key；生产部署必须由只读文件提供密钥，并同时设置
 
 | 版本 | 日期 | 说明 |
 | :--- | :--- | :--- |
+| v4.2.1 | 2026-08 | 访谈引擎修复（压测驱动 8 项）：幽灵硬约束三层消毒、边界澄清死循环闭合、跑题回声环、SSE 收尾必达、单选轮跳过 LLM 增强（零 GLM 等待）、画像字段清洗、流程游走锁定、空结果兜底卡 |
+| v4.2.0 | 2026-08 | 表达层多轮自然度增强：FactPack 多轮上下文（最近对话/上一轮实际话术/阶段/风格）+ 跨轮防重复闸门 + 提示词 v3 + get_dialogue_mode 意图劫持修复 |
+| v4.1.0 | 2026-08 | 返工批次：雷达文本图 CJK 对齐 + 独立柱状图形态、招募事实句接入生产 FactPack、记忆隐私对话入口（查看/清除）、提示词 v2 自然度 + 机器腔闸门、README .env.example 断链修复 |
 | v4.0.0 | 2026-08 | 按《智能体升级执行提示词》全量升级：导师评价综述级词法知识库（A-1）+ 长期记忆 user_memories 表（A-2）+ 提示词版本化（A-3）+ 离线评估闭环 60 例（A-4）+ 确定性工具注册表（阶段B）+ 招募增强（FactPack 逐字校验 + 确认后主动触达）+ 越界话题优雅处理（他人事务/编造/篡改指令拦截、匹配态空态兜底）+ 缺陷修复与文档（详见 CHANGELOG） |
 | v3.1.7 | 2026-08 | 匹配后二次筛选闭环（换一批/缩小范围/恢复完整结果）+ 能力差距分析 + 候选官方主页 + 六维 10 格条形 |
 | v3.1.6 | 2026-08 | 匹配后「第 N 个」候选追问（详情/雷达/套磁）+ 科研风格速测确认回填 + 方向地图选方向回填画像 |

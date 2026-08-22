@@ -32,6 +32,35 @@ that could leave an override half-enabled. QXD must be combined with edge, and
 media must be combined with both QXD and edge. `PUBLIC_BASE_URL` is empty and
 recall stays on the deterministic lexical path in every composition.
 
+## v4 knowledge base mount and migrations 0013/0014
+
+The v4 mentor-review knowledge base ships with the repository
+(`backend/data/knowledge/`: `mentors.knowledge.json` plus
+`knowledge_manifest.json` with source SHA-256). Production mounts it
+read-only into the backend at `/app/data/knowledge` through
+`KNOWLEDGE_DATA_DIR` (release-relative default `../../backend/data/knowledge`,
+`bind.create_host_path: false`).
+
+- Each release carries its own knowledge copy; there is no cross-release copy
+  step and no named volume. Rolling the `current` symlink back to the previous
+  release restores the previous knowledge snapshot atomically with that
+  release — no separate knowledge rollback procedure exists or is needed.
+- A missing or empty directory does not fail startup: mentor knowledge queries
+  degrade honestly to the not-indexed refusal path and the service logs a
+  warning. After checkout, verify `mentors.knowledge.json` presence before
+  starting the backend.
+- The knowledge base is public repository content and is never treated as
+  evidence data; `mentors.evidence.json` and the mentor score governance file
+  remain separate explicitly managed read-only bind mounts.
+
+Migrations 0013 (`dialogue_sessions`) and 0014 (`user_memories`) are
+expand-only: they create new tables and change no existing columns. They run
+through the same locked migration job as every other migration. A schema that
+has applied them stays expand/contract compatible with the previous backend
+image for the whole rollback window, so rollback means repointing to the old
+release with no schema downgrade; a downgrade must never be executed and any
+contract step would be a separately approved batch.
+
 ## First deployment
 
 Run only `deploy-runner.py --action first-deploy-plan --mode execute`; the

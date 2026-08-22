@@ -59,3 +59,16 @@ the table above.
 Stop and upgrade/split when any OOM occurs; available physical memory remains
 below 1 GiB for 15 minutes; sustained swap-in/out accompanies two >80% memory
 events within seven days; or concurrent full production and stage is required.
+
+## v4 agent component footprint (no service additions)
+
+The v4 agent components add no new service, container, volume or job to this
+host, so the resolved-limit table above is unchanged: the mentor-review
+knowledge base is a read-only bind mount of repository files (a few MiB,
+page-cache backed, mounted via `KNOWLEDGE_DATA_DIR`); `user_memories` and
+`dialogue_sessions` are tables inside the existing PostgreSQL limit; the
+tools registry, versioned prompt templates and expression gates execute
+in-process inside the backend limit; the 60-case offline evaluation runs on
+a developer machine, never on this host. If a later batch introduces a vector
+index or a scheduled rebuild job, it must extend this contract with a new
+row and a recalculated combination matrix before deployment.
