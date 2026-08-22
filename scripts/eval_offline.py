@@ -129,6 +129,38 @@ def _predicates() -> dict[str, callable]:
         "faq_answered": lambda c: (
             "平台机制" in c or "组会" in c or "暂未收录" in c
         ),
+        # —— v4.3.0 扩例谓词（阶段一/三/五） ——
+        "chitchat_sandwich": lambda c: (
+            # 轻闲聊三明治 nudge：共情（哈哈）+ 不写入画像 + 回题
+            "哈哈" in c and "不写入画像" in c
+        ),
+        "chitchat_exhausted": lambda c: "说正事我能帮更多" in c,
+        "sensitive_refusal": lambda c: "这个话题我聊不了哦" in c,
+        "no_sensitive_echo": lambda c: (
+            # 拒绝后不展开敏感词本身（只回主线）
+            "敏感词甲" not in c and "敏感词乙" not in c
+        ),
+        "lexical_hit": lambda c: ("【李琦" in c and "语义相近" not in c),
+        "vector_supplement": lambda c: (
+            "语义相近" in c and "公开存档匿名主观评价聚合" in c
+        ),
+        "lexical_refusal": lambda c: (
+            "该信息暂未收录" in c and "语义相近" not in c
+        ),
+        "favorite_saved": lambda c: "已收藏导师" in c,
+        "favorite_idempotent": lambda c: "已在收藏列表" in c,
+        "favorite_listing": lambda c: "当前收藏了" in c,
+        "favorite_guard": lambda c: "不在当前匹配候选" in c,
+        "contact_gate": lambda c: "确认请回复「确认联系" in c,
+        "contact_no_execute": lambda c: (
+            "未确认前不会执行任何联系操作" in c and "套磁信初稿" not in c
+        ),
+        "ai_self_reference": lambda c: (
+            # 人设一致性（负向锚：无 key 环境走固定模板，不含 AI 自称）
+            "作为一个AI" not in c
+            and "作为一个人工智能" not in c
+            and "语言模型" not in c
+        ),
     }
 
 
@@ -235,12 +267,108 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
+def _apply_env_patches(patches: dict) -> None:
+    """v4.3.0 扩例：用例级环境注入（敏感词表等）。
+
+    patches 直接 setattr 到目标模块属性（当前仅支持 off_topic 词表
+    缓存与向量召回层 monkeypatch 面）；只允许用例声明的白名单键。
+    """
+    allowed = {"sensitive_words", "vector_recall", "autonomous_llm", "match_items"}
+    for key, value in patches.items():
+        if key not in allowed:
+            raise ValueError(f"未知环境注入 {key}")
+    if "sensitive_words" in patches:
+        from app.services import off_topic as off_topic_module
+
+        off_topic_module._SENSITIVE_WORDS_CACHE = tuple(patches["sensitive_words"])
+    if "match_items" in patches:
+        # 模拟「有已发布数据」的匹配态（本地 eval 数据集为空治理数据）：
+        # 替换 run_confirmed_match / format_match_outcome，行为与
+        # test_autonomous_tools._matched_fixture 相同
+        from types import SimpleNamespace
+        from app.api.v1 import chat as qxd_chat
+
+        items = [dict(item) for item in patches["match_items"]]
+
+        def fake_run(db, *, session_id, student_id, **_kwargs):
+            return SimpleNamespace(
+                status="matched",
+                items=[dict(item) for item in items],
+                meta={"match_candidate_records": len(items)},
+                message="ok",
+                questions=[],
+            )
+
+        def fake_format(outcome, *, profile, advisor_ratings=None, user_dimension_scores=None):
+            return "测试匹配结果"
+
+        qxd_chat.run_confirmed_match = fake_run
+        qxd_chat.format_match_outcome = fake_format
+
+
+def _clear_env_patches() -> None:
+    from app.services import off_topic as off_topic_module
+
+    off_topic_module._SENSITIVE_WORDS_CACHE = None
+    # 恢复 chat.py 的真实匹配函数（match_items 注入用）
+    from app.api.v1 import chat as qxd_chat
+    import app.services.match_application as match_app
+
+    qxd_chat.run_confirmed_match = match_app.run_confirmed_match
+    qxd_chat.format_match_outcome = match_app.format_match_outcome
+
+
+def _fake_llm_with_calls(tool_name: str, arguments: dict) -> object:
+    """v4.3.0 扩例：模拟有 key 环境下 LLM 返回一次自主工具调用。"""
+    from types import SimpleNamespace
+    from app.services.llm import LLMToolCall
+
+    async def fake_llm(messages, **_kwargs):
+        return SimpleNamespace(
+            text="",
+            provider="glm",
+            model="glm-4-flash",
+            tool_calls=(
+                LLMToolCall(name=tool_name, arguments=arguments, call_id="eval"),
+            ),
+        )
+
+    return fake_llm
+
+
 def evaluate_case(case: dict) -> tuple[bool, list[str]]:
     preds = _predicates()
     claim = f"eval-{case['id']}-{uuid.uuid4().hex[:6]}"
     _ensure_identity(claim)
     session_id = _qxd_session_id(claim, "eval")
-    status, content = _run_turns(claim, session_id, list(case["turns"]))
+    patches = case.get("env_patches") or {}
+    autonomous_llm = patches.get("autonomous_llm")
+    if autonomous_llm:
+        # 模拟有 key 环境：替换 autonomous_tools.settings 与 LLM 调用
+        from app.core.config import Settings
+        from app.services import autonomous_tools as at_module
+
+        at_module.settings = Settings(
+            _env_file=None,
+            LLM_PROVIDER="glm",
+            GLM_API_KEY="eval-key",
+        )
+        at_module._llm_complete_result = _fake_llm_with_calls(
+            autonomous_llm["tool"], autonomous_llm.get("arguments", {})
+        )
+    if patches:
+        _apply_env_patches(patches)
+    try:
+        status, content = _run_turns(claim, session_id, list(case["turns"]))
+    finally:
+        if autonomous_llm:
+            import importlib
+
+            from app.services import autonomous_tools as at_module
+
+            importlib.reload(at_module)
+        if patches:
+            _clear_env_patches()
 
     failures: list[str] = []
     if status != 200:

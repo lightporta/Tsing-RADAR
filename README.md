@@ -8,7 +8,7 @@
 
 从"被动求职"到"主动寻找学术合伙人"
 
-![Version](https://img.shields.io/badge/version-4.2.1-409EFF?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.3.0-409EFF?style=flat-square)
 ![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?style=flat-square)
@@ -426,6 +426,7 @@ provider Key；生产部署必须由只读文件提供密钥，并同时设置
 
 | 版本 | 日期 | 说明 |
 | :--- | :--- | :--- |
+| v4.3.0 | 2026-08 | 对话增强适配四阶段：RADAR娘人设 v4 + 三明治闲聊容忍（≤5 轮）+ 敏感话题外置词表 + Markdown 闸门；向量混合召回（零依赖 + 阈值门控拒答门）；沟通阶段记忆键（枚举写入口 + 确定性事件触发）；LLM 自主工具调用（工具域白名单转正）+ 收藏表 + 联系二次确认门；评估扩容 75 例 + 对话质量周检流程 |
 | v4.2.1 | 2026-08 | 访谈引擎修复（压测驱动 8 项）：幽灵硬约束三层消毒、边界澄清死循环闭合、跑题回声环、SSE 收尾必达、单选轮跳过 LLM 增强（零 GLM 等待）、画像字段清洗、流程游走锁定、空结果兜底卡 |
 | v4.2.0 | 2026-08 | 表达层多轮自然度增强：FactPack 多轮上下文（最近对话/上一轮实际话术/阶段/风格）+ 跨轮防重复闸门 + 提示词 v3 + get_dialogue_mode 意图劫持修复 |
 | v4.1.0 | 2026-08 | 返工批次：雷达文本图 CJK 对齐 + 独立柱状图形态、招募事实句接入生产 FactPack、记忆隐私对话入口（查看/清除）、提示词 v2 自然度 + 机器腔闸门、README .env.example 断链修复 |

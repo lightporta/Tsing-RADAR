@@ -1183,3 +1183,87 @@ classify_dialogue_intent(最近一轮用户消息) ──▶ 七类对话模式 
 - **验证**：后端全量 **776 passed**（新增 18 用例：多轮投影/防重复闸门/客服腔/v3 模板
   合同与渲染兼容/契约跨轮接线/意图劫持护栏）；离线评估 **60/60、红线 0/17、事实保真
   5/5**；环境性基线不变（docker 依赖 2 项）。
+
+### 12.11 对话增强适配（v4.3.0，任务书 2026-08-22 四阶段）
+
+> 设计张力：AI 对话自然度 vs 确定性状态机主干 + LLM 仅表达层重写 +
+> 诚实性红线。解法：**不扩大 LLM 权限，只扩大其可见的确定性事实**；
+> 工具域转正是唯一破例（白名单制 + 测试锁死）。任务书原定版本号
+> v4.2.0 / 模板 v3 均已被占用，实际落地 v4.3.0 / 模板 v4（顺延并在
+> 版本清单注明）。
+
+#### 12.11.1 阶段一：RADAR娘人设 + 三明治闲聊容忍 + 敏感话题
+
+- **提示词 v4**（`system_prompt_v4.txt` / `rewrite_template_v4.txt`，
+  版本纪律新增不覆盖）：RADAR娘人设（选师+避坑经验、网络语气/拖长句/
+  单 emoji、3~5 句）；三明治法则（共情承接≤30% → 回忆/类比/延迟/反向
+  四类钩子至少选一 → 回归主线）；首句承接上轮；隐性提及记忆事实；
+  纯文本输出禁 Markdown。
+- **轻闲聊容忍**：`off_topic.is_light_chitchat`（词法判定，与问候/致谢/
+  不确定/他人事务/编造/科研词严格互斥——"我对机器学习感兴趣"绝不
+  误判闲聊）→ 三明治 nudge（哈哈收到 + 不写入画像 + 回题）；
+  会话级计数（`dialogue_sessions` KV）≤5 轮，第 6 轮起回能力引导；
+  硬红线类别维持统一 nudge；防吸收守卫回归锁定。
+- **敏感话题**：`CHAT_SENSITIVE_WORDS`/`_FILE` 外置（默认空=不拦截），
+  命中明确拒绝并回主线当前题。
+- **Markdown 闸门**：`chat_expression._markdown_violation`——`**`/```/
+  行首 `#`/行首 `- ` → 拒绝降级（标记来自题面不误伤）。
+
+#### 12.11.2 阶段三：向量混合召回（零依赖，诚实降级）
+
+- `llm.embed_text_strict`：严格 GLM 向量化，无 key/失败返回 None
+  **绝不落 hash 兜底**（hash 向量无语义会污染余弦）；`embed_text`
+  保持原行为（A4 匹配链路不变）。
+- `mentor_knowledge_vector.vector_recall`：纯 Python 余弦（无 numpy）；
+  阈值门控 `KNOWLEDGE_VECTOR_MIN_SIMILARITY=0.60`（拒答门红线）；
+  三层降级（无索引/无 key/嵌入失败/维度不匹配/全不达标 → 与词法
+  基线逐字一致）；确定性排序（相似度降序 + 同分姓名序）。
+- 构建：`build_mentor_knowledge.py --rebuild-vectors`（人工触发）；
+  无 key/嵌入失败/维度不一致诚实退出不产半成品；manifest 增补
+  `vectors_sha256`；渲染 `render_semantic_supplement` 明示「未收录 +
+  语义相近」不冒充精确匹配。
+
+#### 12.11.3 阶段二：沟通阶段记忆键（写入口封闭在签名层）
+
+- `communication_stage` 枚举（初选/联系中/已约谈）；
+  `remember_communication_stage` 唯一写入口，非枚举值抛 ValueError
+  ——LLM/用户自由文本在结构上无法写库；只前进不回退；画像确认写入
+  不触碰；清除记忆时一并删除；无迁移。
+- 确定性事件触发：匹配候选展示（matched 且有 items）→初选；套磁邮件
+  生成成功（×2 处）→联系中；站内投递成功（含幂等重放自愈）→已约谈。
+
+#### 12.11.4 阶段五：LLM 自主工具调用（工具域白名单转正）
+
+- **协议**：`_llm_complete_result(tools=...)` + tool_calls 解析
+  （`LLMToolCall`；畸形 arguments JSON → None 交注册表 fail-closed
+  拒绝不编造；截断 ≤3）。
+- **编排**：`autonomous_tools.try_autonomous_tool_call` 仅在匹配态
+  兜底位（确定性 handler 全未命中）触发；`QXD_AUTONOMOUS_TOOLS_ENABLED`
+  开关；无 key/失败/无调用 → 降级行为与基线逐字一致。
+- **注册表白名单制**：`llm_callable`/`sensitive` 显式标记，
+  `LLM_TOOL_SCHEMAS` 5 工具（3 只读 + save_favorite +
+  send_contact_request）；**画像确认/匹配触发/记忆写入/招募发布永不
+  注册**（架构护栏断言：注册名与禁用集不相交、源码不含记忆写函数）。
+- **收藏**（迁移 0015，expand-only）：`mentor_favorites`（student_id+
+  advisor_id 唯一）幂等；advisor_id 只能来自当前匹配上下文（防幻觉
+  ID）；意图词路由（「收藏第 N 个」「收藏姓名」「我的收藏」「取消收藏
+  第 N 个」，姓名路径停用字过滤防误伤）与自主调用双路径同经
+  `dispatch_tool_call` 校验执行。
+- **send_contact_request 二次确认**（反骚扰）：执行体只登记待确认
+  动作（`dialogue_sessions` KV）并返回精确确认指令；确认门先于意图
+  分类（防确认词误路由）；「确认联系{姓名}」逐字匹配（≠「确认联系
+  {姓名}老师」）；非确认/取消消息即失效；确认后走既有套磁链路 +
+  沟通阶段「联系中」。
+
+#### 12.11.5 评估闭环与周检
+
+- `eval_offline.py` 60 → **75 例**：新增 v43_chitchat 5 / v43_sensitive 2 /
+  v43_persona 2 / v43_vector 3 / v43_tools 3 分组；用例级 `env_patches`
+  （敏感词表 / 匹配上下文 / 模拟 LLM tool_calls 注入）。
+- `docs/对话质量周检记录.md`：抽样口径（20 会话/周）→ 失败模式分类
+  （跑题误伤/漏放、编造、语气生硬、承接重复、工具误调、确认门泄漏、
+  降级异常）→ 处置映射（改模板版本/改词表/加闸门）→ 回归验证规则；
+  红线类当周必修。
+- **验证**：后端全量 **864 passed / 1 failed**（docker 环境项）；
+  离线评估 **75/75、红线违规 0/17、事实保真 5/5**；前端 type-check +
+  build 通过（零改动）。
