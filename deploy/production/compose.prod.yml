@@ -14,6 +14,9 @@ services:
       LLM_PROVIDER: glm
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
       LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: "4.0"
+      # 全 Agent 化编排总开关（默认 true；production.env 置 false 可一键
+      # 回退到确定性管线，无需改镜像）
+      AGENT_ORCHESTRATION_ENABLED: ${AGENT_ORCHESTRATION_ENABLED:-true}
       AUTO_CREATE_SCHEMA: "false"
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
