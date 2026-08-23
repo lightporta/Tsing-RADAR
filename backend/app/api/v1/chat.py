@@ -45,9 +45,14 @@ from app.services.artifact_delivery import (
 )
 from app.services.artifact_generation import create_match_report_artifact
 from app.services.agent_orchestrator import run_agent_turn
+from app.services.agent_wiring import (
+    agent_interview_anchors as _agent_interview_anchors,
+    agent_interview_state_context as _agent_interview_state_context,
+    agent_portrait_summary as _agent_portrait_summary,
+    agent_post_match_state_context as _agent_post_match_state_context,
+)
 from app.services.chat_expression import (
     MAX_PREVIOUS_REPLY_CHARS,
-    InterviewFactPack,
     build_interview_fact_pack,
     render_interview_reply,
 )
@@ -56,7 +61,6 @@ from app.services.interview import (
     InterviewConflictError,
     InterviewNotFoundError,
     _CONFIRM_SIGNALS,
-    _VALUE_LABELS,
     _contains_structural_command,
     _interest_tags,
     answer_session,
@@ -650,132 +654,10 @@ def _agent_hook_active(
     )
 
 
-def _agent_interview_state_context(
-    state,
-    fact_pack: InterviewFactPack,
-) -> str:
-    """把访谈事实包渲染成 Agent 状态注入文本（确定性投影，无新事实）。
-
-    要求逐字保留的内容（选项原文/确认卡画像内容）显式标注，与
-    required_anchors 逐字校验闸门配套。
-    """
-    progress = (
-        f"画像进度：已完成维度 {'、'.join(fact_pack.completed_dimensions) or '无'}；"
-        f"待完成维度 {'、'.join(fact_pack.missing_dimensions) or '无'}；"
-        f"{fact_pack.hard_constraint_status}"
-    )
-    lines: list[str] = []
-    if state.needs_confirmation:
-        # 确认门：无当前题，服务端确认卡（assistant_message）即本轮话术，
-        # 其中的画像内容为逐字校验锚点（见 _agent_interview_anchors）。
-        lines.extend(
-            (
-                "当前阶段：访谈题目已全部完成，进入画像确认门"
-                "（用户需回复确认指令或提出修改）。",
-                "服务端确认卡原文"
-                "（必须逐字保留其中的画像内容，不得改写、增删事实）：",
-                state.assistant_message,
-                progress,
-            )
-        )
-    else:
-        lines.append(
-            f"当前题目：第 {len(fact_pack.completed_dimensions) + 1} 题"
-            f"（访谈阶段：{fact_pack.turn_phase}）"
-        )
-        if fact_pack.question_prompt:
-            lines.append(
-                f"题干（必须逐字保留）：{fact_pack.question_prompt}"
-            )
-        if fact_pack.options:
-            lines.append(
-                "选项原文（必须逐字保留，逐条完整引用，"
-                "不得改写、增删、意译）：\n"
-                + "\n".join(
-                    f"{index}. {label}"
-                    for index, label in enumerate(fact_pack.options, 1)
-                )
-            )
-        lines.append(progress)
-    if fact_pack.previous_reply:
-        lines.append(
-            "上一轮话术（用于自然承接与防重复，不得逐字复读）："
-            f"{fact_pack.previous_reply}"
-        )
-    if fact_pack.memory_summary:
-        lines.append(
-            f"记忆摘要（必须逐字保留其中的用户事实）：{fact_pack.memory_summary}"
-        )
-    if fact_pack.recruitment_summary:
-        lines.append(
-            f"招募摘要（必须逐字保留其中的招募事实）：{fact_pack.recruitment_summary}"
-        )
-    return "\n".join(lines)
-
-
-def _agent_interview_anchors(
-    state,
-    fact_pack: InterviewFactPack,
-) -> list[str]:
-    """Agent 最终回复必须逐字包含的锚点（确定性提取，不重写正则）。
-
-    选项题 → 全部选项原文（复用 build_interview_fact_pack 的选项提取，
-    即题库 label 原文）；画像确认门 → 画像关键字段值（研究兴趣标签 +
-    已答维度值，与状态机确认卡话术同一 _VALUE_LABELS 映射，保证锚点
-    字符串与用户实际看到的画像内容一致）；其余轮次 → 空。
-    """
-    if fact_pack.options:
-        return list(fact_pack.options)
-    if state.needs_confirmation:
-        anchors = list(state.profile.research_interests)
-        for field_name in (
-            "research_mode",
-            "mentorship_style",
-            "career_orientation",
-            "innovation_risk",
-        ):
-            value = getattr(state.profile, field_name, None)
-            if value:
-                anchors.append(_VALUE_LABELS.get(value, value))
-        return anchors
-    return []
-
-
-def _agent_portrait_summary(portrait) -> str:
-    """把已确认画像渲染成 Agent 状态注入用的摘要文本（确定性投影）。"""
-    if portrait is None:
-        return "（画像暂不可用：本会话没有可读取的已确认画像）"
-    lines: list[str] = []
-    if portrait.research_interests:
-        lines.append(f"- 研究兴趣：{'、'.join(portrait.research_interests)}")
-    for field_name, label in (
-        ("research_mode", "研究方式"),
-        ("mentorship_style", "指导偏好"),
-        ("career_orientation", "生涯方向"),
-        ("innovation_risk", "创新风险"),
-    ):
-        value = getattr(portrait, field_name, None)
-        if value:
-            lines.append(f"- {label}：{_VALUE_LABELS.get(value, value)}")
-    if portrait.hard_constraints:
-        lines.append(f"- 已确认硬性条件：{len(portrait.hard_constraints)} 条")
-    return "\n".join(lines) if lines else "（画像暂无已确认内容）"
-
-
-def _agent_post_match_state_context(portrait, previous_reply: str) -> str:
-    """匹配结果展示后的 Agent 状态注入文本（确定性投影，无新事实）。"""
-    lines = [
-        "当前阶段：画像已确认，匹配结果已展示给用户。",
-        "可用工具：查询导师详情、查询导师招募信息、查询导师知识库、重新计算匹配。",
-        "画像摘要：",
-        _agent_portrait_summary(portrait),
-    ]
-    if previous_reply:
-        lines.append(
-            "上一轮话术（用于自然承接与防重复，不得逐字复读）："
-            f"{previous_reply}"
-        )
-    return "\n".join(lines)
+# v4.3.x：_agent_interview_state_context / _agent_interview_anchors /
+# _agent_portrait_summary / _agent_post_match_state_context 四个接线辅助
+# 已迁移到 app/services/agent_wiring.py（网页端 llm.py 共用，含自然度
+# 措辞微调）；此处通过 import ... as 保留同名再导出，既有符号引用不破。
 
 
 def _post_match_cheap_reply(text: str) -> str | None:
