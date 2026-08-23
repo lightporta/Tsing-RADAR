@@ -23,10 +23,13 @@ _VERSIONS_PATH = _PROMPTS_DIR / "prompt_versions.json"
 # 自由文本题题干 ≥5 字片段，消除 v3 意译指令与校验器自相矛盾）。
 # v4.3.0：新增 agent_system_prompt v1，全 Agent 化编排（GLM 编排系统提示词，
 # 供 agent_orchestrator 加载；工具铁律/数据诚实规则/故障降级全部内嵌）。
+# 09 对话自由度调优（L1+L2+L3 合并）：agent_system_prompt 升级 v1_1——
+# 字数放宽（通常 300 字内可展开到 500 字）、允许个性化开场/过渡/共情、
+# 承接语与题干包装可自由发挥；编号选项行逐字红线不变，工具上限提示 3→5。
 _CURRENT_VERSIONS: dict[str, str] = {
     "system_prompt": "v2",
     "rewrite_template": "v4",
-    "agent_system_prompt": "v1",
+    "agent_system_prompt": "v1_1",
 }
 
 

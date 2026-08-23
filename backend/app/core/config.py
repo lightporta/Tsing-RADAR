@@ -90,10 +90,12 @@ class Settings(BaseSettings):
     LLM_TIMEOUT: int = 30
     # Optional interview wording must never hold the fixed state-machine reply
     # for the full generic document/analysis timeout.
+    # 09 文档（对话自由度调优）：上限 8.0 → 10.0（L3 目标 10s），默认值
+    # 4.0 不变（本地/测试零影响；生产经 compose 环境变量注入 10.0）。
     LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: float = Field(
         default=4.0,
         ge=0.5,
-        le=8.0,
+        le=10.0,
     )
     # v4.3.0 全 Agent 化编排总开关：开启后访谈回复与匹配后非结构化消息
     # 由 GLM Agent 编排层（agent_orchestrator，确定性工具 + 逐字锚点

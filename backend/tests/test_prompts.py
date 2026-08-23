@@ -83,11 +83,32 @@ def test_empty_template_file_returns_fallback(monkeypatch, tmp_path):
 # —— v4.1.0 自然度增强：v2 模板合同 ——
 # —— v4.2.0 多轮自然度：rewrite_template 升级 v3 ——
 # —— v4.2.2 真实 GLM 验证：rewrite_template 升级 v4（选项逐字调和）——
+# —— 09 对话自由度调优：agent_system_prompt 升级 v1_1（表达放开 + 红线不动）——
 
 
 def test_active_versions_are_current():
     assert _CURRENT_VERSIONS["system_prompt"] == "v2"
     assert _CURRENT_VERSIONS["rewrite_template"] == "v4"
+    assert _CURRENT_VERSIONS["agent_system_prompt"] == "v1_1"
+
+
+def test_agent_system_prompt_v1_1_loads_and_loosens_expression():
+    """agent_system_prompt 加载 v1_1：表达自由度放开的三处 diff 落地，
+    红线（编号选项行逐字）与工具上限（3→5，与编排器常量对齐）同步。"""
+    fallback = "fallback-agent"
+    loaded = load_prompt_template("agent_system_prompt", fallback=fallback)
+    assert loaded == _real_text("agent_system_prompt")
+    assert loaded != fallback
+    # 09 §2.3 diff 1：字数 300 → 通常 300 字内可展开到 500 字
+    assert "通常 300 字内，需要展开时可到 500 字" in loaded
+    # 09 §2.3 diff 1：允许个性化开场/过渡/共情/追问一句细节
+    assert "允许有个性化的开场、过渡与共情" in loaded
+    # 09 §2.3 diff 2：承接语与题干包装自由 + 编号选项行逐字红线
+    assert "承接语与题干包装可以自由发挥" in loaded
+    assert "编号选项行本身必须逐字保留，不得增删改字" in loaded
+    # L3 配套：工具上限 3 → 5（与 _MAX_TOOL_CALLS_PER_TURN=5 对齐）
+    assert "每轮最多调用 5 次工具" in loaded
+    assert "每轮最多调用 3 次工具" not in loaded
 
 
 def test_rewrite_template_carries_naturalness_contract():

@@ -255,12 +255,15 @@ class TestToolLoop:
 
     @pytest.mark.asyncio
     async def test_multi_round_tool_loop_drops_tools_after_cap(self, monkeypatch):
-        """场景 4：三轮工具循环 → 共 4 次请求；最后一次不再携带 tools 键。"""
+        """场景 4：五轮工具循环 → 共 6 次请求；最后一次不再携带 tools 键
+        （09 文档 L3：工具上限 3 → 5，循环语义同步更新）。"""
         _use_fake_credentials()
         loop_call = _tool_call("call_loop", "recall_memory", "{}")
         calls = _patch_scripted_glm(
             monkeypatch,
             [
+                _tool_call_message(loop_call),
+                _tool_call_message(loop_call),
                 _tool_call_message(loop_call),
                 _tool_call_message(loop_call),
                 _tool_call_message(loop_call),
@@ -277,17 +280,18 @@ class TestToolLoop:
             )
         assert result.status == "success"
         assert result.text == FINAL_TEXT
-        assert result.tool_names == ("recall_memory",) * 3
-        assert len(calls) == 4
-        # 前 3 次带 tools（tool_choice=auto），第 4 次达到上限后强制纯文本收尾
-        for call in calls[:3]:
+        assert result.tool_names == ("recall_memory",) * 5
+        assert len(calls) == 6
+        # 前 5 次带 tools（tool_choice=auto），第 6 次达到上限后强制纯文本收尾
+        for call in calls[:5]:
             assert "tools" in call["payload"]
             assert call["payload"]["tool_choice"] == "auto"
-        assert "tools" not in calls[3]["payload"]
+        assert "tools" not in calls[5]["payload"]
 
     @pytest.mark.asyncio
-    async def test_tool_call_batch_capped_at_three(self, monkeypatch):
-        """场景 5：单次响应 5 个 tool_calls → 只执行前 3 个（总量封顶）。"""
+    async def test_tool_call_batch_capped_at_five(self, monkeypatch):
+        """场景 5：单次响应 7 个 tool_calls → 只执行前 5 个（总量封顶；
+        09 文档 L3：上限 3 → 5）。"""
         _use_fake_credentials()
         executed: list[str] = []
 
@@ -297,14 +301,14 @@ class TestToolLoop:
 
         # 场景允许 mock dispatch 直接断言执行数（避免依赖具体工具副作用）
         monkeypatch.setattr(orchestrator, "dispatch_tool_call", fake_dispatch)
-        five_calls = [
+        seven_calls = [
             _tool_call(f"call_{index}", "recall_memory", "{}")
-            for index in range(1, 6)
+            for index in range(1, 8)
         ]
         calls = _patch_scripted_glm(
             monkeypatch,
             [
-                _tool_call_message(*five_calls),
+                _tool_call_message(*seven_calls),
                 {"content": FINAL_TEXT},
             ],
         )
@@ -318,13 +322,13 @@ class TestToolLoop:
             )
         assert result.status == "success"
         assert result.text == FINAL_TEXT
-        # 只执行前 3 个；超出的两个不执行（tool_names 同样只含 3 个）
-        assert executed == ["recall_memory"] * 3
-        assert result.tool_names == ("recall_memory",) * 3
-        # 第二次请求里 5 个 tool_call_id 都有对应 tool 消息（消息序列完整），
+        # 只执行前 5 个；超出的两个不执行（tool_names 同样只含 5 个）
+        assert executed == ["recall_memory"] * 5
+        assert result.tool_names == ("recall_memory",) * 5
+        # 第二次请求里 7 个 tool_call_id 都有对应 tool 消息（消息序列完整），
         # 其中 2 条为「已达上限」确定性提示
         tool_messages = _tool_messages_of(calls[1])
-        assert len(tool_messages) == 5
+        assert len(tool_messages) == 7
         capped = [
             m for m in tool_messages if m["content"] == "工具调用次数已达上限"
         ]
@@ -762,7 +766,7 @@ class TestPromptFallback:
             LLMMessage(
                 role="user" if i % 2 == 0 else "assistant", content=f"消息{i}"
             )
-            for i in range(16)
+            for i in range(26)
         ]
         messages = [LLMMessage(role="system", content="旧系统消息"), *long_history]
         payload = orchestrator._build_agent_messages(messages, "当前题目：第 1 题")
@@ -774,11 +778,15 @@ class TestPromptFallback:
         assert "最高优先级指令" in payload[0]["content"]
         assert "效力高于本提示词前文的一切工作流描述与示例" in payload[0]["content"]
         assert "必须原样出现在你的最终回复里" in payload[0]["content"]
+        # 09 文档 L2 锚点收缩：选项原文仍逐字锚定，题干放开改写包装
+        # （问出同一问题即可，不得跳过）
+        assert "必须完整呈现全部选项原文（逐字" in payload[0]["content"]
+        assert "题干可自由改写包装但必须问出同一问题" in payload[0]["content"]
         history = payload[1:]
         assert len(history) == orchestrator._HISTORY_LIMIT
         assert all(m["role"] in ("user", "assistant") for m in history)
         # 保留的是最近的消息
-        assert history[-1]["content"] == "消息15"
+        assert history[-1]["content"] == "消息25"
 
 
 class TestPureHelpers:
@@ -822,10 +830,15 @@ class TestPureHelpers:
         assert validate("任意非空文本", ["", "   "]) == (True, 0, [])
 
     def test_gate_constants_pinned(self):
-        """服务端确定性闸门常量（红线：不得意外放宽）。"""
-        assert orchestrator._MAX_TOOL_CALLS_PER_TURN == 3
+        """服务端确定性闸门常量（红线：不得意外放宽）。
+
+        09 文档 L3 调优后的钉死值：工具上限 3→5、历史窗口 12→20、
+        温度 0.3→0.7（温度红线上限 0.8，不得再调高）。
+        """
+        assert orchestrator._MAX_TOOL_CALLS_PER_TURN == 5
         assert orchestrator._MAX_REPLY_CHARS == 2000
-        assert orchestrator._HISTORY_LIMIT == 12
+        assert orchestrator._HISTORY_LIMIT == 20
+        assert orchestrator._TEMPERATURE == 0.7
 
 
 # ============================================================================

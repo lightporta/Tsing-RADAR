@@ -13,7 +13,12 @@ services:
       LLM_ENABLED: "true"
       LLM_PROVIDER: glm
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
-      LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: "4.0"
+      # 09 文档 §4：模型与增强超时走环境变量（config.py 默认值不动）。
+      # GLM_CHAT_MODEL 缺省回退 glm-4-flash；production.env 删掉该行即回
+      # flash（零代码回滚）。增强超时 L3 目标 10s（旧硬编码 4.0 会误杀
+      # 稍长的自然回复，05 报告 OBS-01 根因之一）。
+      GLM_CHAT_MODEL: ${GLM_CHAT_MODEL:-glm-4-flash}
+      LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: ${LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS:-10.0}
       # 全 Agent 化编排总开关（默认 true；production.env 置 false 可一键
       # 回退到确定性管线，无需改镜像）
       AGENT_ORCHESTRATION_ENABLED: ${AGENT_ORCHESTRATION_ENABLED:-true}

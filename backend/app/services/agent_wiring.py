@@ -55,8 +55,12 @@ def agent_interview_state_context(
             f"（访谈阶段：{fact_pack.turn_phase}）"
         )
         if fact_pack.question_prompt:
+            # 09 文档 L2 锚点收缩：题干放开改写（换个说法、加类比都行，
+            # 但必须问出同一问题且不得跳过）；选项块仍为逐字红线（下方）
             lines.append(
-                f"题干（必须逐字保留）：{fact_pack.question_prompt}"
+                "题干（可自由改写包装：换个说法、加类比都行，"
+                "但必须问出同一问题，且不得跳过）："
+                f"{fact_pack.question_prompt}"
             )
         if fact_pack.options:
             lines.append(

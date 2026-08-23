@@ -374,7 +374,12 @@ def test_production_uses_glm_file_secret_while_stage_stays_disabled():
     assert 'LLM_ENABLED: "true"' in prod
     assert "LLM_PROVIDER: glm" in prod
     assert "LLM_API_KEY_FILE: /run/secrets/llm_api_key" in prod
-    assert 'LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: "4.0"' in prod
+    assert (
+        "LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: "
+        "${LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS:-10.0}" in prod
+    )
+    # 09 文档 §4：模型走环境变量（缺省回退 flash，删行即零代码回滚）
+    assert "GLM_CHAT_MODEL: ${GLM_CHAT_MODEL:-glm-4-flash}" in prod
     assert "source: ${SECRET_ROOT:?Set SECRET_ROOT}/llm_api_key" in prod
     assert "target: /run/secrets/llm_api_key" in prod
     assert "create_host_path: false" in prod

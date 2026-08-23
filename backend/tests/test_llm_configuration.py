@@ -53,7 +53,9 @@ def test_development_supports_only_direct_glm():
     assert configured.LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS == 4.0
 
 
-@pytest.mark.parametrize("timeout", [0.49, 8.01])
+# 09 文档（对话自由度调优）：增强超时上限 8.0 → 10.0（L3 目标 10s），
+# 越界值同步更新为 10.01
+@pytest.mark.parametrize("timeout", [0.49, 10.01])
 def test_interview_enhancement_timeout_is_bounded(timeout):
     with pytest.raises(ValidationError):
         Settings(
