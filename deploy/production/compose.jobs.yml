@@ -1,0 +1,249 @@
+services:
+  prod-db-provision:
+    image: ${BACKEND_IMAGE:?Set an immutable backend image digest}
+    user: "10001:10001"
+    profiles: ["database-setup"]
+    restart: "no"
+    environment:
+      JOB_LOCK_TIMEOUT_SECONDS: "5"
+      DATABASE_HOST: postgres
+      DATABASE_BOOTSTRAP_USER: ${DATABASE_BOOTSTRAP_USER:?Set DATABASE_BOOTSTRAP_USER}
+      DATABASE_BOOTSTRAP_PASSWORD_FILE: /run/secrets/database_bootstrap_password
+      TARGET_DATABASE_NAME: ${PROD_DATABASE_NAME:?Set PROD_DATABASE_NAME}
+      TARGET_DATABASE_USER: ${PROD_DATABASE_USER:?Set PROD_DATABASE_USER}
+      TARGET_DATABASE_PASSWORD_FILE: /run/secrets/database_password
+    entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
+    command: ["python", "/opt/tsing-radar/database_provision.py"]
+    group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
+    volumes:
+      - ./scripts/database_provision.py:/opt/tsing-radar/database_provision.py:ro
+      - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
+      - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${BOOTSTRAP_SECRET_ROOT:?Set BOOTSTRAP_SECRET_ROOT}/database_bootstrap_password
+        target: /run/secrets/database_bootstrap_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - prod-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1770
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    mem_limit: 128m
+    cpus: 0.25
+
+  migration:
+    image: ${BACKEND_IMAGE:?Set an immutable backend image digest}
+    user: "10001:10001"
+    profiles: ["migration"]
+    restart: "no"
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${PROD_DATABASE_NAME:?Set PROD_DATABASE_NAME}
+      DATABASE_USER: ${PROD_DATABASE_USER:?Set PROD_DATABASE_USER}
+      DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      AUTO_CREATE_SCHEMA: "false"
+      MIGRATION_LOCK_TIMEOUT_SECONDS: "5"
+      JOB_LOCK_TIMEOUT_SECONDS: "5"
+      # The wrapper is bind-mounted outside WORKDIR.  Pin the application root
+      # so absolute-script execution can deterministically import /app/app.
+      PYTHONPATH: /app
+    entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
+    command: ["python", "/opt/tsing-radar/migration_with_lock.py"]
+    group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
+    volumes:
+      - ./scripts/migration_with_lock.py:/opt/tsing-radar/migration_with_lock.py:ro
+      - type: bind
+        source: ../../backend/alembic/env.py
+        target: /app/alembic/env.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
+      - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - prod-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1770
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    mem_limit: 256m
+    cpus: 0.5
+
+  post-migration-verification:
+    image: ${BACKEND_IMAGE:?Set an immutable backend image digest}
+    user: "10001:10001"
+    profiles: ["resume-verification"]
+    restart: "no"
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${PROD_DATABASE_NAME:?Set PROD_DATABASE_NAME}
+      DATABASE_USER: ${PROD_DATABASE_USER:?Set PROD_DATABASE_USER}
+      DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      AUTO_CREATE_SCHEMA: "false"
+      JOB_LOCK_TIMEOUT_SECONDS: "5"
+      PYTHONPATH: /app:/opt/tsing-radar
+    entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
+    command: ["python", "/opt/tsing-radar/post_migration_verify.py"]
+    group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
+    volumes:
+      - ./scripts/post_migration_verify.py:/opt/tsing-radar/post_migration_verify.py:ro
+      - ./scripts/migration_with_lock.py:/opt/tsing-radar/migration_with_lock.py:ro
+      - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
+      - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - prod-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1770
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    mem_limit: 256m
+    cpus: 0.5
+
+  backup:
+    image: ${POSTGRES_IMAGE:?Set an immutable PostgreSQL image digest}
+    profiles: ["backup"]
+    restart: "no"
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_NAME: ${PROD_DATABASE_NAME:?Set PROD_DATABASE_NAME}
+      DATABASE_USER: ${PROD_DATABASE_USER:?Set PROD_DATABASE_USER}
+      DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      JOB_LOCK_TIMEOUT_SECONDS: "5"
+    entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
+    command: ["/bin/sh", "/opt/tsing-radar/postgres-backup.sh"]
+    group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
+    volumes:
+      - backup_data:/backups
+      - ./scripts/postgres-backup.sh:/opt/tsing-radar/postgres-backup.sh:ro
+      - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
+      - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/database_password
+        target: /run/secrets/database_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - prod-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1770
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    cap_add: ["DAC_OVERRIDE"]
+    mem_limit: 512m
+    cpus: 0.75
+
+  restore-check-db:
+    image: ${POSTGRES_IMAGE:?Set an immutable PostgreSQL image digest}
+    profiles: ["restore-check"]
+    restart: "no"
+    environment:
+      POSTGRES_USER: restore_check
+      POSTGRES_DB: restore_check
+      POSTGRES_PASSWORD_FILE: /run/secrets/restore_check_password
+      JOB_LOCK_TIMEOUT_SECONDS: "5"
+    entrypoint: ["/bin/sh", "/opt/tsing-radar/job-lock.sh"]
+    command: ["docker-entrypoint.sh", "postgres"]
+    group_add: ["${JOB_LOCK_GID:?Set the host job-lock group id}"]
+    volumes:
+      - ./scripts/job-lock.sh:/opt/tsing-radar/job-lock.sh:ro
+      - ${JOB_LOCK_FILE:?Set the pre-created host job-lock file}:/run/tsing-radar/job.lock
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/restore_check_password
+        target: /run/secrets/restore_check_password
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /var/lib/postgresql/data:size=512m,mode=0700
+    networks:
+      - restore-check-data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U restore_check -d restore_check"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 384m
+    cpus: 0.5
+
+  restore-check:
+    image: ${POSTGRES_IMAGE:?Set an immutable PostgreSQL image digest}
+    profiles: ["restore-check"]
+    restart: "no"
+    environment:
+      RESTORE_CHECK_HOST: restore-check-db
+      RESTORE_CHECK_PASSWORD_FILE: /run/secrets/restore_check_password
+    entrypoint: ["/bin/sh", "/opt/tsing-radar/postgres-restore-check.sh"]
+    volumes:
+      - backup_data:/backups:ro
+      - ./scripts/postgres-restore-check.sh:/opt/tsing-radar/postgres-restore-check.sh:ro
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/restore_check_password
+        target: /run/secrets/restore_check_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - restore-check-data
+    depends_on:
+      restore-check-db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1770
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    cap_add: ["DAC_OVERRIDE"]
+    mem_limit: 512m
+    cpus: 0.75
+
+networks:
+  restore-check-data:
+    internal: true
+
+volumes:
+  backup_data: {}

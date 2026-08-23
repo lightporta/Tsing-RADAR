@@ -1,0 +1,11 @@
+{
+  "artifact": "mentors.knowledge.json",
+  "schema_version": "1.0",
+  "generated_at": "2026-08-20T06:33:43+00:00",
+  "build_script": "scripts/build_mentor_knowledge.py",
+  "source_file": "清华导师评价综述_20260816.md",
+  "source_sha256": "99db84c0a966c47716b4b855711bf660dcae75e5eb73e3c9340e3f6e8a14b980",
+  "source_mentor_count": 340,
+  "quote_blocks_removed": 555,
+  "scope_notice": "综述级聚合：仅存评价统计、判档、四维结构化均分与综述摘要；不含任何原始引文（代表性引文块已全部剔除）。匿名主观评价聚合仅作参考，不构成对导师能力的客观评判，不混入雷达/匹配客观管线。"
+}

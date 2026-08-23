@@ -1,0 +1,96 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+/.pytest-*/
+/.l2-release/
+/.l3-handoff/
+.coverage
+htmlcov/
+.tox/
+
+# 虚拟环境
+venv/
+env/
+.venv/
+ENV/
+
+# 数据库文件（开发期 SQLite）
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== Node =====
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 自动生成的类型声明
+frontend/src/auto-imports.d.ts
+frontend/src/components.d.ts
+
+# ===== 环境配置（含密钥）=====
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+.env.compose.local
+.env.compose.*.local
+
+# ===== 编辑器 / 系统 =====
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# ===== 日志 / 临时 =====
+*.log
+logs/
+tmp/
+*.tmp
+
+# ===== 项目特定 =====
+
+# D1 官方目录只允许本地缓存和生成，不上传原始页面或数据集
+backend/data/catalog_d1/cache/
+backend/data/catalog_d1/generated/
+# 未获公开授权的旧导师治理记录只保留在本机；公开仓库使用 0 记录基线。
+backend/data/private_local/
+# 本地运行时治理数据与演示产物不入库（生产经 volume 挂载真实数据）
+backend/data/mentors.evidence.json
+backend/data/mentor_scores*.json
+backend/data/*.svg
+backend/data/*.png
+
+# A5 私有上传与本地测试依赖不得入库
+private_uploads/
+backend/private_uploads/
+.a5-test-deps/
+.a7-test-deps/
+.dep2-test-deps/
+.a7-pytest-tmp*/
+.qxd1-runtime.json
+.qxd1-runtime/
+deploy/production/*.env
+deploy/production/secrets/
+deploy/production/backups/
+deploy/production/release-manifest.local.json
+deploy/production/image-lock.local.json
+
+# IDE 工作区（不入仓库）
+.trae/
+.zcode/

@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tsing-radar.local/schemas/handoff-manifest-v1.json",
+  "title": "Tsing-RADAR offline production handoff manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generation_id",
+    "captured_at",
+    "target_platform",
+    "image_lock",
+    "l2_release_manifest",
+    "compose_environment",
+    "source_archive",
+    "image_archives",
+    "bundle_policy",
+    "integrity_policy",
+    "cloud_gates"
+  ],
+  "properties": {
+    "schema_version": {"const": "l3-handoff-manifest-v1"},
+    "generation_id": {
+      "type": "string",
+      "pattern": "^l3-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$"
+    },
+    "captured_at": {"type": "string", "format": "date-time"},
+    "target_platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": {"const": "linux"},
+        "architecture": {"const": "amd64"}
+      }
+    },
+    "image_lock": {"$ref": "#/$defs/fileDescriptor"},
+    "l2_release_manifest": {"$ref": "#/$defs/fileDescriptor"},
+    "compose_environment": {"$ref": "#/$defs/fileDescriptor"},
+    "source_archive": {"$ref": "#/$defs/fileDescriptor"},
+    "image_archives": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "allOf": [
+            {"$ref": "#/$defs/applicationArchive"},
+            {
+              "properties": {
+                "slot": {"const": "BACKEND_IMAGE"},
+                "path": {"const": "images/backend.oci.tar"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/applicationArchive"},
+            {
+              "properties": {
+                "slot": {"const": "FRONTEND_IMAGE"},
+                "path": {"const": "images/frontend.oci.tar"}
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "bundle_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixed_regular_file_count",
+        "application_archive_count",
+        "vendor_archive_count",
+        "max_bundle_bytes"
+      ],
+      "properties": {
+        "fixed_regular_file_count": {"const": 8},
+        "application_archive_count": {"const": 2},
+        "vendor_archive_count": {"const": 0},
+        "max_bundle_bytes": {"const": 2147483648}
+      }
+    },
+    "integrity_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_hash", "archive_validation", "tag_freshness"],
+      "properties": {
+        "manifest_hash": {"const": "detached-sha256-of-exact-bundle-manifest-bytes"},
+        "archive_validation": {"const": "validate-all-headers-and-descriptors-before-extract-or-load"},
+        "tag_freshness": {"const": "separate-non-integrity-gate"}
+      }
+    },
+    "cloud_gates": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "target_docker_load_inspect_and_compose_create",
+          "target_vendor_digest_pull_and_inspect",
+          "final_candidate_secret_pii_authorization_scan",
+          "real_secret_uid_mode",
+          "real_cos_clamav_database_backup_restore",
+          "dns_tls_icp_and_public_surface_authorization"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "fileDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "applicationArchive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "path", "size", "sha256"],
+      "properties": {
+        "slot": {"enum": ["BACKEND_IMAGE", "FRONTEND_IMAGE"]},
+        "path": {"enum": ["images/backend.oci.tar", "images/frontend.oci.tar"]},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/digest"}
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+services:
+  backend:
+    environment:
+      QXD_API_KEY_FILE: /run/secrets/qxd_api_key
+      QXD_END_USER_SIGNING_SECRET_FILE: /run/secrets/qxd_end_user_signing_secret
+      QXD_TRIAL_SINGLE_USER_MODE: "false"
+      QXD_REMOTE_MEDIA_FETCH_ENABLED: "false"
+      QXD_ATTACHMENTS_ENABLED: "false"
+      PUBLIC_BASE_URL: ""
+    volumes:
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/qxd_api_key
+        target: /run/secrets/qxd_api_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/qxd_end_user_signing_secret
+        target: /run/secrets/qxd_end_user_signing_secret
+        read_only: true
+        bind:
+          create_host_path: false
+
+  qxd-gateway:
+    image: ${NGINX_UNPRIVILEGED_IMAGE:?Set an immutable unprivileged Nginx image digest}
+    restart: unless-stopped
+    volumes:
+      - ./qxd-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - prod-app
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1770,uid=101,gid=101
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 128m
+    mem_reservation: 64m
+    cpus: 0.2
+    cpu_shares: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  edge:
+    environment:
+      QXD_HOST: ${QXD_HOST:?Set the separately approved QXD host}
+    volumes:
+      - ./edge/routes/qxd.caddy:/etc/caddy/routes/20-qxd.caddy:ro

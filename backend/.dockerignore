@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+private_uploads
+data/catalog_d1/cache
+data/catalog_d1/generated
+data/mentors.evidence.json
+data/private_local/
+tests
