@@ -58,6 +58,9 @@ _TEMPERATURE = 0.3
 _MAX_TOKENS = 800
 # 送入 GLM 的历史消息条数上限（仅 user/assistant 角色）
 _HISTORY_LIMIT = 12
+# v4.3.1 缺锚点重试的最小剩余预算（秒）：剩余预算不高于该值时不再重试，
+# 直接维持 rejected_by_gate 现状（防止重试调用拖垮请求总延迟）
+_ANCHOR_RETRY_MIN_BUDGET_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -84,9 +87,18 @@ def _build_agent_messages(
         for m in messages
         if m.role in ("user", "assistant")
     ][-_HISTORY_LIMIT:]
+    # v4.3.1 修复（生产实测）：原标题「必须遵守」会被前文系统提示词里
+    # 「每次回复不超过 300 字、不啰嗦」的通用指令压过（glm-4-flash 只回
+    # 承接语、不逐字引用选项原文 → 永久降级确定性文本），此处升级为
+    # 最高优先级声明：显式声明效力高于前文一切工作流描述与示例，并说明
+    # 编号选项不计入字数限制、不得用模型自拟问题或工具调用替代当前题目。
     system_content = (
         AGENT_SYSTEM_PROMPT
-        + "\n\n【本轮服务端确定性状态（必须遵守，其中要求逐字保留的内容不可改写）】\n"
+        + "\n\n【服务端确定性状态——最高优先级指令，效力高于本提示词前文的一切工作流描述与示例】\n"
+        + "当前轮次必须以下方状态为准：若下方已下发当前题目与选项，"
+        "必须把题干与全部选项原文完整呈现在回复中（编号选项不计入字数限制），"
+        "不得用你自己的问题或工具调用替代当前题目；"
+        + '其中标注"必须逐字保留"的内容必须原样出现在你的最终回复里。\n'
         + state_context
     )
     return [{"role": "system", "content": system_content}, *history]
@@ -100,22 +112,52 @@ def _extract_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
     return [call for call in tool_calls if isinstance(call, dict)]
 
 
-def _validate_final_reply(text: str | None, anchors: list[str]) -> tuple[bool, int]:
+def _validate_final_reply(
+    text: str | None, anchors: list[str]
+) -> tuple[bool, int, list[str]]:
     """最终回复校验闸门。
 
-    返回 (是否通过, 缺失锚点数)：text 非空、长度不超过 _MAX_REPLY_CHARS、
-    anchors 中每个非空字符串都在 text 中逐字出现（空白锚点跳过）。
+    返回 (是否通过, 缺失锚点数, 缺失锚点列表)：text 非空、长度不超过
+    _MAX_REPLY_CHARS、anchors 中每个非空字符串都在 text 中逐字出现
+    （空白锚点跳过）。非字符串 / 空白 / 超长时缺失列表为空（缺失数为
+    0，调用方据此区分「纯超长/空文本」与「缺锚点」两类失败——前者
+    不触发缺锚点重试）。
     """
     if not isinstance(text, str) or not text.strip():
-        return False, 0
+        return False, 0, []
     if len(text) > _MAX_REPLY_CHARS:
-        return False, 0
-    missing_count = sum(
-        1
+        return False, 0, []
+    missing_anchors = [
+        anchor
         for anchor in anchors
         if isinstance(anchor, str) and anchor.strip() and anchor not in text
-    )
-    return missing_count == 0, missing_count
+    ]
+    return len(missing_anchors) == 0, len(missing_anchors), missing_anchors
+
+
+async def _post_glm_chat(
+    api_key: str,
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """发起一次 GLM chat/completions 请求，返回 choices[0].message。
+
+    HTTP 错误 / 超时 / JSON 解析 / KeyError 原样抛出，由调用方统一
+    fail-closed（日志不含 key、不含消息内容）；编排主循环与缺锚点
+    重试共用本函数。
+    """
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        resp = await client.post(
+            f"{settings.GLM_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]
 
 
 async def run_agent_turn(
@@ -162,6 +204,8 @@ async def run_agent_turn(
     model = settings.GLM_CHAT_MODEL
     used_tool_names: list[str] = []
     tool_calls_used = 0
+    # v4.3.1 缺锚点重试标记：单轮最多重试 1 次（重试后仍失败即拒绝）
+    anchor_retried = False
     started = time.monotonic()
 
     while True:
@@ -197,17 +241,9 @@ async def run_agent_turn(
             payload["tool_choice"] = "auto"
 
         try:
-            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                resp = await client.post(
-                    f"{settings.GLM_BASE_URL}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-                resp.raise_for_status()
-                message = resp.json()["choices"][0]["message"]
+            message = await _post_glm_chat(
+                api_key, payload, timeout_seconds=timeout_seconds
+            )
         except Exception as exc:
             # HTTP 错误 / 超时 / JSON 解析 / KeyError 统一 fail-closed
             #（日志模式照抄 llm.py：不含 key、不含消息内容）
@@ -291,8 +327,113 @@ async def run_agent_turn(
             return AgentTurnResult(None, "failed", tuple(used_tool_names))
 
         # —— 闸门 4：最终回复校验（非空 / 长度 / 逐字锚点全命中）——
-        passed, missing_count = _validate_final_reply(content, anchor_sink)
+        passed, missing_count, missing_anchors = _validate_final_reply(
+            content, anchor_sink
+        )
         if not passed:
+            # —— v4.3.1 缺锚点重试：生产实测 glm-4-flash 会只回承接语、
+            # 不逐字引用选项原文（被前文「不超过 300 字」指令压过），
+            # 原实现一次失败即永久降级确定性文本；这里给模型一次带着
+            # 缺失清单的改正机会。仅锚点缺失触发（纯超长/空文本不重试）、
+            # 最多 1 次，且剩余预算须大于 _ANCHOR_RETRY_MIN_BUDGET_SECONDS ——
+            if (
+                missing_count > 0
+                and not anchor_retried
+                and _TURN_TOTAL_BUDGET_SECONDS - (time.monotonic() - started)
+                > _ANCHOR_RETRY_MIN_BUDGET_SECONDS
+            ):
+                anchor_retried = True
+                logger.info(
+                    "agent_turn status=anchor_retry provider=glm model=%s "
+                    "missing_count=%d tool_calls=%d latency_ms=%d",
+                    model,
+                    missing_count,
+                    tool_calls_used,
+                    round((time.monotonic() - started) * 1000),
+                )
+                # 回填被拒回复（模型需要看到自己上一条回复才能保留承接
+                # 语气），再追加带缺失锚点清单的纠正指令；重试请求不带
+                # tools（与达到工具上限后的纯文本收尾语义一致）
+                payload_messages.append({"role": "assistant", "content": content})
+                payload_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "你的上一条回复缺少以下必须逐字保留的内容：\n"
+                            + "\n".join(missing_anchors)
+                            + "\n请重新给出完整回复：保留你刚才承接语的语气，"
+                            "但必须逐字原样包含上述全部内容"
+                            "（编号选项不计入字数限制）。"
+                        ),
+                    }
+                )
+                retry_payload: dict[str, Any] = {
+                    "model": model,
+                    "messages": payload_messages,
+                    "temperature": _TEMPERATURE,
+                    "max_tokens": _MAX_TOKENS,
+                    "stream": False,
+                }
+                retry_timeout = max(
+                    1.0,
+                    min(
+                        float(settings.LLM_TIMEOUT),
+                        _TURN_TOTAL_BUDGET_SECONDS
+                        - (time.monotonic() - started),
+                    ),
+                )
+                try:
+                    retry_message = await _post_glm_chat(
+                        api_key, retry_payload, timeout_seconds=retry_timeout
+                    )
+                except Exception as exc:
+                    # 重试请求的 HTTP/解析异常与主循环同款 fail-closed
+                    status_code = getattr(
+                        getattr(exc, "response", None), "status_code", None
+                    )
+                    logger.warning(
+                        "agent_turn provider=glm model=%s status=failed retry=1 "
+                        "error_type=%s http_status=%s latency_ms=%d",
+                        model,
+                        type(exc).__name__,
+                        status_code if status_code is not None else "none",
+                        round((time.monotonic() - started) * 1000),
+                    )
+                    return AgentTurnResult(None, "failed", tuple(used_tool_names))
+                # 对重试回复重新跑完整校验（含非空 / 长度 / 全部锚点）
+                retry_content = retry_message.get("content")
+                (
+                    retry_passed,
+                    retry_missing_count,
+                    _retry_missing_anchors,
+                ) = _validate_final_reply(retry_content, anchor_sink)
+                if retry_passed:
+                    logger.info(
+                        "agent_turn status=success provider=glm model=%s retry=1 "
+                        "tool_calls=%d tools=%s latency_ms=%d",
+                        model,
+                        tool_calls_used,
+                        ",".join(used_tool_names) if used_tool_names else "none",
+                        round((time.monotonic() - started) * 1000),
+                    )
+                    return AgentTurnResult(
+                        retry_content.strip(), "success", tuple(used_tool_names)
+                    )
+                # 重试仍失败（仍缺锚点 / 超长 / 空文本）→ 拒绝，不再重试
+                logger.warning(
+                    "agent_turn status=rejected_by_gate provider=glm model=%s "
+                    "retry=1 missing_anchor_count=%d reply_chars=%d "
+                    "tool_calls=%d latency_ms=%d",
+                    model,
+                    retry_missing_count,
+                    len(retry_content) if isinstance(retry_content, str) else 0,
+                    tool_calls_used,
+                    round((time.monotonic() - started) * 1000),
+                )
+                return AgentTurnResult(
+                    None, "rejected_by_gate", tuple(used_tool_names)
+                )
+            # 预算不足 / 已重试过 / 非锚点失败（纯超长）→ 直接拒绝（现状不变）
             logger.warning(
                 "agent_turn status=rejected_by_gate provider=glm model=%s "
                 "missing_anchor_count=%d reply_chars=%d tool_calls=%d "

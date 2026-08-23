@@ -505,11 +505,16 @@ class TestAnchorGate:
 
     @pytest.mark.asyncio
     async def test_missing_anchor_rejected_by_gate(self, monkeypatch):
-        """场景 13：最终文本缺失任一锚点 → rejected_by_gate、text=None。"""
+        """场景 13：最终文本缺失任一锚点 → 触发一次缺锚点重试，重试回复
+        仍缺 → rejected_by_gate、text=None；恰好 2 次请求，重试请求不
+        携带 tools。"""
         _use_fake_credentials()
-        _patch_scripted_glm(
+        calls = _patch_scripted_glm(
             monkeypatch,
-            [{"content": "你可以深度参与导师课题，其余内容略。"}],
+            [
+                {"content": "你可以深度参与导师课题，其余内容略。"},
+                {"content": "抱歉，契合度分数这里确实给不了，先聊聊别的？"},
+            ],
         )
         with SessionLocal() as db:
             result = await run_agent_turn(
@@ -522,6 +527,90 @@ class TestAnchorGate:
             )
         assert result.status == "rejected_by_gate"
         assert result.text is None
+        # 恰好 2 次请求：初次回复缺锚点 → 缺锚点重试一次 → 仍缺即拒绝
+        assert len(calls) == 2
+        # 重试请求不带 tools（纯文本收尾，与达到工具上限后的语义一致）
+        assert "tools" not in calls[1]["payload"]
+        # 重试请求末尾：回填被拒回复 + 带缺失锚点清单的纠正指令
+        retry_messages = calls[1]["payload"]["messages"]
+        assert retry_messages[-2]["role"] == "assistant"
+        assert retry_messages[-2]["content"] == "你可以深度参与导师课题，其余内容略。"
+        assert retry_messages[-1]["role"] == "user"
+        assert "契合度 87 分" in retry_messages[-1]["content"]
+        assert "必须逐字保留" in retry_messages[-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_anchor_retry_recovers_to_success(self, monkeypatch):
+        """场景 13b（v4.3.1 生产缺陷修复）：初次回复只回承接语（缺全部
+        锚点，复现生产 glm-4-flash 失败形态）→ 缺锚点重试 → 重试回复
+        补齐全部锚点 → success；最终 text 为重试回复、tool_names 保持
+        不变、恰好 2 次请求且重试不带 tools。"""
+        _use_fake_credentials()
+        retry_final = (
+            "好嘞，已记下你的兴趣！本次匹配契合度 87 分，建议深度参与导师课题。"
+        )
+        calls = _patch_scripted_glm(
+            monkeypatch,
+            [
+                # 生产实测的失败形态：36 字承接语，未逐字引用锚点原文
+                {"content": "好嘞，已记下你的兴趣！接下来聊聊研究方式～"},
+                {"content": retry_final},
+            ],
+        )
+        with SessionLocal() as db:
+            result = await run_agent_turn(
+                db,
+                session_id="agent-test-anchor-retry-ok",
+                student_id="student-agent-test",
+                messages=_user_messages(),
+                state_context="当前题目：第 1 题",
+                required_anchors=["契合度 87 分", "深度参与导师课题"],
+            )
+        assert result.status == "success"
+        assert result.text == retry_final
+        assert result.tool_names == ()
+        assert len(calls) == 2
+        assert "tools" not in calls[1]["payload"]
+        # 纠正指令携带全部缺失锚点清单（模型据此一次改正）
+        retry_last = calls[1]["payload"]["messages"][-1]
+        assert retry_last["role"] == "user"
+        assert "契合度 87 分" in retry_last["content"]
+        assert "深度参与导师课题" in retry_last["content"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "retry_content",
+        [
+            pytest.param("超" * (orchestrator._MAX_REPLY_CHARS + 1), id="oversized"),
+            pytest.param("   \n\t ", id="blank"),
+        ],
+    )
+    async def test_anchor_retry_bad_reply_rejected_no_third_call(
+        self, monkeypatch, retry_content
+    ):
+        """场景 13c：缺锚点重试后的回复超长/为空 → 对重试回复跑完整
+        校验后 rejected_by_gate，不发起第三次调用（脚本化客户端超出
+        脚本长度即报错，双重保险）。"""
+        _use_fake_credentials()
+        calls = _patch_scripted_glm(
+            monkeypatch,
+            [
+                {"content": "好嘞，已记下你的兴趣！接下来聊聊研究方式～"},
+                {"content": retry_content},
+            ],
+        )
+        with SessionLocal() as db:
+            result = await run_agent_turn(
+                db,
+                session_id="agent-test-anchor-retry-bad",
+                student_id="student-agent-test",
+                messages=_user_messages(),
+                state_context="当前题目：第 1 题",
+                required_anchors=["契合度 87 分"],
+            )
+        assert result.status == "rejected_by_gate"
+        assert result.text is None
+        assert len(calls) == 2
 
     @staticmethod
     def _fake_match_services(monkeypatch, *, fit_score: int) -> None:
@@ -563,12 +652,14 @@ class TestAnchorGate:
     @pytest.mark.asyncio
     async def test_compute_match_anchor_blocks_tampered_score(self, monkeypatch):
         """场景 14（关键红线）：compute_match 工具结果含「契合度 87 分」，
-        最终回复改写成「契合度 92 分」→ rejected_by_gate。
+        最终回复改写成「契合度 92 分」→ 触发缺锚点重试，重试仍篡改 →
+        rejected_by_gate。
 
         等价简化说明：本用例 required_anchors 传空列表，锚点「87」只能
         来自 compute_match 执行体写入 anchor_sink 的真实代码路径
         （_FIT_SCORE_ANCHOR_RE 提取 + append），因此被拒绝即证明
-        工具注册锚点确实参与了最终校验（防 LLM 篡改分数）。
+        工具注册锚点确实参与了最终校验（防 LLM 篡改分数），且缺锚点
+        重试同样不放行篡改结果。
         """
         _use_fake_credentials()
         self._fake_match_services(monkeypatch, fit_score=87)
@@ -581,6 +672,7 @@ class TestAnchorGate:
                     )
                 ),
                 {"content": "根据匹配结果，你和张三老师的契合度 92 分，非常合适。"},
+                {"content": "我再确认一次：你和张三老师的契合度是 92 分。"},
             ],
         )
         with SessionLocal() as db:
@@ -596,10 +688,14 @@ class TestAnchorGate:
         tool_messages = _tool_messages_of(calls[1])
         assert len(tool_messages) == 1
         assert "契合度 87 分" in tool_messages[0]["content"]
-        # 最终回复缺失锚点「87」→ 逐字校验拒绝（fail-closed，不降级放行）
+        # 最终回复缺失锚点「87」→ 缺锚点重试一次后仍篡改 → 逐字校验拒绝
+        # （fail-closed，不降级放行）
         assert result.status == "rejected_by_gate"
         assert result.text is None
         assert result.tool_names == ("compute_match",)
+        # 共 3 次请求：工具调用 → 篡改回复 → 缺锚点重试；重试不带 tools
+        assert len(calls) == 3
+        assert "tools" not in calls[2]["payload"]
 
     @pytest.mark.asyncio
     async def test_compute_match_anchor_passes_with_verbatim_score(
@@ -673,6 +769,11 @@ class TestPromptFallback:
         assert payload[0]["role"] == "system"
         assert orchestrator.AGENT_SYSTEM_PROMPT in payload[0]["content"]
         assert "当前题目：第 1 题" in payload[0]["content"]
+        # v4.3.1：状态注入头部为最高优先级声明（压过前文「不超过 300 字」
+        # 等通用工作流指令），逐字保留要求显式下达
+        assert "最高优先级指令" in payload[0]["content"]
+        assert "效力高于本提示词前文的一切工作流描述与示例" in payload[0]["content"]
+        assert "必须原样出现在你的最终回复里" in payload[0]["content"]
         history = payload[1:]
         assert len(history) == orchestrator._HISTORY_LIMIT
         assert all(m["role"] in ("user", "assistant") for m in history)
@@ -694,19 +795,31 @@ class TestPureHelpers:
         assert extract({"tool_calls": valid}) == valid
 
     def test_validate_final_reply_gate_branches(self):
-        """校验闸门分支：非字符串 / 空白 / 超长 / 锚点缺失 / 空白锚点。"""
+        """校验闸门分支：非字符串 / 空白 / 超长 / 锚点缺失 / 空白锚点。
+
+        v4.3.1 起返回 (是否通过, 缺失锚点数, 缺失锚点列表)，缺失列表
+        供缺锚点重试构造纠正指令；非字符串/空白/超长的缺失列表为空。
+        """
         validate = orchestrator._validate_final_reply
-        assert validate(None, []) == (False, 0)
-        assert validate("   ", []) == (False, 0)
-        assert validate("长" * (orchestrator._MAX_REPLY_CHARS + 1), []) == (False, 0)
+        assert validate(None, []) == (False, 0, [])
+        assert validate("   ", []) == (False, 0, [])
+        assert validate("长" * (orchestrator._MAX_REPLY_CHARS + 1), []) == (
+            False,
+            0,
+            [],
+        )
         # 锚点全命中 → 通过
         assert validate(
             "契合度 87 分，可深度参与导师课题", ["87", "深度参与导师课题"]
-        ) == (True, 0)
-        # 缺失 1 个锚点 → 拒绝并报告缺失数
-        assert validate("契合度 87 分", ["87", "深度参与导师课题"]) == (False, 1)
+        ) == (True, 0, [])
+        # 缺失 1 个锚点 → 拒绝并报告缺失数与缺失锚点原文清单
+        assert validate("契合度 87 分", ["87", "深度参与导师课题"]) == (
+            False,
+            1,
+            ["深度参与导师课题"],
+        )
         # 空白锚点跳过（不误伤）
-        assert validate("任意非空文本", ["", "   "]) == (True, 0)
+        assert validate("任意非空文本", ["", "   "]) == (True, 0, [])
 
     def test_gate_constants_pinned(self):
         """服务端确定性闸门常量（红线：不得意外放宽）。"""
