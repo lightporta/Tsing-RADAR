@@ -296,7 +296,7 @@ def check_schema_contracts() -> None:
     handoff_schema = json.loads(B.HANDOFF_SCHEMA.read_text(encoding="utf-8"))
     slots = image_schema["properties"]["slots"]
     archives = handoff_schema["properties"]["image_archives"]
-    if slots["minItems"] != 10 or slots["maxItems"] != 10:
+    if slots["minItems"] != 7 or slots["maxItems"] != 7:
         raise AssertionError("image_lock_schema_slot_count")
     if archives["minItems"] != 2 or archives["maxItems"] != 2:
         raise AssertionError("handoff_schema_archive_count")
@@ -311,7 +311,7 @@ def check_schema_contracts() -> None:
     ]
     if archive_identities != list(V.APP_ARCHIVES):
         raise AssertionError("handoff_schema_application_archive_identity")
-    if slots.get("items") is not False or len(slots.get("prefixItems", [])) != 10:
+    if slots.get("items") is not False or len(slots.get("prefixItems", [])) != 7:
         raise AssertionError("image_lock_schema_extra_slot_allowed")
     engine_observation = image_schema["$defs"]["imageSlot"]["properties"].get(
         "engine_observation"
@@ -330,9 +330,6 @@ def check_schema_contracts() -> None:
     if slot_refs != [
         "#/$defs/postgresSlot",
         "#/$defs/redisSlot",
-        "#/$defs/etcdSlot",
-        "#/$defs/minioSlot",
-        "#/$defs/milvusSlot",
         "#/$defs/clamavSlot",
         "#/$defs/backendSlot",
         "#/$defs/frontendSlot",
@@ -343,14 +340,11 @@ def check_schema_contracts() -> None:
 
 
 def check_slot_contract() -> None:
-    if len(B.SLOT_SPECS) != 10 or len({item["slot"] for item in B.SLOT_SPECS}) != 10:
+    if len(B.SLOT_SPECS) != 7 or len({item["slot"] for item in B.SLOT_SPECS}) != 7:
         raise AssertionError("slot_contract_count")
     if [item["slot"] for item in B.SLOT_SPECS] != [
         "POSTGRES_IMAGE",
         "REDIS_IMAGE",
-        "ETCD_IMAGE",
-        "MINIO_IMAGE",
-        "MILVUS_IMAGE",
         "CLAMAV_IMAGE",
         "BACKEND_IMAGE",
         "FRONTEND_IMAGE",

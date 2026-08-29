@@ -70,112 +70,6 @@ services:
     cpus: 0.25
     cpu_shares: 512
 
-  etcd:
-    <<: *runtime
-    image: ${ETCD_IMAGE:?Set an immutable etcd image digest}
-    command:
-      - etcd
-      - --advertise-client-urls=http://etcd:2379
-      - --listen-client-urls=http://0.0.0.0:2379
-      - --data-dir=/etcd
-      - --auto-compaction-mode=revision
-      - --auto-compaction-retention=1000
-      - --quota-backend-bytes=2147483648
-    volumes:
-      - etcd_data:/etcd
-    networks:
-      - vector-data
-    healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
-      interval: 15s
-      timeout: 10s
-      retries: 12
-      start_period: 20s
-    stop_grace_period: 30s
-    mem_limit: 256m
-    mem_reservation: 128m
-    cpus: 0.25
-    cpu_shares: 512
-
-  milvus-minio:
-    <<: *runtime
-    image: ${MINIO_IMAGE:?Set an immutable MinIO image digest}
-    environment:
-      MINIO_ROOT_USER_FILE: /run/secrets/milvus_minio_access_key
-      MINIO_ROOT_PASSWORD_FILE: /run/secrets/milvus_minio_secret_key
-    command: ["server", "/data"]
-    volumes:
-      - milvus_minio_data:/data
-      - type: bind
-        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_access_key
-        target: /run/secrets/milvus_minio_access_key
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_secret_key
-        target: /run/secrets/milvus_minio_secret_key
-        read_only: true
-        bind:
-          create_host_path: false
-    networks:
-      - vector-data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 30s
-    stop_grace_period: 30s
-    mem_limit: 384m
-    mem_reservation: 192m
-    cpus: 0.4
-    cpu_shares: 512
-
-  milvus:
-    <<: *runtime
-    image: ${MILVUS_IMAGE:?Set an immutable Milvus image digest}
-    entrypoint: ["/bin/sh", "/opt/tsing-radar/milvus-entrypoint.sh"]
-    environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: milvus-minio:9000
-      MINIO_BUCKET_NAME: ${MILVUS_BUCKET:?Set MILVUS_BUCKET}
-      MINIO_USE_SSL: "false"
-      COMMON_STORAGETYPE: minio
-    volumes:
-      - milvus_data:/var/lib/milvus
-      - ./scripts/milvus-entrypoint.sh:/opt/tsing-radar/milvus-entrypoint.sh:ro
-      - type: bind
-        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_access_key
-        target: /run/secrets/milvus_minio_access_key
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${SECRET_ROOT:?Set SECRET_ROOT}/milvus_minio_secret_key
-        target: /run/secrets/milvus_minio_secret_key
-        read_only: true
-        bind:
-          create_host_path: false
-    networks:
-      - vector-data
-    depends_on:
-      etcd:
-        condition: service_healthy
-      milvus-minio:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9091/healthz"]
-      interval: 30s
-      timeout: 20s
-      retries: 10
-      start_period: 90s
-    stop_grace_period: 60s
-    mem_limit: 1024m
-    mem_reservation: 512m
-    cpus: 1.25
-    cpu_shares: 768
-
   clamav:
     <<: *runtime
     image: ${CLAMAV_IMAGE:?Set an immutable ClamAV image digest}
@@ -204,8 +98,6 @@ services:
 networks:
   prod-data:
     internal: true
-  vector-data:
-    internal: true
   scanner-egress: {}
   scanner-shared:
     internal: true
@@ -213,7 +105,4 @@ networks:
 volumes:
   postgres_data: {}
   redis_data: {}
-  etcd_data: {}
-  milvus_minio_data: {}
-  milvus_data: {}
   clamav_signatures: {}

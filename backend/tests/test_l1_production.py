@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -25,6 +27,14 @@ from app.core.security_validation import validate_production_secrets
 from app.services.qxd_media import validate_remote_media_configuration
 
 from scripts.check_l1_production import gateway_read_only_runtime_contract
+
+# 子进程形态的 checker 用例依赖 docker compose（checker 内部用
+# `docker compose config` 合成配置）；无 docker 的开发机跳过，CI/有
+# docker 的环境仍全量执行。
+requires_docker = pytest.mark.skipif(
+    shutil.which("docker") is None,
+    reason="docker compose is not available on this machine",
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy" / "production"
@@ -51,7 +61,6 @@ def _clear_direct_secret_environment(monkeypatch) -> None:
         "LLM_PROVIDER",
         "LLM_API_KEY_FILE",
         "GLM_API_KEY",
-        "DEEPSEEK_API_KEY",
         "PUBLIC_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -90,6 +99,9 @@ def _production_settings(tmp_path: Path, monkeypatch) -> Settings:
         ),
         LLM_PROVIDER="glm",
         LLM_API_KEY_FILE=_secret(tmp_path, "llm", "llm"),
+        # 生产基线：邮件验证码强制 SMTP，密码走文件挂载（拒绝 console 泄漏）
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(tmp_path, "mail", "mail"),
         S3_ADDRESSING_STYLE="virtual",
         S3_SERVER_SIDE_ENCRYPTION="AES256",
         FILE_SCAN_MODE="clamav",
@@ -98,6 +110,11 @@ def _production_settings(tmp_path: Path, monkeypatch) -> Settings:
         QXD_REMOTE_MEDIA_FETCH_ENABLED=False,
         QXD_ATTACHMENTS_ENABLED=False,
         PUBLIC_BASE_URL=None,
+        # 生产基线：网页测试模式开启但必须配置明确到期时间
+        WEB_TEST_MODE_ENABLED=True,
+        WEB_TEST_MODE_EXPIRES_AT=datetime(
+            2026, 12, 31, 23, 59, 59, tzinfo=timezone(timedelta(hours=8))
+        ),
     )
 
 
@@ -317,7 +334,7 @@ def test_default_artifacts_do_not_mount_or_route_qxd_or_media():
     assert "qxd.caddy" not in edge
     assert "media.caddy" not in edge
     assert "admin off" in base
-    assert "path /api/*" not in web
+    assert not any(line.strip() == "path /api/*" for line in web.splitlines())
     assert "attachments and /v1 are absent" in web
     assert "QXD1-Trial" not in qxd
     assert "qxd1-single-user-trial" not in qxd
@@ -325,7 +342,7 @@ def test_default_artifacts_do_not_mount_or_route_qxd_or_media():
 
 def test_stage_has_no_prod_milvus_or_prod_application_network_contract():
     stage = (DEPLOY / "compose.stage.yml").read_text(encoding="utf-8")
-    assert "No MILVUS_HOST" in stage
+    assert "MILVUS" not in stage
     assert "vector-data" not in stage
     assert "prod-app" not in stage
     assert "${STAGE_SECRET_ROOT:?Set STAGE_SECRET_ROOT}/redis_password" in stage
@@ -357,11 +374,16 @@ def test_production_uses_glm_file_secret_while_stage_stays_disabled():
     assert 'LLM_ENABLED: "true"' in prod
     assert "LLM_PROVIDER: glm" in prod
     assert "LLM_API_KEY_FILE: /run/secrets/llm_api_key" in prod
+    assert (
+        "LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: "
+        "${LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS:-10.0}" in prod
+    )
+    # 09 文档 §4：模型走环境变量（缺省回退 flash，删行即零代码回滚）
+    assert "GLM_CHAT_MODEL: ${GLM_CHAT_MODEL:-glm-4-flash}" in prod
     assert "source: ${SECRET_ROOT:?Set SECRET_ROOT}/llm_api_key" in prod
     assert "target: /run/secrets/llm_api_key" in prod
     assert "create_host_path: false" in prod
     assert "GLM_API_KEY:" not in prod
-    assert "DEEPSEEK_API_KEY:" not in prod
     assert 'LLM_ENABLED: "false"' in stage
     assert "LLM_API_KEY_FILE:" not in stage
     assert "https://cos.ap-hongkong.myqcloud.com" in prod
@@ -401,14 +423,41 @@ def test_public_route_manifest_matches_real_routes_and_denies_new_routes():
     }
     assert protected
     public_dialogue_route = ("POST", "/api/v1/llm/chat")
+    approved_private_routes = {
+        ("POST", "/api/documents"),
+        ("GET", "/api/documents"),
+        ("GET", "/api/documents/{document_id}"),
+        ("DELETE", "/api/documents/{document_id}"),
+        ("POST", "/api/documents/{document_id}/analysis"),
+        ("POST", "/api/documents/{document_id}/interpretation"),
+        ("POST", "/api/resume/generate"),
+        ("POST", "/api/resume/submit"),
+        ("POST", "/api/artifacts/match-report"),
+        ("POST", "/api/artifacts/{document_id}/download-grant"),
+        ("POST", "/api/artifacts/download/{token}"),
+    }
     assert public_dialogue_route in allowed
-    assert (protected - {public_dialogue_route}).isdisjoint(allowed)
+    assert approved_private_routes <= allowed
+    assert (
+        protected - {public_dialogue_route} - approved_private_routes
+    ).isdisjoint(allowed)
     assert ("POST", "/api/v1/llm/embeddings") not in allowed
     caddy = (DEPLOY / "edge" / "routes" / "web-api.caddy").read_text(
         encoding="utf-8"
     )
     assert "path /api/feedback /api/interviews /api/match /api/recruitments /api/applications /api/v1/llm/chat" in caddy
-    assert "path /api/*" not in caddy
+    assert not any(line.strip() == "path /api/*" for line in caddy.splitlines())
+    assert "not path /api/* /v1/* /health/*" in caddy
+    assert "max_size 8500KB" in caddy
+    assert "documents/[A-Za-z0-9_-]+/(analysis|interpretation)" in caddy
+    assert "recruitments/[A-Za-z0-9_-]+" in caddy
+    assert caddy.index("not path /api/* /v1/* /health/*") < caddy.index(
+        'respond "Route or method not available" 404'
+    )
+    nginx = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
+    assert "proxy_pass http://backend:8000" not in nginx
+    assert "location /api/" not in nginx
+    assert "location /v1/" not in nginx
     assert ("GET", "/api/new-route-added-later") not in allowed
 
 
@@ -646,6 +695,7 @@ def test_alembic_config_escapes_percent_encoded_database_url():
     assert 'settings.DATABASE_URL.replace("%", "%%")' in source
 
 
+@requires_docker
 def test_l1_artifact_checker_passes_with_dummy_secrets_only():
     completed = subprocess.run(
         [sys.executable, "scripts/check_l1_production.py"],
@@ -663,16 +713,16 @@ def test_l1_artifact_checker_passes_with_dummy_secrets_only():
     assert report["mode"] == "offline_dummy_secrets_only"
     assert report["resource_budget"] == {
         "host_memory_mib": 7578,
-        "default_resolved_limit_mib": 5184,
+        "default_resolved_limit_mib": 3520,
         "public_edge_capacity_reserve_mib": 128,
-        "default_capacity_budget_mib": 5312,
-        "default_non_swap_headroom_mib": 2394,
-        "edge_planning_non_swap_headroom_mib": 2266,
+        "default_capacity_budget_mib": 3648,
+        "default_non_swap_headroom_mib": 4058,
+        "edge_planning_non_swap_headroom_mib": 3930,
         "minimum_supported_combination_headroom_mib": 1280,
     }
     matrix = {item["name"]: item for item in report["resource_matrix"]}
-    assert matrix["restore-check"]["resolved_limit_mib"] == 6080
-    assert matrix["restore-check"]["non_swap_headroom_mib"] == 1498
+    assert matrix["restore-check"]["resolved_limit_mib"] == 4416
+    assert matrix["restore-check"]["non_swap_headroom_mib"] == 3162
     assert matrix["prod-stage"]["allowed"] is False
     assert report["real_credentials_used"] is False
     assert report["cloud_changes_performed"] is False
@@ -888,6 +938,7 @@ def test_root_database_job_secret_capability_and_noninteractive_contract():
         "llm-disabled",
     ],
 )
+@requires_docker
 def test_l1_checker_rejects_security_mutations(mutation):
     completed = subprocess.run(
         [sys.executable, "scripts/check_l1_production.py", "--mutation", mutation],
@@ -905,6 +956,7 @@ def test_l1_checker_rejects_security_mutations(mutation):
     assert report["failed"]
 
 
+@requires_docker
 def test_l1_checker_rejects_disallowed_high_load_combination():
     completed = subprocess.run(
         [

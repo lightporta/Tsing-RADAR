@@ -28,14 +28,11 @@
     },
     "slots": {
       "type": "array",
-      "minItems": 10,
-      "maxItems": 10,
+      "minItems": 7,
+      "maxItems": 7,
       "prefixItems": [
         {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/postgresSlot"}]},
         {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/redisSlot"}]},
-        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/etcdSlot"}]},
-        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/minioSlot"}]},
-        {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/milvusSlot"}]},
         {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/clamavSlot"}]},
         {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/backendSlot"}]},
         {"allOf": [{"$ref": "#/$defs/imageSlot"}, {"$ref": "#/$defs/frontendSlot"}]},
@@ -85,9 +82,6 @@
           "enum": [
             "POSTGRES_IMAGE",
             "REDIS_IMAGE",
-            "ETCD_IMAGE",
-            "MINIO_IMAGE",
-            "MILVUS_IMAGE",
             "CLAMAV_IMAGE",
             "BACKEND_IMAGE",
             "FRONTEND_IMAGE",
@@ -148,39 +142,6 @@
         "import_repository": {"const": "tsing-radar-offline/redis"},
         "delivery_mode": {"const": "digest_pull"},
         "compose_reference": {"pattern": "^redis@sha256:[0-9a-f]{64}$"}
-      }
-    },
-    "etcdSlot": {
-      "properties": {
-        "slot": {"const": "ETCD_IMAGE"}, "role": {"const": "etcd"},
-        "kind": {"const": "vendor"}, "registry": {"const": "quay.io"},
-        "repository": {"const": "coreos/etcd"}, "source_tag": {"const": "v3.5.18"},
-        "source_reference": {"const": "quay.io/coreos/etcd:v3.5.18"},
-        "import_repository": {"const": "tsing-radar-offline/etcd"},
-        "delivery_mode": {"const": "digest_pull"},
-        "compose_reference": {"pattern": "^quay\\.io/coreos/etcd@sha256:[0-9a-f]{64}$"}
-      }
-    },
-    "minioSlot": {
-      "properties": {
-        "slot": {"const": "MINIO_IMAGE"}, "role": {"const": "minio"},
-        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
-        "repository": {"const": "minio/minio"}, "source_tag": {"const": "RELEASE.2024-12-18T13-15-44Z"},
-        "source_reference": {"const": "minio/minio:RELEASE.2024-12-18T13-15-44Z"},
-        "import_repository": {"const": "tsing-radar-offline/minio"},
-        "delivery_mode": {"const": "digest_pull"},
-        "compose_reference": {"pattern": "^minio/minio@sha256:[0-9a-f]{64}$"}
-      }
-    },
-    "milvusSlot": {
-      "properties": {
-        "slot": {"const": "MILVUS_IMAGE"}, "role": {"const": "milvus"},
-        "kind": {"const": "vendor"}, "registry": {"const": "docker.io"},
-        "repository": {"const": "milvusdb/milvus"}, "source_tag": {"const": "v2.5.27"},
-        "source_reference": {"const": "milvusdb/milvus:v2.5.27"},
-        "import_repository": {"const": "tsing-radar-offline/milvus"},
-        "delivery_mode": {"const": "digest_pull"},
-        "compose_reference": {"pattern": "^milvusdb/milvus@sha256:[0-9a-f]{64}$"}
       }
     },
     "clamavSlot": {

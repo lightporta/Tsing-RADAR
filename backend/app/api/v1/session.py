@@ -6,9 +6,20 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.identity import IdentitySession
-from app.services.identity import create_or_refresh_web_session, require_web_csrf
+from app.services.identity import (
+    create_or_refresh_web_session,
+    require_web_csrf,
+    web_test_mode_status,
+)
 
 router = APIRouter(prefix="/session")
+web_mode_router = APIRouter(prefix="/web-test-mode")
+
+
+@web_mode_router.get("")
+def web_test_mode():
+    """网页免认证测试模式的公开状态（前端标注「未实名认证测试身份」）。"""
+    return web_test_mode_status()
 
 
 @router.get("")

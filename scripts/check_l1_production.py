@@ -7,6 +7,7 @@ reads real deployment secret directories and never prints values or hashes.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -25,23 +26,26 @@ MEDIA = DEPLOY / "compose.media.yml"
 STAGE = DEPLOY / "compose.stage.yml"
 JOBS = DEPLOY / "compose.jobs.yml"
 EMPTY_MENTOR_SEED = DEPLOY / "data" / "empty-mentor-governance.json"
+EMPTY_MENTOR_SCORE_SEED = DEPLOY / "data" / "empty-mentor-score-governance.json"
+EMPTY_MENTOR_SCORE_SHA256 = (
+    "9cbb62b7a9d7aa04ae30ba9d84073ddd115a6a4988ed9ac28911491339d41780"
+)
 
 HOST_MEMORY_MIB = 7578
-DEFAULT_RESOLVED_LIMIT_MIB = 5184
+DEFAULT_RESOLVED_LIMIT_MIB = 3520
 PUBLIC_EDGE_BUDGET_MIB = 128
-DEFAULT_CAPACITY_BUDGET_MIB = 5312
+DEFAULT_CAPACITY_BUDGET_MIB = 3648
 EDGE_PLANNING_HEADROOM_MIB = HOST_MEMORY_MIB - DEFAULT_CAPACITY_BUDGET_MIB
 MIN_SUPPORTED_COMBINATION_HEADROOM_MIB = 1280
 
 SECRET_NAMES = (
     "database_password",
     "redis_password",
-    "milvus_minio_access_key",
-    "milvus_minio_secret_key",
     "admin_token",
     "session_hmac_secret",
     "artifact_signing_secret",
     "llm_api_key",
+    "mail_password",
     "cos_access_key_id",
     "cos_secret_access_key",
     "restore_check_password",
@@ -79,9 +83,6 @@ MUTATIONS = (
 EXPECTED_DEFAULT_SERVICES = {
     "postgres",
     "redis",
-    "etcd",
-    "milvus-minio",
-    "milvus",
     "clamav",
     "backend",
     "frontend",
@@ -284,6 +285,46 @@ def _empty_mentor_seed_contract(service: dict[str, Any]) -> bool:
     )
 
 
+def _empty_mentor_score_seed_contract(service: dict[str, Any]) -> bool:
+    """Require the independent score release to stay closed on the empty seed."""
+
+    try:
+        raw = EMPTY_MENTOR_SCORE_SEED.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    if (
+        hashlib.sha256(raw).hexdigest() != EMPTY_MENTOR_SCORE_SHA256
+        or not isinstance(payload, dict)
+        or set(payload) != {"schema_version", "generated_at", "releases"}
+        or payload.get("schema_version") != "1.0"
+        or payload.get("releases") != []
+    ):
+        return False
+    mounts = [
+        item
+        for item in service.get("volumes", [])
+        if isinstance(item, dict)
+        and item.get("target") == "/app/data/mentor-scores.evidence.json"
+    ]
+    if len(mounts) != 1:
+        return False
+    mount = mounts[0]
+    environment = _environment(service)
+    return (
+        mount.get("type") == "bind"
+        and mount.get("read_only") is True
+        and mount.get("bind", {}).get("create_host_path") is False
+        and Path(str(mount.get("source", ""))).resolve(strict=False)
+        == EMPTY_MENTOR_SCORE_SEED.resolve(strict=False)
+        and environment.get("MENTOR_SCORE_DATA_FILE")
+        == "/app/data/mentor-scores.evidence.json"
+        and environment.get("MENTOR_SCORE_DATA_EXPECTED_SHA256")
+        == EMPTY_MENTOR_SCORE_SHA256
+        and environment.get("MENTOR_SCORE_COVERAGE_THRESHOLD") == "0.80"
+    )
+
+
 def _post_migration_verification_contract(service: dict[str, Any]) -> bool:
     mounts = {
         str(item.get("target")): item
@@ -419,9 +460,6 @@ def run_checks(
                 "BOOTSTRAP_SECRET_ROOT": str(bootstrap_secrets),
                 "POSTGRES_IMAGE": f"postgres@{digest}",
                 "REDIS_IMAGE": f"redis@{digest}",
-                "ETCD_IMAGE": f"etcd@{digest}",
-                "MINIO_IMAGE": f"minio@{digest}",
-                "MILVUS_IMAGE": f"milvus@{digest}",
                 "CLAMAV_IMAGE": f"clamav@{digest}",
                 "BACKEND_IMAGE": f"backend@{digest}",
                 "FRONTEND_IMAGE": f"frontend@{digest}",
@@ -430,14 +468,20 @@ def run_checks(
                 "PROD_DATABASE_NAME": "tsing_radar_prod",
                 "PROD_DATABASE_USER": "tsing_radar_prod",
                 "DATABASE_BOOTSTRAP_USER": "tsing_radar_bootstrap",
-                "MILVUS_BUCKET": "tsing-radar-milvus",
                 "PROD_COS_BUCKET": "tsing-radar-prod-1250000000",
                 "PROD_CORS_ORIGINS": "https://radar.invalid",
+                "MENTOR_SCORE_DATA_EXPECTED_SHA256": EMPTY_MENTOR_SCORE_SHA256,
+                "MENTOR_SCORE_COVERAGE_THRESHOLD": "0.80",
                 "STAGE_DATABASE_NAME": "tsing_radar_stage",
                 "STAGE_DATABASE_USER": "tsing_radar_stage",
                 "STAGE_COS_BUCKET": "tsing-radar-stage-1250000000",
                 "STAGE_CORS_ORIGINS": "https://stage.invalid",
                 "WEB_HOST": "radar.invalid",
+                # compose.prod.yml 强制必填（MAIL_MODE=smtp 契约）：检查器必须
+                # 同步提供，否则 docker compose config 插值失败、18 项 L1 用例回归。
+                "MAIL_USER": "l1-check@example.edu",
+                "MAIL_FROM": "Tsing-RADAR <no-reply@example.edu>",
+                "MAIL_HOST": "smtp.example.edu",
                 "QXD_HOST": "qxd.invalid",
                 "MEDIA_HOST": "media.invalid",
                 "BACKUP_FILE": "verified-backup.dump",
@@ -533,22 +577,29 @@ def run_checks(
                 "backend lacks the exact tracked zero-record governance seed bind",
             )
         )
+        checks.append(
+            _check(
+                "mentor_scores.empty_release_seed_mounted_fail_closed",
+                _empty_mentor_score_seed_contract(default_services["backend"]),
+                "backend lacks the exact tracked zero-release score evidence bind",
+            )
+        )
         resolved_memory = sum(
             _memory_mib(service) for service in default_services.values()
         )
         checks.append(
             _check(
-                "resources.default_resolved_5184_mib",
+                "resources.default_resolved_3520_mib",
                 resolved_memory == DEFAULT_RESOLVED_LIMIT_MIB,
                 "default resolved memory total differs",
             )
         )
         checks.append(
             _check(
-                "resources.capacity_budget_5312_mib",
+                "resources.capacity_budget_3648_mib",
                 resolved_memory + PUBLIC_EDGE_BUDGET_MIB
                 == DEFAULT_CAPACITY_BUDGET_MIB
-                and EDGE_PLANNING_HEADROOM_MIB == 2266,
+                and EDGE_PLANNING_HEADROOM_MIB == 3930,
                 "capacity or headroom arithmetic differs",
             )
         )
@@ -589,14 +640,12 @@ def run_checks(
         scanner_networks = set(stage_services["clamav"].get("networks", {}))
         checks.append(
             _check(
-                "isolation.stage_has_no_prod_app_or_milvus",
+                "isolation.stage_has_no_prod_app_network",
                 "prod-app" not in stage_networks
                 and "prod-data" not in stage_networks
-                and "vector-data" not in stage_networks
-                and "MILVUS_HOST" not in stage_environment
                 and "stage-app" not in prod_backend_networks
                 and stage_networks & scanner_networks == {"scanner-shared"},
-                "stage and prod application/vector networks overlap",
+                "stage and prod application networks overlap",
             )
         )
         checks.append(
@@ -646,11 +695,11 @@ def run_checks(
             for name in (
                 "database_password",
                 "redis_password",
-                "milvus_minio_secret_key",
                 "admin_token",
                 "session_hmac_secret",
                 "artifact_signing_secret",
                 "llm_api_key",
+                "mail_password",
                 "cos_secret_access_key",
                 "restore_check_password",
                 "qxd_api_key",
@@ -710,6 +759,7 @@ def run_checks(
                         / "artifact_signing_secret",
                         "/run/secrets/llm_api_key": prod_secrets
                         / "llm_api_key",
+                        "/run/secrets/mail_password": prod_secrets / "mail_password",
                         "/run/secrets/cos_access_key_id": prod_secrets
                         / "cos_access_key_id",
                         "/run/secrets/cos_secret_access_key": prod_secrets
@@ -792,6 +842,7 @@ def run_checks(
                         / "artifact_signing_secret",
                         "/run/secrets/llm_api_key": prod_secrets
                         / "llm_api_key",
+                        "/run/secrets/mail_password": prod_secrets / "mail_password",
                         "/run/secrets/cos_access_key_id": prod_secrets
                         / "cos_access_key_id",
                         "/run/secrets/cos_secret_access_key": prod_secrets
@@ -891,24 +942,6 @@ def run_checks(
             (
                 default["services"]["redis"],
                 {"/run/secrets/redis_password": prod_secrets / "redis_password"},
-            ),
-            (
-                default["services"]["milvus-minio"],
-                {
-                    "/run/secrets/milvus_minio_access_key": prod_secrets
-                    / "milvus_minio_access_key",
-                    "/run/secrets/milvus_minio_secret_key": prod_secrets
-                    / "milvus_minio_secret_key",
-                },
-            ),
-            (
-                default["services"]["milvus"],
-                {
-                    "/run/secrets/milvus_minio_access_key": prod_secrets
-                    / "milvus_minio_access_key",
-                    "/run/secrets/milvus_minio_secret_key": prod_secrets
-                    / "milvus_minio_secret_key",
-                },
             ),
             (
                 database_setup["services"]["prod-db-provision"],
@@ -1217,7 +1250,12 @@ def run_checks(
             and "web-api.caddy" in edge_compose
             and "qxd.caddy" not in edge_compose
             and "media.caddy" not in edge_compose
-            and "path /api/*" not in web_routes
+            and not any(
+                line.strip() == "path /api/*"
+                for line in web_routes.splitlines()
+            )
+            and "not path /api/* /v1/* /health/*" in web_routes
+            and "max_size 8500KB" in web_routes
             and (DEPLOY / "edge" / "public-route-allowlist.json").is_file(),
             "default edge route allowlist differs",
         )
@@ -1243,6 +1281,19 @@ def run_checks(
         "/openapi",
     )
     public_dialogue_route = ("POST", "/api/v1/llm/chat")
+    approved_private_routes = {
+        ("POST", "/api/documents"),
+        ("GET", "/api/documents"),
+        ("GET", "/api/documents/{document_id}"),
+        ("DELETE", "/api/documents/{document_id}"),
+        ("POST", "/api/documents/{document_id}/analysis"),
+        ("POST", "/api/documents/{document_id}/interpretation"),
+        ("POST", "/api/resume/generate"),
+        ("POST", "/api/resume/submit"),
+        ("POST", "/api/artifacts/match-report"),
+        ("POST", "/api/artifacts/{document_id}/download-grant"),
+        ("POST", "/api/artifacts/download/{token}"),
+    }
     checks.append(
         _check(
             "edge.public_route_manifest_deny_by_default",
@@ -1250,11 +1301,17 @@ def run_checks(
             and public_dialogue_route in public_routes
             and all(
                 route == public_dialogue_route
+                or route in approved_private_routes
                 or not route[1].startswith(dangerous_prefixes)
                 for route in public_routes
             )
             and ("POST", "/api/v1/llm/embeddings") not in public_routes
-            and "path /api/*" not in web_routes,
+            and approved_private_routes <= public_routes
+            and not any(
+                line.strip() == "path /api/*"
+                for line in web_routes.splitlines()
+            )
+            and "not path /api/* /v1/* /health/*" in web_routes,
             "public route manifest is broad or contains a protected route",
         )
     )

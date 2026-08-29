@@ -34,6 +34,26 @@ export interface HardConstraint {
   source_text?: string | null
 }
 
+export interface HardConstraintCapability {
+  field: HardConstraintField
+  label: string
+  available: boolean
+  evidence_record_count: number
+  candidate_count: number
+  evidence_coverage: number
+  operators: HardConstraintOperator[]
+  values: string[]
+  accepts_free_text: boolean
+  unavailable_reason: string | null
+}
+
+export interface HardConstraintCapabilities {
+  version: 'hard-constraints-v1'
+  candidate_count: number
+  fields: HardConstraintCapability[]
+  basis: 'published_verified_candidate_fields'
+}
+
 export interface DraftHardConstraint {
   draft_id: string
   source_text: string
@@ -45,6 +65,8 @@ export interface DraftHardConstraint {
 export interface InterviewPortrait {
   research_interests: string[]
   interest_statement: string | null
+  /** 兴趣探索（活动兴趣题）选择的活动键；仅用于回显，不参与匹配 */
+  activity_interests?: string[]
   research_mode: 'theory' | 'engineering' | 'mixed' | 'undecided' | null
   mentorship_style: 'high_guidance' | 'balanced' | 'autonomous' | 'undecided' | null
   career_orientation:
@@ -58,6 +80,43 @@ export interface InterviewPortrait {
   hard_constraints: HardConstraint[] | null
   draft_hard_constraints: DraftHardConstraint[]
   unresolved_hard_constraints: string[] | null
+}
+
+// =====================================================================
+// 兴趣探索（活动兴趣题 → 候选研究方向；确定性映射，GLM 不改变结果）
+// =====================================================================
+
+/** 研究场景活动选项（O*NET Interest Profiler 思路改写） */
+export interface ActivityOption {
+  value: string
+  label: string
+  description: string
+}
+
+/** 活动兴趣选择题定义 */
+export interface ActivityQuestion {
+  version: 'activity-interests-v1'
+  prompt: string
+  options: ActivityOption[]
+  min_selections: number
+  max_selections: number
+}
+
+/** 候选研究方向（含详细介绍与命中活动） */
+export interface DirectionCandidate {
+  key: string
+  label: string
+  description: string
+  matched_activities: ActivityOption[]
+  match_score: number
+}
+
+/** 候选方向建议响应 */
+export interface InterestExplorationSuggestions {
+  version: 'activity-interests-v1'
+  basis: 'deterministic_activity_mapping'
+  candidates: DirectionCandidate[]
+  hint: string
 }
 
 export interface InterviewQuestionOption {
@@ -87,6 +146,16 @@ export interface InterviewState {
   clarification_questions: string[]
   recommend_ready: boolean
   assistant_message?: string
+  assistant_mode?: 'fixed_interview_with_optional_llm_enhancement'
+  enhancement_provider?: 'glm' | null
+  enhancement_status?: 'available' | 'unavailable' | 'disabled'
+}
+
+export interface InterviewEnhancementRetryResult {
+  session_id: string
+  text: string
+  provider: 'glm'
+  status: 'available'
 }
 
 export type InterviewProfilePatch = Partial<InterviewPortrait>

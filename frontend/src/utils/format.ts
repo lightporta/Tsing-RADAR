@@ -14,6 +14,20 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+/** 中文 locale 时间格式化器（模块级缓存复用，避免重复构造） */
+const TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
+
+/** 时间可读化：空值返回 '—'，非法值兜底返回原字符串 */
+export function displayTime(value: string | number | Date | null | undefined): string {
+  if (value == null || value === '') return '—'
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return TIME_FORMATTER.format(date)
+}
+
 /** 截断字符串 */
 export function truncate(str: string, max = 30): string {
   return str.length > max ? `${str.slice(0, max)}…` : str

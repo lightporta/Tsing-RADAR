@@ -18,6 +18,10 @@ from app.core.config import settings
 _ALLOWED_PRIVATE_CONTENT_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    # 导师校园卡材料（审核后即清理，桶仍保持私有）
+    "image/jpeg",
+    "image/png",
+    "image/webp",
 }
 _READ_CHUNK_BYTES = 64 * 1024
 _TENCENT_COS_REGION = "ap-hongkong"

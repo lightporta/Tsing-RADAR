@@ -1,6 +1,7 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import type { ApiResponse } from '@/types/api'
+import { beginRequest, finishRequest } from '@/utils/performance'
 
 // =====================================================================
 // Axios 实例：统一 baseURL / 拦截器 / 错误提示
@@ -76,6 +77,7 @@ export async function postPrivateBlob(url: string) {
 // 写操作使用双提交 CSRF；身份只由 HttpOnly opaque 会话 Cookie 决定。
 service.interceptors.request.use(
   (config) => {
+    beginRequest(config, config.url || '')
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type']
     }
@@ -91,8 +93,16 @@ service.interceptors.request.use(
 
 // 响应拦截：统一解包 { data } 与错误提示
 service.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    finishRequest(response.config, response.status)
+    return response.data
+  },
   (error) => {
+    finishRequest(error.config, error.response?.status || error.code || 'error')
+    // 主动取消的请求不弹错误提示（由调用方静默处理）
+    if (axios.isCancel(error)) {
+      return Promise.reject(error)
+    }
     const msg =
       error.response?.data?.detail ||
       error.response?.data?.message ||
@@ -136,6 +146,18 @@ export function bootstrapSession() {
   return service.get<unknown, { status: string; channel: string; persistent: boolean }>(
     '/api/session',
   )
+}
+
+/** 网页免认证测试模式公开状态（未实名认证测试身份标注）。 */
+export interface WebTestModeStatus {
+  enabled: boolean
+  label: string
+  expires_at: string | null
+  active: boolean
+}
+
+export function fetchWebTestMode() {
+  return service.get<unknown, WebTestModeStatus>('/api/web-test-mode')
 }
 
 export type { ApiResponse }

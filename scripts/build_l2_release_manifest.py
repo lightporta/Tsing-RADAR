@@ -108,7 +108,6 @@ PROHIBITED_PREFIXES = (
     ".pytest-",
     "backend/data/private_local/",
     "backend/private_uploads/",
-    "legacy/",
 )
 
 PROHIBITED_SUFFIXES = (
@@ -121,9 +120,6 @@ PROHIBITED_SUFFIXES = (
 COMPOSE_IMAGE_SLOTS = (
     "POSTGRES_IMAGE",
     "REDIS_IMAGE",
-    "ETCD_IMAGE",
-    "MINIO_IMAGE",
-    "MILVUS_IMAGE",
     "CLAMAV_IMAGE",
     "BACKEND_IMAGE",
     "FRONTEND_IMAGE",

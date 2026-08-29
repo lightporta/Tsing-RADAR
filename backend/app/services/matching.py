@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from collections import Counter
@@ -38,6 +39,9 @@ from app.schemas.matching import (
     RankingObjective,
     SourcedEvidenceClaim,
 )
+from app.services.off_topic import CONSTRAINT_JUNK_SIGNALS
+
+logger = logging.getLogger("tsing_radar.matching")
 
 MATCH_METHOD_VERSION = "evidence-matching-v1"
 LEXICAL_FALLBACK_METHOD = "deterministic-concept-ngram-lexical-v1"
@@ -147,6 +151,43 @@ _CATEGORICAL_FIELDS: tuple[
         "innovation_profiles",
         "创新风险",
     ),
+)
+
+_CONSTRAINT_LABELS: dict[HardConstraintField, str] = {
+    HardConstraintField.LOCATION: "地点",
+    HardConstraintField.WEEKLY_COMMITMENT_DAYS: "每周投入天数",
+    HardConstraintField.DEGREE_STAGE: "学历阶段",
+    HardConstraintField.LANGUAGE: "语言",
+    HardConstraintField.CONFIDENTIALITY: "保密要求",
+    HardConstraintField.GRADUATION_ARRANGEMENT: "毕业安排",
+    HardConstraintField.DEPARTMENT: "院系",
+    HardConstraintField.RESEARCH_TOPIC: "研究主题",
+    HardConstraintField.ADVISOR_ID: "导师 ID",
+}
+
+_CONSTRAINT_OPERATORS: dict[
+    HardConstraintField, tuple[HardConstraintOperator, ...]
+] = {
+    HardConstraintField.WEEKLY_COMMITMENT_DAYS: (
+        HardConstraintOperator.EQUALS,
+        HardConstraintOperator.MINIMUM,
+        HardConstraintOperator.MAXIMUM,
+    ),
+    HardConstraintField.RESEARCH_TOPIC: (
+        HardConstraintOperator.CONTAINS,
+        HardConstraintOperator.EXCLUDES,
+    ),
+    HardConstraintField.ADVISOR_ID: (
+        HardConstraintOperator.EQUALS,
+        HardConstraintOperator.ONE_OF,
+        HardConstraintOperator.EXCLUDES,
+    ),
+}
+_DEFAULT_CONSTRAINT_OPERATORS = (
+    HardConstraintOperator.EQUALS,
+    HardConstraintOperator.ONE_OF,
+    HardConstraintOperator.EXCLUDES,
+    HardConstraintOperator.CONTAINS,
 )
 
 
@@ -448,6 +489,20 @@ def parse_hard_constraints(portrait: dict[str, Any]) -> ParsedHardConstraints:
                 f"{'/'.join(constraint.value)}"
             )
         )
+    # v4.2.x 修复1 第三层消毒：幽灵值（确认指令/态度词/开场白残留）直接丢弃，
+    # 绝不参与硬过滤。访谈层（修复1 前两层）已拦截大部分，这里是匹配前的
+    # 最后一道防线（防旧数据/防旁路写入）。
+    kept: list[tuple[HardConstraint, str]] = []
+    for constraint, applied in zip(parsed.constraints, parsed.applied):
+        joined = "".join(constraint.value)
+        if any(junk in joined for junk in CONSTRAINT_JUNK_SIGNALS):
+            logger.warning(
+                "hard_constraint_junk_value_dropped: %s", joined
+            )
+            continue
+        kept.append((constraint, applied))
+    parsed.constraints = [constraint for constraint, _ in kept]
+    parsed.applied = [applied for _, applied in kept]
     return parsed
 
 
@@ -505,6 +560,65 @@ def _constraint_candidate_value(
     if not values:
         return None, False
     return values, True
+
+
+def hard_constraint_capabilities(
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Derive the editor contract from evidence actually present today."""
+    total = len(candidates)
+    fields: list[dict[str, Any]] = []
+    for field_name in HardConstraintField:
+        values: list[str] = []
+        evidence_records = 0
+        for candidate in candidates:
+            value, has_evidence = _constraint_candidate_value(candidate, field_name)
+            if not has_evidence:
+                continue
+            evidence_records += 1
+            if field_name not in {
+                HardConstraintField.RESEARCH_TOPIC,
+                HardConstraintField.ADVISOR_ID,
+            }:
+                values.extend(
+                    str(item).strip()
+                    for item in (value if isinstance(value, list) else [value])
+                    if str(item).strip()
+                )
+        available = evidence_records > 0
+        fields.append(
+            {
+                "field": field_name.value,
+                "label": _CONSTRAINT_LABELS[field_name],
+                "available": available,
+                "evidence_record_count": evidence_records,
+                "candidate_count": total,
+                "evidence_coverage": round(evidence_records / total, 6)
+                if total
+                else 0.0,
+                "operators": [
+                    item.value
+                    for item in _CONSTRAINT_OPERATORS.get(
+                        field_name, _DEFAULT_CONSTRAINT_OPERATORS
+                    )
+                ],
+                "values": sorted(set(values))[:200],
+                "accepts_free_text": field_name
+                in {
+                    HardConstraintField.RESEARCH_TOPIC,
+                    HardConstraintField.ADVISOR_ID,
+                },
+                "unavailable_reason": None
+                if available
+                else "当前已发布导师数据没有该字段的可核验证据",
+            }
+        )
+    return {
+        "version": "hard-constraints-v1",
+        "candidate_count": total,
+        "fields": fields,
+        "basis": "published_verified_candidate_fields",
+    }
 
 
 def _constraint_satisfied(
@@ -976,11 +1090,61 @@ def match_mentors(
             items=[], meta=meta.model_dump(mode="json")
         )
 
-    filtered = [
-        candidate
-        for candidate in mentors
-        if _passes_hard_constraints(candidate, constraints)
-    ]
+    # Apply one condition at a time so a zero result can name the exact
+    # condition that exhausted the candidate set.  Missing evidence remains a
+    # failure (never an implicit pass) and is counted separately from mismatch.
+    filtered = list(mentors)
+    constraint_trace: list[dict[str, Any]] = []
+    zero_result_reason: str | None = None
+    for constraint in constraints.constraints:
+        before = filtered
+        after: list[dict[str, Any]] = []
+        missing_evidence = 0
+        mismatched = 0
+        for candidate in before:
+            _, has_evidence = _constraint_candidate_value(
+                candidate, constraint.field
+            )
+            if not has_evidence:
+                missing_evidence += 1
+                continue
+            if _constraint_satisfied(candidate, constraint):
+                after.append(candidate)
+            else:
+                mismatched += 1
+        key = (
+            f"{constraint.field.value}|{constraint.operator.value}|"
+            f"{'/'.join(constraint.value)}"
+        )
+        trace = {
+            "constraint": key,
+            "field": constraint.field.value,
+            "operator": constraint.operator.value,
+            "values": constraint.value,
+            "candidates_before": len(before),
+            "candidates_after": len(after),
+            "excluded": len(before) - len(after),
+            "missing_evidence": missing_evidence,
+            "mismatched": mismatched,
+        }
+        if before and not after:
+            if missing_evidence == len(before):
+                zero_result_reason = (
+                    f"约束“{_CONSTRAINT_LABELS[constraint.field]} "
+                    f"{constraint.operator.value} {'/'.join(constraint.value)}”"
+                    "归零：当前候选均缺少该字段的已核验证据。"
+                )
+            else:
+                zero_result_reason = (
+                    f"约束“{_CONSTRAINT_LABELS[constraint.field]} "
+                    f"{constraint.operator.value} {'/'.join(constraint.value)}”"
+                    f"归零：{mismatched} 位不符合，{missing_evidence} 位缺少已核验证据。"
+                )
+            trace["zero_result_reason"] = zero_result_reason
+        constraint_trace.append(trace)
+        filtered = after
+        if not filtered:
+            break
 
     query = _profile_query(portrait)
     recalled: list[RecallHit] = []
@@ -1008,6 +1172,23 @@ def match_mentors(
     )
     recalled = recalled[: config.recall_pool_size]
 
+    # v4.2.2（回归问题2/3）：约束全部通过但召回为 0 时给出"召回归零"原因，
+    # 与"约束归零"（constraint_trace 内生成）明确区分——否则放宽后仍归零的
+    # 场景会误报成"硬约束归零"，诱导用户做无效放宽。
+    if not recalled and filtered and zero_result_reason is None:
+        query_text = query.strip()
+        if not query_text:
+            zero_result_reason = (
+                "召回归零：画像尚未提供研究方向（research_interests 为空），"
+                "无法召回任何候选。可以回复「换方向：XXX」指定主题后重试。"
+            )
+        else:
+            zero_result_reason = (
+                f"召回归零：画像研究方向（{query_text[:60]}）与导师目录的"
+                "重合度过低，没有候选命中召回阈值。该归零与硬约束无关，"
+                "可以回复「换方向：XXX」换主题重试。"
+            )
+
     ranked = [
         _rank_candidate(item, portrait, config, as_of) for item in recalled
     ]
@@ -1034,6 +1215,8 @@ def match_mentors(
         unresolved_hard_constraints=[],
         clarification_questions=[],
         excluded_by_hard_constraints=input_count - len(filtered),
+        constraint_trace=constraint_trace,
+        zero_result_reason=zero_result_reason,
         ranking_config=config,
     )
     return MatchPipelineResult(

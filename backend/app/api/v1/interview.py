@@ -8,12 +8,15 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_student, get_mutating_student
 from app.db.session import get_db
 from app.schemas.interview import (
+    HardConstraintCapabilitiesResponse,
     InterviewAnswerRequest,
     InterviewConfirmRequest,
     InterviewCreateRequest,
+    InterviewEnhancementRetryResponse,
     InterviewStateResponse,
     StudentPortraitPatch,
 )
+from app.services.data_loader import load_match_candidates
 from app.services.interview import (
     InterviewAccessError,
     InterviewConflictError,
@@ -25,8 +28,19 @@ from app.services.interview import (
     patch_profile,
     state_response,
 )
+from app.services.matching import hard_constraint_capabilities
+from app.services.llm import enhance_interview_reply
 
 router = APIRouter(prefix="/interviews")
+
+
+@router.get(
+    "/hard-constraint-capabilities",
+    response_model=HardConstraintCapabilitiesResponse,
+)
+def get_hard_constraint_capabilities():
+    """Describe only constraints supported by current verified mentor facts."""
+    return hard_constraint_capabilities(load_match_candidates())
 
 
 def _raise_interview_error(exc: Exception) -> None:
@@ -89,6 +103,69 @@ def submit_answer(
         InterviewConflictError,
     ) as exc:
         _raise_interview_error(exc)
+
+
+@router.post(
+    "/{session_id}/enhancement-retry",
+    response_model=InterviewEnhancementRetryResponse,
+)
+async def retry_interview_enhancement(
+    session_id: str,
+    db: Session = Depends(get_db),
+    student_id: str = Depends(get_mutating_student),
+):
+    """Retry GLM wording for the last completed turn without changing state."""
+    try:
+        session = get_session(db, session_id, student_id)
+    except (InterviewNotFoundError, InterviewAccessError) as exc:
+        _raise_interview_error(exc)
+    messages = list(session.messages or [])
+    assistant_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if messages[index].get("role") == "assistant"
+            and str(messages[index].get("content") or "").strip()
+        ),
+        None,
+    )
+    user_index = next(
+        (
+            index
+            for index in range((assistant_index or 0) - 1, -1, -1)
+            if messages[index].get("role") == "user"
+            and str(messages[index].get("content") or "").strip()
+        ),
+        None,
+    )
+    if assistant_index is None or user_index is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "no_completed_interview_turn",
+                "message": "当前会话还没有可重试增强的完整问答轮次。",
+            },
+        )
+    enhancement = await enhance_interview_reply(
+        user_message=str(messages[user_index]["content"]),
+        fixed_reply=str(messages[assistant_index]["content"]),
+    )
+    if enhancement.status != "available" or not enhancement.text:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "glm_unavailable",
+                "message": "GLM 暂不可用，访谈状态未改变，请稍后重试。",
+                "retryable": True,
+                "provider": "glm",
+            },
+        )
+    return {
+        "session_id": session_id,
+        "text": enhancement.text,
+        "provider": "glm",
+        "status": "available",
+    }
 
 
 @router.patch("/{session_id}/profile", response_model=InterviewStateResponse)

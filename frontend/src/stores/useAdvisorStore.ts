@@ -1,32 +1,31 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { MatchedAdvisor, SortMetric, ScatterPoint } from '@/types/advisor'
+import type {
+  AdvisorHistorySnapshot,
+  MatchedAdvisor,
+  MentorDistribution,
+  SortMetric,
+} from '@/types/advisor'
 import * as advisorApi from '@/api/advisor'
-import * as mockApi from '@/mock'
 
 // =====================================================================
 // 导师 Store（文档 §7.1 useAdvisorStore）
 // 导师列表 / 当前选中 / 筛选排序 / 散点数据
 // =====================================================================
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
-
 export const useAdvisorStore = defineStore('advisor', () => {
   // —— 匹配后的导师（带 score / synergy / reason）——
   const matchedAdvisors = ref<MatchedAdvisor[]>([])
-  // —— 散点数据 ——
-  const scatterPoints = ref<ScatterPoint[]>([])
+  // —— 已发布导师资源的真实聚合分布 ——
+  const distribution = ref<MentorDistribution>({
+    departments: [],
+    resource_types: [],
+    meta: { grouped_advisors: 0, raw_resource_records: 0, basis: 'published_resources_only' },
+  })
   // —— 当前选中的导师名（联动卡片 / 散点 / 右栏）——
   const selectedName = ref<string | null>(null)
   // —— 排序指标 ——
   const sortMetric = ref<SortMetric>('score')
-  // —— 象限筛选（散点图右上复选框组）——
-  const quadrantFilter = ref<Record<string, boolean>>({
-    国热: true,
-    国冷: true,
-    私热: true,
-    私冷: true,
-  })
   // —— 加载态 ——
   const loading = ref(false)
   const resultStatus = ref<'idle' | 'matched' | 'no_published_data' | 'no_match' | 'error'>('idle')
@@ -48,12 +47,7 @@ export const useAdvisorStore = defineStore('advisor', () => {
   async function loadAll() {
     loading.value = true
     try {
-      if (USE_MOCK) {
-        scatterPoints.value = mockApi.mockScatterPoints
-      } else {
-        const scatter = await advisorApi.fetchScatter()
-        scatterPoints.value = scatter.data
-      }
+      distribution.value = await advisorApi.fetchMentorDistribution()
       // 导师公开列表不等同于推荐；确认画像前不生成匹配结果。
       matchedAdvisors.value = []
     } finally {
@@ -70,29 +64,16 @@ export const useAdvisorStore = defineStore('advisor', () => {
   ) {
     loading.value = true
     try {
-      if (USE_MOCK) {
-        matchedAdvisors.value = mockApi.mockMatch(interest)
-        resultStatus.value = 'no_published_data'
-        resultMessage.value =
-          '前端独立 Mock 当前没有已审核导师数据，因此不会生成虚假推荐。'
-        resultMeta.value = {
-          total_records: 0,
-          published_records: 0,
-          withheld_records: 0,
-          policy: 'verified_only',
-        }
-      } else {
-        const res = await advisorApi.matchAdvisors({
-          interest,
-          session_id: sessionId,
-          portrait,
-          weight,
-        })
-        matchedAdvisors.value = res.data
-        resultStatus.value = res.status
-        resultMessage.value = res.message
-        resultMeta.value = res.meta
-      }
+      const res = await advisorApi.matchAdvisors({
+        interest,
+        session_id: sessionId,
+        portrait,
+        weight,
+      })
+      matchedAdvisors.value = res.data
+      resultStatus.value = res.status
+      resultMessage.value = res.message
+      resultMeta.value = res.meta
       selectedName.value = null
       comparisonIds.value = []
     } catch (error) {
@@ -121,11 +102,6 @@ export const useAdvisorStore = defineStore('advisor', () => {
     selectedName.value = name
   }
 
-  /** 设置象限筛选 */
-  function toggleQuadrant(name: string, value: boolean) {
-    quadrantFilter.value[name] = value
-  }
-
   function toggleComparison(advisorId: string) {
     if (comparisonIds.value.includes(advisorId)) {
       comparisonIds.value = comparisonIds.value.filter((item) => item !== advisorId)
@@ -150,22 +126,37 @@ export const useAdvisorStore = defineStore('advisor', () => {
     resultMeta.value = {}
   }
 
-  /** 按象限筛选后的散点 */
-  const filteredScatter = computed(() =>
-    scatterPoints.value.filter((p) => {
-      const q = quadrantName(p.x, p.y)
-      return quadrantFilter.value[q]
-    }),
-  )
+  /** 导出本机会话所需的匹配结果，不触发网络请求。 */
+  function createHistorySnapshot(): AdvisorHistorySnapshot {
+    return JSON.parse(JSON.stringify({
+      matchedAdvisors: matchedAdvisors.value,
+      selectedName: selectedName.value,
+      sortMetric: sortMetric.value,
+      resultStatus: resultStatus.value,
+      resultMessage: resultMessage.value,
+      resultMeta: resultMeta.value,
+      comparisonIds: comparisonIds.value,
+    })) as AdvisorHistorySnapshot
+  }
+
+  /** 恢复本机保存的匹配结果，不会重新请求或上传历史会话。 */
+  function restoreHistorySnapshot(snapshot: AdvisorHistorySnapshot) {
+    const restored = JSON.parse(JSON.stringify(snapshot)) as AdvisorHistorySnapshot
+    matchedAdvisors.value = restored.matchedAdvisors
+    selectedName.value = restored.selectedName
+    sortMetric.value = restored.sortMetric
+    resultStatus.value = restored.resultStatus
+    resultMessage.value = restored.resultMessage
+    resultMeta.value = restored.resultMeta
+    comparisonIds.value = restored.comparisonIds
+  }
 
   return {
     matchedAdvisors,
-    scatterPoints,
-    filteredScatter,
+    distribution,
     selectedName,
     selectedAdvisor,
     sortMetric,
-    quadrantFilter,
     loading,
     totalCount,
     resultStatus,
@@ -177,18 +168,9 @@ export const useAdvisorStore = defineStore('advisor', () => {
     match,
     sortBy,
     selectAdvisor,
-    toggleQuadrant,
     toggleComparison,
     resetResults,
+    createHistorySnapshot,
+    restoreHistorySnapshot,
   }
 })
-
-/** 根据散点坐标判定象限名 */
-export function quadrantName(x: number, y: number): '国热' | '国冷' | '私热' | '私冷' {
-  const hot = x > 60
-  const guo = y === 0 // y=0 国 / y=1 私
-  if (guo && hot) return '国热'
-  if (guo && !hot) return '国冷'
-  if (!guo && hot) return '私热'
-  return '私冷'
-}

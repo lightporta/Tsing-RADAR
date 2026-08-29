@@ -24,36 +24,53 @@ def _secret(path: Path, content: str = SYNTHETIC_KEY) -> str:
     return str(path)
 
 
-@pytest.mark.parametrize("provider", ["glm", "deepseek"])
-def test_production_resolves_one_file_backed_provider(tmp_path, provider):
+def test_production_resolves_file_backed_glm(tmp_path):
     path = _secret(tmp_path / "llm_api_key")
     configured = Settings(
         _env_file=None,
         PRODUCTION_DEPLOYMENT=True,
-        LLM_PROVIDER=provider,
+        LLM_PROVIDER="glm",
         LLM_API_KEY_FILE=path,
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(
+            tmp_path / "mail_password",
+            "synthetic-mail-credential-not-live",
+        ),
     )
 
-    assert configured.configured_llm_providers == (provider,)
-    assert configured.llm_credentials == ((provider, SYNTHETIC_KEY),)
+    assert configured.configured_llm_providers == ("glm",)
+    assert configured.llm_credentials == (("glm", SYNTHETIC_KEY),)
     assert configured.llm_secret_file_permissions_valid is True
     assert SYNTHETIC_KEY not in repr(configured)
 
 
-def test_development_keeps_existing_direct_provider_order():
+def test_development_supports_only_direct_glm():
     configured = Settings(
         _env_file=None,
         GLM_API_KEY="synthetic-development-glm",
-        DEEPSEEK_API_KEY="synthetic-development-deepseek",
     )
-    assert configured.configured_llm_providers == ("glm", "deepseek")
+    assert configured.configured_llm_providers == ("glm",)
+    assert configured.LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS == 4.0
 
 
-def test_production_can_explicitly_disable_llm_without_credentials():
+# 09 文档（对话自由度调优）：增强超时上限 8.0 → 10.0（L3 目标 10s），
+# 越界值同步更新为 10.01
+@pytest.mark.parametrize("timeout", [0.49, 10.01])
+def test_interview_enhancement_timeout_is_bounded(timeout):
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS=timeout,
+        )
+
+
+def test_production_can_explicitly_disable_llm_without_credentials(tmp_path):
     configured = Settings(
         _env_file=None,
         PRODUCTION_DEPLOYMENT=True,
         LLM_ENABLED=False,
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(tmp_path / "mail_password"),
     )
 
     assert configured.configured_llm_providers == ()
@@ -84,13 +101,6 @@ def test_disabled_llm_rejects_credentials(kwargs):
                 "GLM_API_KEY": "synthetic-direct-key",
             },
             "rejects direct",
-        ),
-        (
-            {
-                "LLM_PROVIDER": "glm",
-                "DEEPSEEK_API_KEY": "synthetic-wrong-branch",
-            },
-            "must match",
         ),
     ],
 )
@@ -160,6 +170,8 @@ def test_llm_secret_permissions_reject_group_or_other_access(tmp_path):
         PRODUCTION_DEPLOYMENT=True,
         LLM_PROVIDER="glm",
         LLM_API_KEY_FILE=str(path),
+        MAIL_MODE="smtp",
+        MAIL_PASSWORD_FILE=_secret(tmp_path / "mail_password"),
     )
     assert configured.llm_secret_file_permissions_valid is False
 
@@ -168,8 +180,8 @@ def test_llm_secret_permissions_reject_group_or_other_access(tmp_path):
 async def test_llm_service_uses_only_resolved_selected_provider(monkeypatch):
     configured = Settings(
         _env_file=None,
-        LLM_PROVIDER="deepseek",
-        DEEPSEEK_API_KEY=SYNTHETIC_KEY,
+        LLM_PROVIDER="glm",
+        GLM_API_KEY=SYNTHETIC_KEY,
     )
     captured: dict[str, object] = {}
 
@@ -196,17 +208,122 @@ async def test_llm_service_uses_only_resolved_selected_provider(monkeypatch):
 
     monkeypatch.setattr(llm_service, "settings", configured)
     monkeypatch.setattr(llm_service.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(llm_service.logger, "disabled", False)
+    monkeypatch.setattr(llm_service.logger, "propagate", True)
     reply = await llm_service.llm_complete(
         [LLMMessage(role="user", content="synthetic prompt")]
     )
 
     assert reply == "ok"
-    assert captured["url"] == "https://api.deepseek.com/chat/completions"
+    assert captured["url"] == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     assert captured["headers"] == {
         "Authorization": f"Bearer {SYNTHETIC_KEY}",
         "Content-Type": "application/json",
     }
-    assert captured["payload"]["model"] == "deepseek-chat"
+    assert captured["payload"]["model"] == "glm-4-flash"
+
+
+def test_non_glm_provider_is_rejected_at_configuration_boundary():
+    with pytest.raises(ValidationError, match="glm"):
+        Settings(_env_file=None, LLM_PROVIDER="unsupported")
+
+
+@pytest.mark.asyncio
+async def test_interview_enhancement_rejects_questions(monkeypatch):
+    configured = Settings(
+        _env_file=None,
+        LLM_PROVIDER="glm",
+        GLM_API_KEY=SYNTHETIC_KEY,
+    )
+
+    async def fake_result(_messages, **_kwargs):
+        return llm_service.LLMCompletionResult(
+            text="听起来很棒，要不要继续聊聊？",
+            provider="glm",
+            model="glm-4-flash",
+        )
+
+    monkeypatch.setattr(llm_service, "settings", configured)
+    monkeypatch.setattr(llm_service, "_llm_complete_result", fake_result)
+    result = await llm_service.enhance_interview_reply(
+        user_message="我喜欢机器人",
+        fixed_reply="你更偏好理论还是工程？",
+    )
+    assert result.status == "unavailable"
+    assert result.text is None
+    assert result.provider == "glm"
+
+
+@pytest.mark.asyncio
+async def test_interview_enhancement_failure_uses_its_short_timeout(monkeypatch):
+    configured = Settings(
+        _env_file=None,
+        LLM_PROVIDER="glm",
+        GLM_API_KEY=SYNTHETIC_KEY,
+        LLM_TIMEOUT=30,
+        LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS=1.25,
+    )
+    captured: dict[str, float] = {}
+
+    class Client:
+        def __init__(self, *, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            raise TimeoutError("synthetic bounded timeout")
+
+    monkeypatch.setattr(llm_service, "settings", configured)
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", Client)
+    result = await llm_service.enhance_interview_reply(
+        user_message="我关注自然语言处理",
+        fixed_reply="你更偏好理论还是工程？",
+    )
+    assert result.status == "unavailable"
+    assert result.provider == "glm"
+    assert captured["timeout"] == 1.25
+    assert configured.LLM_TIMEOUT == 30
+
+
+@pytest.mark.asyncio
+async def test_llm_failure_logs_safe_provider_metadata(monkeypatch, caplog):
+    configured = Settings(
+        _env_file=None,
+        LLM_PROVIDER="glm",
+        GLM_API_KEY=SYNTHETIC_KEY,
+    )
+
+    class Client:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic provider failure without secret")
+
+    monkeypatch.setattr(llm_service, "settings", configured)
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(llm_service.logger, "disabled", False)
+    monkeypatch.setattr(llm_service.logger, "propagate", True)
+    with caplog.at_level(logging.WARNING, logger="app.services.llm"):
+        reply = await llm_service.llm_complete(
+            [LLMMessage(role="user", content="synthetic prompt")]
+        )
+    assert reply is None
+    assert "provider=glm" in caplog.text
+    assert "model=glm-4-flash" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert SYNTHETIC_KEY not in caplog.text
 
 
 @pytest.mark.asyncio

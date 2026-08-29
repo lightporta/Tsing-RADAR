@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { DArrowRight } from '@element-plus/icons-vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import AdvisorListPanel from '@/components/advisor/AdvisorListPanel.vue'
@@ -7,9 +8,9 @@ import ChartPanel from '@/components/charts/ChartPanel.vue'
 
 // =====================================================================
 // PC 端三栏布局（文档 §3.1）
-// 35% 对话栏 | 35% 卡片列表 | 30% 可视化看板
+// 25% 对话栏 | 45% 卡片列表 | 30% 可视化看板
 // Header 60px + 主体三栏，每栏独立滚动，1px 分割线
-// 对话栏支持收起（宽度过渡 0px ↔ 35%）
+// 对话栏支持收起（宽度过渡 0px ↔ 25%）
 // =====================================================================
 
 const chatCollapsed = ref(false)
@@ -36,7 +37,7 @@ function toggleChat() {
         aria-label="展开对话栏"
         @click="toggleChat"
       >
-        <el-icon aria-hidden="true">»</el-icon>
+        <el-icon aria-hidden="true"><DArrowRight /></el-icon>
       </button>
 
       <!-- 中栏：导师卡片列表 -->
@@ -65,9 +66,9 @@ function toggleChat() {
   display: flex;
   flex: 1;
   min-height: 0;
-  // 三栏比例 35 : 35 : 30
+  // 三栏比例 25 : 45 : 30
   .chat-col {
-    flex: 35;
+    flex: 25;
     border-right: 1px solid $color-border;
     transition: flex 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
     min-width: 0;
@@ -81,7 +82,7 @@ function toggleChat() {
     }
   }
   .advisor-col {
-    flex: 35;
+    flex: 45;
     border-right: 1px solid $color-border;
     min-width: 0;
   }

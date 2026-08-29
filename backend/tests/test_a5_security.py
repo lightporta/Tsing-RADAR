@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import io
 import logging
+import re
 import uuid
 import zipfile
 from datetime import date
@@ -18,9 +19,12 @@ import pytest
 from app.db.session import SessionLocal
 from app.core.config import settings
 from app.main import app, startup_event
+from app.models.artifact_audit import ArtifactAuditEvent
 from app.models.identity import ExternalIdentity, IdentitySession
+from app.models.private_document import PrivateDocument
 from app.models.questionnaire_session import QuestionnaireSession
 from app.models.recruitment import Recruitment
+from app.services.recruitment_review import review_recruitment
 
 QXD_BEARER = "test-qxd-key"
 QXD_CLAIM_SECRET = "test-qxd-end-user-secret"
@@ -194,6 +198,12 @@ def test_web_interview_json_surface_persists_and_returns_a_complete_state():
     ]
     assert state["current_question"]["dimension"] == "research_mode"
     assert state["assistant_message"]
+    assert state["assistant_mode"] == "fixed_interview_with_optional_llm_enhancement"
+    assert state["enhancement_status"] in {
+        "available",
+        "unavailable",
+        "disabled",
+    }
     assert client.get(f"/api/interviews/{session_id}").json()["profile"] == state["profile"]
 
 
@@ -229,43 +239,57 @@ def test_qxd_claim_is_separate_from_bearer_and_forgery_fails_closed(caplog):
 
 
 def test_unverified_qxd_user_is_request_isolated_and_web_cannot_read_qxd_session():
+    # P-A：body user 字段由平台 Bearer 保护并稳定映射持久主体；
+    # 不同 user 相互隔离，Web 会话无法读取清小搭会话。
     client = TestClient(app)
-    before: set[str]
-    with SessionLocal() as db:
-        before = {
-            row.session_id
-            for row in db.query(QuestionnaireSession)
-            .filter(QuestionnaireSession.student_id.like("qreq_%"))
-            .all()
-        }
-    payload = {
-        "user": "self-asserted-user",
+
+    def _subject(user: str) -> str:
+        fingerprint = hashlib.sha256(
+            f"qxd-user:{user}".encode("utf-8")
+        ).hexdigest()
+        with SessionLocal() as db:
+            return (
+                db.query(ExternalIdentity)
+                .filter(
+                    ExternalIdentity.provider == "qxd_user",
+                    ExternalIdentity.claim_fingerprint == fingerprint,
+                )
+                .one()
+                .subject_id
+            )
+
+    payload_a = {
+        "user": "self-asserted-user-a",
         "messages": [{"role": "user", "content": "你好"}],
         "stream": False,
     }
+    payload_b = {**payload_a, "user": "self-asserted-user-b"}
     assert client.post(
         "/v1/chat/completions",
         headers=_qxd_headers(),
-        json=payload,
+        json=payload_a,
     ).status_code == 200
     assert client.post(
         "/v1/chat/completions",
         headers=_qxd_headers(),
-        json=payload,
+        json=payload_b,
     ).status_code == 200
+
+    subject_a = _subject("self-asserted-user-a")
+    subject_b = _subject("self-asserted-user-b")
+    assert subject_a != subject_b
+
     with SessionLocal() as db:
-        created = [
-            row
-            for row in db.query(QuestionnaireSession)
-            .filter(QuestionnaireSession.student_id.like("qreq_%"))
+        sessions = (
+            db.query(QuestionnaireSession)
+            .filter(QuestionnaireSession.student_id.in_([subject_a, subject_b]))
             .all()
-            if row.session_id not in before
-        ]
-    assert len(created) == 2
-    assert created[0].student_id != created[1].student_id
+        )
+    assert len(sessions) == 2
+    assert {row.student_id for row in sessions} == {subject_a, subject_b}
 
     web, _ = _web_client()
-    assert web.get(f"/api/interviews/{created[0].session_id}").status_code == 403
+    assert web.get(f"/api/interviews/{sessions[0].session_id}").status_code == 403
 
 
 def test_private_docx_and_pdf_validation_sanitization_and_object_authorization():
@@ -276,7 +300,7 @@ def test_private_docx_and_pdf_validation_sanitization_and_object_authorization()
     assert docx.status_code == 200
     item = docx.json()
     assert item["original_name"] == "我的 简历.docx"
-    assert item["text_preview"] == "私有简历正文"
+    assert item["text_preview"] == ""
     assert not {"url", "path", "stored_name"} & set(item)
 
     pdf = owner.post(
@@ -342,6 +366,20 @@ def test_private_upload_size_limit_fails_before_parsing(monkeypatch):
         files={"file": ("large.pdf", b"%PDF-" + b"x" * 20, "application/pdf")},
     )
     assert response.status_code == 413
+
+
+def test_declared_oversized_upload_is_rejected_before_multipart_parsing(
+    monkeypatch,
+):
+    client, headers = _web_client()
+    monkeypatch.setattr(settings, "PRIVATE_UPLOAD_MAX_BYTES", 16)
+    response = client.post(
+        "/api/documents",
+        headers={**headers, "Content-Length": str(64 * 1024 + 17)},
+        content=b"not-a-multipart-body",
+    )
+    assert response.status_code == 413
+    assert response.json() == {"detail": "文件超过大小限制"}
 
 
 def test_application_is_in_app_only_and_all_operations_are_owner_scoped():
@@ -414,11 +452,247 @@ def test_application_is_in_app_only_and_all_operations_are_owner_scoped():
             db.commit()
 
 
+def test_recruitment_submission_mine_edit_resubmit_withdraw_and_idempotency():
+    owner, owner_headers = _web_client()
+    other, other_headers = _web_client()
+    payload = {
+        "type": "科研助理",
+        "title": "内部审核流程测试",
+        "req": "验证待审核、撤回和批准链路",
+        "major": "测试",
+        "deadline": "2027-01-01",
+        "is_urgent": False,
+    }
+    create_headers = _idem(owner_headers)
+    first = owner.post("/api/recruitments", headers=create_headers, json=payload)
+    assert first.status_code == 200
+    first_id = first.json()["recruit_id"]
+    replay = owner.post("/api/recruitments", headers=create_headers, json=payload)
+    assert replay.status_code == 200
+    assert replay.json()["recruit_id"] == first_id
+    mine = owner.get("/api/recruitments/mine").json()["data"][0]
+    assert mine["review_status"] == "pending_review"
+    assert mine["req"] == payload["req"]
+    assert mine["major"] == payload["major"]
+    assert mine["deadline"] == payload["deadline"]
+    assert mine["is_urgent"] is False
+    with SessionLocal() as db:
+        review_recruitment(
+            db,
+            recruit_id=first_id,
+            action="reject",
+            reviewer="test-reviewer",
+            reason="请补充职责",
+        )
+    revised = {**payload, "title": "修改后的内部审核流程测试", "submit_for_review": True}
+    assert other.patch(
+        f"/api/recruitments/{first_id}",
+        headers=_idem(other_headers),
+        json=revised,
+    ).status_code == 403
+    update_headers = _idem(owner_headers)
+    updated = owner.patch(
+        f"/api/recruitments/{first_id}",
+        headers=update_headers,
+        json=revised,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "pending_review"
+    assert owner.patch(
+        f"/api/recruitments/{first_id}",
+        headers=update_headers,
+        json=revised,
+    ).json() == updated.json()
+    with SessionLocal() as db:
+        stored = db.get(Recruitment, first_id)
+        assert stored is not None
+        assert stored.title == revised["title"]
+        assert stored.review_status == "pending_review"
+        assert stored.publication_status == "restricted"
+        assert stored.verified_at is None
+        assert stored.governance["review_history"][-1]["reason"] == "请补充职责"
+    assert other.delete(
+        f"/api/recruitments/{first_id}", headers=_idem(other_headers)
+    ).status_code == 403
+    assert owner.delete(
+        f"/api/recruitments/{first_id}", headers=_idem(owner_headers)
+    ).status_code == 200
+    assert first_id not in {
+        item["recruit_id"]
+        for item in owner.get("/api/recruitments/mine").json()["data"]
+    }
+
+    second = owner.post(
+        "/api/recruitments",
+        headers=_idem(owner_headers),
+        json={**payload, "title": "审核批准流程测试"},
+    )
+    second_id = second.json()["recruit_id"]
+    with SessionLocal() as db:
+        reviewed = review_recruitment(
+            db,
+            recruit_id=second_id,
+            action="approve",
+            reviewer="test-reviewer",
+            reason="fixture verified",
+        )
+        assert reviewed.authorization_basis == "publisher_submission_reviewed"
+        assert reviewed.governance["review_history"][0]["reviewer"] == "test-reviewer"
+    public_ids = {
+        item["recruit_id"] for item in owner.get("/api/recruitments").json()["data"]
+    }
+    assert second_id in public_ids
+    assert owner.delete(
+        f"/api/recruitments/{second_id}", headers=_idem(owner_headers)
+    ).status_code == 200
+    public_ids = {
+        item["recruit_id"] for item in owner.get("/api/recruitments").json()["data"]
+    }
+    assert second_id not in public_ids
+
+
+def test_private_document_analysis_requires_owner_and_single_use_glm_consent(
+    monkeypatch,
+):
+    owner, owner_headers = _web_client()
+    other, other_headers = _web_client()
+    text = (
+        "姓名：测试同学\n"
+        "邮箱：student@example.edu\n"
+        "研究方向：自然语言处理、可信人工智能\n"
+        "科研经历：完成校内检索项目\n"
+        "奖项：一等奖、二等奖\n"
+        "职务：班长\n"
+        "未选择的秘密：do-not-send"
+    )
+    uploaded = owner.post(
+        "/api/documents",
+        headers=owner_headers,
+        files={
+            "file": (
+                "facts.docx",
+                _docx_bytes(text),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert uploaded.status_code == 200
+    document_id = uploaded.json()["document_id"]
+    assert uploaded.json()["text_preview"] == ""
+    with SessionLocal() as db:
+        assert db.get(PrivateDocument, document_id).extracted_text == ""
+
+    assert other.post(
+        f"/api/documents/{document_id}/analysis",
+        headers=other_headers,
+        json={"confirm_private_parse": True},
+    ).status_code == 403
+    assert owner.post(
+        f"/api/documents/{document_id}/analysis",
+        headers=owner_headers,
+        json={"confirm_private_parse": False},
+    ).status_code == 422
+    analyzed = owner.post(
+        f"/api/documents/{document_id}/analysis",
+        headers=owner_headers,
+        json={"confirm_private_parse": True},
+    )
+    assert analyzed.status_code == 200
+    analysis = analyzed.json()
+    assert analysis["retention"] == "not_stored"
+    assert analysis["external_model_called"] is False
+    facts = {item["field"]: item["value"] for item in analysis["facts"]}
+    assert facts["name"] == "测试同学"
+    assert facts["email"] == "student@example.edu"
+    assert facts["interest_tags"] == ["自然语言处理", "可信人工智能"]
+    assert facts["awards"] == ["一等奖", "二等奖"]
+    assert facts["positions"] == ["班长"]
+
+    calls: list[str] = []
+
+    async def fake_llm_complete(messages):
+        calls.append(messages[0].content)
+        return "仅基于所选片段的解读"
+
+    import app.api.v1.documents as documents_api
+
+    monkeypatch.setattr(documents_api, "llm_complete", fake_llm_complete)
+    request = {
+        "confirm_single_use": False,
+        "selections": [
+            {"field": "research_interest", "selected_text": "研究方向：自然语言处理、可信人工智能"}
+        ],
+    }
+    denied = owner.post(
+        f"/api/documents/{document_id}/interpretation",
+        headers=owner_headers,
+        json=request,
+    )
+    assert denied.status_code == 422
+    assert calls == []
+    assert other.post(
+        f"/api/documents/{document_id}/interpretation",
+        headers=other_headers,
+        json={**request, "confirm_single_use": True},
+    ).status_code == 403
+    assert calls == []
+    assert owner.post(
+        f"/api/documents/{document_id}/interpretation",
+        headers=owner_headers,
+        json={
+            "confirm_single_use": True,
+            "selections": [
+                {"field": "research_interest", "selected_text": "not-from-file"}
+            ],
+        },
+    ).status_code == 422
+    assert calls == []
+
+    interpreted = owner.post(
+        f"/api/documents/{document_id}/interpretation",
+        headers=owner_headers,
+        json={**request, "confirm_single_use": True},
+    )
+    assert interpreted.status_code == 200
+    assert interpreted.json() == {
+        "interpretation": "仅基于所选片段的解读",
+        "provider": "glm",
+        "retention": "not_stored",
+    }
+    assert len(calls) == 1
+    assert "研究方向：自然语言处理、可信人工智能" in calls[0]
+    assert "do-not-send" not in calls[0]
+    with SessionLocal() as db:
+        events = (
+            db.query(ArtifactAuditEvent)
+            .filter(ArtifactAuditEvent.document_id == document_id)
+            .all()
+        )
+        event_text = " ".join(
+            str(getattr(event, column.name))
+            for event in events
+            for column in ArtifactAuditEvent.__table__.columns
+        )
+    assert "自然语言处理" not in event_text
+    assert "do-not-send" not in event_text
+    assert {event.event_type for event in events} >= {
+        "authorization_confirmed",
+        "interpretation_completed",
+    }
+
+    assert owner.request(
+        "DELETE",
+        f"/api/documents/{document_id}",
+        headers=_idem(owner_headers),
+        json={"confirm_delete": True},
+    ).status_code == 200
+
+
 def test_client_supplied_identity_fields_are_rejected():
     client, headers = _web_client()
     recruitment = client.post(
         "/api/recruitments",
-        headers=headers,
+        headers=_idem(headers),
         json={
             "publisher_id": "forged",
             "type": "招生",
@@ -454,15 +728,20 @@ def test_match_result_limit_is_hard_capped_and_home_does_not_fetch_all_mentors()
         "async function match", 1
     )[0]
     assert "fetchAdvisors" not in load_all_body
-    assert "fetchScatter" in load_all_body
+    assert "fetchMentorDistribution" in load_all_body
+    assert "fetchScatter" not in load_all_body
 
 
 def test_frontend_runtime_has_no_legacy_identity_or_external_contact_paths():
     root = Path(__file__).resolve().parents[2] / "frontend/src"
-    runtime = "\n".join(
-        path.read_text(encoding="utf-8")
+    sources = [
+        path
         for path in root.rglob("*")
         if path.suffix in {".ts", ".vue"}
+    ]
+    runtime = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sources
     )
     for forbidden in (
         "X-Student-Token",
@@ -472,10 +751,19 @@ def test_frontend_runtime_has_no_legacy_identity_or_external_contact_paths():
         "student_id",
         "'anonymous'",
         '"anonymous"',
-        "localStorage",
         "加密存储",
     ):
         assert forbidden not in runtime
+
+    storage_module = root / "utils/browserStorage.ts"
+    storage_source = storage_module.read_text(encoding="utf-8")
+    assert "window.localStorage" in storage_source
+    direct_storage_access = re.compile(r"(?:window\.)?localStorage\s*[.\[]")
+    for path in sources:
+        if path == storage_module:
+            continue
+        source = path.read_text(encoding="utf-8")
+        assert direct_storage_access.search(source) is None, path
 
 
 def test_frontend_web_session_and_interview_rendering_regressions():

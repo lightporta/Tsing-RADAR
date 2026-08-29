@@ -1,5 +1,9 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ArrowLeft, Menu } from '@element-plus/icons-vue'
+import { useUserStore } from '@/stores/useUserStore'
+import { fetchWebTestMode, type WebTestModeStatus } from '@/api/request'
 import AppLogo from './AppLogo.vue'
 
 // =====================================================================
@@ -18,6 +22,31 @@ withDefaults(defineProps<{ showBack?: boolean; title?: string }>(), {
 const emit = defineEmits<{ (e: 'menu-click'): void }>()
 
 const router = useRouter()
+const userStore = useUserStore()
+const avatarUrl = computed(() => userStore.profile.avatarUrl?.trim() || '')
+const avatarInitial = computed(() => {
+  const name = userStore.profile.name.trim()
+  return name ? Array.from(name)[0].toUpperCase() : '我'
+})
+
+// —— 网页免认证测试模式标注（模块级缓存，避免多个 Header 实例重复请求）——
+const testMode = ref<WebTestModeStatus | null>(null)
+let testModeLoaded = false
+
+onMounted(async () => {
+  if (testModeLoaded) return
+  testModeLoaded = true
+  try {
+    testMode.value = await fetchWebTestMode()
+  } catch {
+    // 状态端点不可用时不阻塞页面，仅不显示标注
+  }
+})
+
+const testModeText = computed(() => {
+  if (!testMode.value || !testMode.value.enabled) return ''
+  return testMode.value.active ? testMode.value.label : '网页测试模式已到期'
+})
 
 function goProfile() {
   router.push('/profile')
@@ -27,6 +56,9 @@ function goMentors() {
 }
 function goRecruitment() {
   router.push('/recruitment')
+}
+function goMentorPortal() {
+  router.push('/mentor/dashboard')
 }
 function goBack() {
   // 保留首页会话状态
@@ -48,7 +80,7 @@ function handleProfileClick() {
         aria-label="返回首页"
         @click="goBack"
       >
-        <el-icon aria-hidden="true">←</el-icon>
+        <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
         <span class="back-text">返回</span>
       </button>
       <button
@@ -57,7 +89,7 @@ function handleProfileClick() {
         aria-label="打开菜单"
         @click="emit('menu-click')"
       >
-        <el-icon aria-hidden="true">☰</el-icon>
+        <el-icon aria-hidden="true"><Menu /></el-icon>
       </button>
       <AppLogo v-else />
     </div>
@@ -65,17 +97,29 @@ function handleProfileClick() {
     <!-- 中部标题（二级页） -->
     <h1 v-if="title" class="header-title">{{ title }}</h1>
 
-    <!-- 右侧：学生信息 + 信息平台 -->
+    <!-- 右侧：清晰的文字入口 + 当前用户头像 -->
     <div class="header-right">
+      <span
+        v-if="testModeText"
+        class="test-mode-badge"
+        :class="{ expired: testMode && !testMode.active }"
+      >{{ testModeText }}</span>
       <slot name="right" />
-      <button class="icon-btn" aria-label="导师资源库" @click="goMentors">
-        <el-icon aria-hidden="true">师</el-icon>
+      <button class="nav-btn mentors" aria-label="导师数据" @click="goMentors">
+        导师数据
       </button>
-      <button class="icon-btn" aria-label="个人信息" @click="handleProfileClick">
-        <el-icon aria-hidden="true">人</el-icon>
+      <button class="nav-btn profile" aria-label="个人信息" @click="handleProfileClick">
+        个人信息
       </button>
-      <button class="icon-btn" aria-label="信息平台" @click="goRecruitment">
-        <el-icon aria-hidden="true">讯</el-icon>
+      <button class="nav-btn recruitment" aria-label="招募信息" @click="goRecruitment">
+        招募信息
+      </button>
+      <button class="nav-btn mentor" aria-label="导师门户" @click="goMentorPortal">
+        导师门户
+      </button>
+      <button class="user-avatar" aria-label="进入个人信息" @click="handleProfileClick">
+        <img v-if="avatarUrl" :src="avatarUrl" alt="当前用户头像" />
+        <span v-else>{{ avatarInitial }}</span>
       </button>
     </div>
   </header>
@@ -124,6 +168,24 @@ function handleProfileClick() {
   gap: $spacing-sm;
 }
 
+.test-mode-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 4px;
+  color: #b45309;
+  background: rgba(230, 162, 60, 0.12);
+  border: 1px solid rgba(230, 162, 60, 0.45);
+  white-space: nowrap;
+
+  &.expired {
+    color: #b91c1c;
+    background: rgba(245, 108, 108, 0.1);
+    border-color: rgba(245, 108, 108, 0.45);
+  }
+}
+
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -142,6 +204,67 @@ function handleProfileClick() {
   }
   &:active {
     transform: scale(0.95);
+  }
+}
+
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: $transition-fast;
+
+  &.mentors {
+    color: #1769aa;
+    background: #eaf4ff;
+  }
+
+  &.profile {
+    color: #287a4d;
+    background: #edf8f1;
+  }
+
+  &.recruitment {
+    color: #9a5b13;
+    background: #fff5e6;
+  }
+
+  &.mentor {
+    color: #6a3d9a;
+    background: #f3edfb;
+  }
+
+  &:hover {
+    filter: brightness(0.97);
+    box-shadow: 0 2px 8px rgba(32, 70, 120, 0.12);
+  }
+
+  &:active {
+    transform: scale(0.97);
+  }
+}
+
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: $color-accent;
+  font-size: 14px;
+  font-weight: 600;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 }
 
@@ -166,6 +289,19 @@ function handleProfileClick() {
   .back-btn {
     width: 36px;
     padding: 0;
+  }
+  .app-header {
+    padding: 0 $spacing-md;
+  }
+  .header-right {
+    gap: 4px;
+  }
+  .nav-btn {
+    display: none;
+  }
+  .user-avatar {
+    width: 32px;
+    height: 32px;
   }
 }
 </style>

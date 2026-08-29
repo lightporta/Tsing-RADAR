@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { getHardConstraintCapabilities } from '@/api/interview'
 import { useChatStore } from '@/stores/useChatStore'
 import type {
   HardConstraintField,
+  HardConstraintCapability,
   HardConstraintOperator,
   InterviewPortrait,
 } from '@/types/interview'
 
 const chatStore = useChatStore()
 const saving = ref(false)
+const capabilityLoading = ref(false)
+const constraintCapabilities = ref<HardConstraintCapability[]>([])
+const capabilityError = ref('')
 const interestsText = ref('')
 const unresolvedConstraintsText = ref('')
 const draftConstraints = ref<InterviewPortrait['draft_hard_constraints']>([])
@@ -31,6 +36,34 @@ const form = reactive<
   career_orientation: 'undecided',
   innovation_risk: 'undecided',
 })
+
+const availableCapabilities = computed(() =>
+  constraintCapabilities.value.filter((item) => item.available),
+)
+
+function capabilityFor(field: HardConstraintField) {
+  return constraintCapabilities.value.find((item) => item.field === field)
+}
+
+function operatorsFor(field: HardConstraintField) {
+  return capabilityFor(field)?.operators || []
+}
+
+function operatorLabel(operator: HardConstraintOperator) {
+  return {
+    equals: '等于',
+    one_of: '任一',
+    excludes: '排除',
+    contains: '包含',
+    minimum: '至少',
+    maximum: '至多',
+  }[operator]
+}
+
+function changeConstraintField(row: ConstraintRow) {
+  const operators = operatorsFor(row.field)
+  if (!operators.includes(row.operator)) row.operator = operators[0] || 'equals'
+}
 
 watch(
   () => chatStore.profile,
@@ -66,9 +99,14 @@ function splitValues(value: string): string[] {
 }
 
 function addConstraint() {
+  const capability = availableCapabilities.value[0]
+  if (!capability) {
+    ElMessage.warning('当前导师数据没有可用于硬约束的已核验证据字段')
+    return
+  }
   constraintRows.value.push({
-    field: 'location',
-    operator: 'one_of',
+    field: capability.field,
+    operator: capability.operators[0],
     valueText: '',
   })
 }
@@ -91,6 +129,22 @@ function resolveDraft(index: number, accept: boolean) {
 }
 
 async function save() {
+  if (capabilityLoading.value) {
+    ElMessage.warning('正在读取硬约束能力，请稍候')
+    return
+  }
+  const invalidRow = constraintRows.value.find((row) => {
+    const capability = capabilityFor(row.field)
+    return (
+      !splitValues(row.valueText).length ||
+      !capability?.available ||
+      !capability.operators.includes(row.operator)
+    )
+  })
+  if (invalidRow) {
+    ElMessage.error('硬约束不能为空，且字段与比较方式必须由当前证据能力支持')
+    return
+  }
   saving.value = true
   try {
     await chatStore.updateInterviewProfile({
@@ -116,6 +170,20 @@ async function save() {
     saving.value = false
   }
 }
+
+onMounted(async () => {
+  capabilityLoading.value = true
+  capabilityError.value = ''
+  try {
+    const response = await getHardConstraintCapabilities()
+    constraintCapabilities.value = response.fields
+  } catch {
+    constraintCapabilities.value = []
+    capabilityError.value = '硬约束能力读取失败，为避免无证据筛选，暂不能新增或保存硬约束。'
+  } finally {
+    capabilityLoading.value = false
+  }
+})
 
 async function confirm() {
   saving.value = true
@@ -202,30 +270,45 @@ async function confirm() {
       </div>
       <div class="constraint-editor">
         <span>已确认的结构化硬约束</span>
+        <p class="capability-note" aria-live="polite">
+          {{
+            capabilityError ||
+              `当前 ${availableCapabilities.length}/${constraintCapabilities.length} 个字段有已核验证据`
+          }}
+        </p>
         <div v-for="(row, index) in constraintRows" :key="index" class="constraint-row">
-          <el-select v-model="row.field" aria-label="约束字段">
-            <el-option label="地点" value="location" />
-            <el-option label="每周投入天数" value="weekly_commitment_days" />
-            <el-option label="学历阶段" value="degree_stage" />
-            <el-option label="语言" value="language" />
-            <el-option label="保密要求" value="confidentiality" />
-            <el-option label="毕业安排" value="graduation_arrangement" />
-            <el-option label="院系" value="department" />
-            <el-option label="研究主题" value="research_topic" />
-            <el-option label="导师 ID" value="advisor_id" />
+          <el-select
+            v-model="row.field"
+            aria-label="约束字段"
+            @change="changeConstraintField(row)"
+          >
+            <el-option
+              v-for="capability in constraintCapabilities"
+              :key="capability.field"
+              :label="`${capability.label}${capability.available ? '' : '（暂无证据）'}`"
+              :value="capability.field"
+              :disabled="!capability.available"
+            />
           </el-select>
           <el-select v-model="row.operator" aria-label="比较方式">
-            <el-option label="等于" value="equals" />
-            <el-option label="任一" value="one_of" />
-            <el-option label="排除" value="excludes" />
-            <el-option label="包含" value="contains" />
-            <el-option label="至少" value="minimum" />
-            <el-option label="至多" value="maximum" />
+            <el-option
+              v-for="operator in operatorsFor(row.field)"
+              :key="operator"
+              :label="operatorLabel(operator)"
+              :value="operator"
+            />
           </el-select>
           <el-input v-model="row.valueText" placeholder="多个值用逗号分隔" />
           <el-button text type="danger" @click="constraintRows.splice(index, 1)">删除</el-button>
         </div>
-        <el-button size="small" @click="addConstraint">添加结构化约束</el-button>
+        <el-button
+          size="small"
+          :loading="capabilityLoading"
+          :disabled="!availableCapabilities.length"
+          @click="addConstraint"
+        >
+          添加结构化约束
+        </el-button>
       </div>
       <label class="unresolved-constraints">
         <span>待澄清原文（清空表示明确放弃；保留则不能确认）</span>
@@ -313,6 +396,11 @@ async function confirm() {
   grid-column: 1 / -1;
   font-size: 11px;
   color: $text-secondary;
+}
+
+.capability-note {
+  margin: 3px 0;
+  color: $text-placeholder;
 }
 
 .draft-constraints {

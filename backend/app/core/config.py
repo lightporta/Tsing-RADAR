@@ -2,11 +2,12 @@
 
 混合方案：
 - 开发期默认 SQLite + 内存 store，开箱即用
-- 生产期通过 .env 切换 PostgreSQL + Redis + Milvus
+- 生产期通过 .env 切换 PostgreSQL + Redis
 """
 
 from functools import lru_cache
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
 from urllib.parse import quote
@@ -34,8 +35,12 @@ def _read_secret_file(name: str, value: str) -> str:
 
 
 class Settings(BaseSettings):
+    # env_file 可用 TSING_RADAR_ENV_FILE 覆盖（测试环境置空以禁用本机 .env
+    # 加载，防止开发机真实密钥泄漏进测试；生产与脚本默认仍读当前目录 .env）。
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=os.environ.get("TSING_RADAR_ENV_FILE", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # —— 应用 ——
@@ -64,29 +69,82 @@ class Settings(BaseSettings):
     REDIS_DATABASE: int = Field(default=0, ge=0, le=15)
     REDIS_PASSWORD_FILE: Optional[str] = None
 
-    # —— 向量数据库（可选；A4 默认使用透明词法回退，不伪装成 embedding）——
-    MILVUS_HOST: Optional[str] = None
-    MILVUS_PORT: int = 19530
+    # Optional score evidence is a separate, fail-closed release from mentor
+    # directory facts.  No file means the visualisation coverage gate is shut.
+    MENTOR_SCORE_DATA_FILE: Optional[str] = None
+    MENTOR_SCORE_DATA_EXPECTED_SHA256: Optional[str] = None
+    MENTOR_SCORE_COVERAGE_THRESHOLD: float = Field(default=0.8, gt=0, le=1)
 
     # —— 大模型 ——
     # 生产只接受 provider + 文件型密钥；开发继续兼容既有直接变量。
     LLM_ENABLED: bool = True
-    LLM_PROVIDER: Optional[Literal["glm", "deepseek"]] = None
+    # GLM is the only supported provider.  A different LLM_PROVIDER is rejected
+    # by Pydantic before startup; provider-specific fallback channels do not
+    # exist in the application settings anymore.
+    LLM_PROVIDER: Optional[Literal["glm"]] = None
     LLM_API_KEY_FILE: Optional[str] = None
     GLM_API_KEY: Optional[str] = None
-    DEEPSEEK_API_KEY: Optional[str] = None
     GLM_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4"
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     GLM_CHAT_MODEL: str = "glm-4-flash"
-    DEEPSEEK_CHAT_MODEL: str = "deepseek-chat"
     GLM_EMBED_MODEL: str = "embedding-3"
     LLM_TIMEOUT: int = 30
+    # Optional interview wording must never hold the fixed state-machine reply
+    # for the full generic document/analysis timeout.
+    # 09 文档（对话自由度调优）：上限 8.0 → 10.0（L3 目标 10s），默认值
+    # 4.0 不变（本地/测试零影响；生产经 compose 环境变量注入 10.0）。
+    LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: float = Field(
+        default=4.0,
+        ge=0.5,
+        le=10.0,
+    )
+    # v4.3.0 全 Agent 化编排总开关：开启后访谈回复与匹配后非结构化消息
+    # 由 GLM Agent 编排层（agent_orchestrator，确定性工具 + 逐字锚点
+    # 校验）渲染；关闭即一键回退既有确定性表达层管线（生产回退开关）。
+    # 无 LLM 凭据时无论开关如何都不发起任何编排请求。
+    AGENT_ORCHESTRATION_ENABLED: bool = True
     _llm_credentials: tuple[tuple[str, str], ...] = PrivateAttr(default=())
 
-    # —— 邮件（清华 SMTP，OAuth 2.0 占位）——
-    SMTP_HOST: Optional[str] = "smtp.tsinghua.edu.cn"
-    SMTP_USER: Optional[str] = None
-    SMTP_PASSWORD: Optional[str] = None
+    # —— 导师服务邮件（邮箱验证码登录）——
+    # MAIL_MODE=console：验证码仅打印到服务端日志（开发/测试默认，不发送）；
+    # MAIL_MODE=smtp：走 SMTP 发送（生产，须配置 MAIL_HOST/USER/PASSWORD/MAIL_FROM）。
+    # 生产禁止 console（验证码不得进日志）；SMTP 密码用 MAIL_PASSWORD_FILE 文件挂载。
+    MAIL_MODE: str = "console"
+    MAIL_PASSWORD_FILE: Optional[str] = None
+    MAIL_HOST: Optional[str] = "smtp.tsinghua.edu.cn"
+    MAIL_PORT: int = Field(default=465, ge=1, le=65535)
+    MAIL_USER: Optional[str] = None
+    MAIL_PASSWORD: Optional[str] = None
+    MAIL_FROM: str = "Tsing-RADAR 导师服务 <no-reply@tsingradar.com.cn>"
+    MAIL_USE_TLS: bool = True
+    # 验证码有效期 / 重发限频 / 日上限 / 校验失败次数上限
+    MENTOR_CODE_TTL_SECONDS: int = Field(default=600, ge=60, le=3600)
+    MENTOR_CODE_RESEND_SECONDS: int = Field(default=60, ge=30, le=600)
+    MENTOR_CODE_DAILY_LIMIT: int = Field(default=10, ge=3, le=50)
+    MENTOR_CODE_MAX_ATTEMPTS: int = Field(default=5, ge=3, le=20)
+
+    # —— 学生评价（M1）——
+    # 同一评分主体每日提交上限（服务端确定性计数；IP 频控随 B-05 上线前补齐）
+    ADVISOR_RATING_DAILY_LIMIT: int = Field(default=5, ge=1, le=100)
+    # 主观雷达展示门槛：单维样本量低于该值时 API 不下发该维数值
+    # （防低样本暴露与操纵；与前端 RATING_MIN_DIMENSION_N 保持一致）
+    ADVISOR_RATING_MIN_SAMPLES: int = Field(default=8, ge=1, le=100)
+
+    # —— 网页免认证测试模式（未实名认证测试身份）——
+    # 接入清华统一身份认证之前，网页通道整体是临时测试模式；到期后端
+    # 自动停止该通道的云端功能（fail-closed）。生产 preflight 要求显式
+    # 配置到期时间；未配置时不做到期拦截（本地开发默认）。
+    WEB_TEST_MODE_ENABLED: bool = True
+    WEB_TEST_MODE_EXPIRES_AT: Optional[datetime] = None
+
+    # —— 招募评论区 ——
+    # 服务内确定性限频：同一评论主体每日上限 / 单帖每主体上限（超限 429）
+    COMMENT_DAILY_LIMIT: int = Field(default=10, ge=1, le=100)
+    COMMENT_PER_POST_LIMIT: int = Field(default=3, ge=1, le=20)
+    # 评论列表每父评论内嵌的回复条数
+    COMMENT_REPLY_PREVIEW_LIMIT: int = Field(default=3, ge=1, le=20)
+    # 敏感词表外置：逗号分隔内联词表 + 外部文件（每行一词），代码不硬编码词表
+    CONTENT_SENSITIVE_WORDS: str = ""
+    CONTENT_SENSITIVE_WORDS_FILE: Optional[str] = None
 
     # —— CORS ——
     CORS_ORIGINS: str = (
@@ -110,6 +168,9 @@ class Settings(BaseSettings):
     # separate capabilities. Both remain disabled unless explicitly released.
     QXD_REMOTE_MEDIA_FETCH_ENABLED: bool = False
     QXD_ATTACHMENTS_ENABLED: bool = False
+    # 清小搭文本雷达图形态：auto（默认，退化数据自动降级柱状图）/
+    # radar（固定线状雷达）/ bars（固定柱状图）。未知取值按 auto。
+    RADAR_TEXT_FORM: str = "auto"
     # 逗号分隔的媒体下载域名白名单；启用远程媒体抓取时必须非空。
     QXD_MEDIA_ALLOWED_HOSTS: str = ""
     QXD_MEDIA_MAX_REDIRECTS: int = Field(default=3, ge=0, le=10)
@@ -118,6 +179,11 @@ class Settings(BaseSettings):
     # 清小搭“测试验证”当前可能只发送最新一条 user 消息，且不提供可验证的
     # 终端用户 claim。此开关只用于单人、本地、临时隧道试聊；生产启动门拒绝启用。
     QXD_TRIAL_SINGLE_USER_MODE: bool = False
+    # v4.2.2（回归问题5）：SSE 流式总开关。清小搭平台转发层被观测到间歇性
+    # 不消费 SSE 收尾帧（前端卡 2 分钟超时才解锁）；访谈回复均为短文本，
+    # 关闭流式（一次性返回）可绕开平台侧 SSE 兼容问题。请求方仍传 stream=true
+    # 时也按非流式响应返回（协议兼容，客户端按常规 JSON 消费）。
+    QXD_CHAT_STREAM_ENABLED: bool = True
     QXD_TRIAL_IDLE_TTL_SECONDS: int = Field(
         default=10 * 60,
         ge=60,
@@ -214,6 +280,7 @@ class Settings(BaseSettings):
             ("ARTIFACT_SIGNING_SECRET", "ARTIFACT_SIGNING_SECRET_FILE"),
             ("S3_ACCESS_KEY_ID", "S3_ACCESS_KEY_ID_FILE"),
             ("S3_SECRET_ACCESS_KEY", "S3_SECRET_ACCESS_KEY_FILE"),
+            ("MAIL_PASSWORD", "MAIL_PASSWORD_FILE"),
         )
         for target_name, file_name in mappings:
             secret_path = getattr(self, file_name)
@@ -269,14 +336,7 @@ class Settings(BaseSettings):
             )
             object.__setattr__(self, "REDIS_URL", redis_url)
 
-        direct_credentials = tuple(
-            (provider, key)
-            for provider, key in (
-                ("glm", self.GLM_API_KEY),
-                ("deepseek", self.DEEPSEEK_API_KEY),
-            )
-            if key
-        )
+        direct_credentials = (("glm", self.GLM_API_KEY),) if self.GLM_API_KEY else ()
         if not self.LLM_ENABLED:
             if self.LLM_API_KEY_FILE or self.LLM_PROVIDER or direct_credentials:
                 raise ValueError(
@@ -317,9 +377,20 @@ class Settings(BaseSettings):
                 )
             credentials = selected
         else:
-            # Preserve the existing development order: GLM first, then DeepSeek.
             credentials = direct_credentials
         object.__setattr__(self, "_llm_credentials", credentials)
+
+        if self.PRODUCTION_DEPLOYMENT:
+            if self.MAIL_MODE != "smtp":
+                raise ValueError(
+                    "production deployment requires MAIL_MODE=smtp "
+                    "(console mode would leak verification codes to logs)"
+                )
+            if self.MAIL_MODE == "smtp" and not self.MAIL_PASSWORD_FILE:
+                raise ValueError(
+                    "production deployment requires MAIL_PASSWORD_FILE "
+                    "(direct SMTP passwords are not accepted)"
+                )
         return self
 
     @property
@@ -352,6 +423,7 @@ class Settings(BaseSettings):
                 self.QXD_API_KEY_FILE,
                 self.QXD_END_USER_SIGNING_SECRET_FILE,
                 self.LLM_API_KEY_FILE,
+                self.MAIL_PASSWORD_FILE,
             )
             if value
         )

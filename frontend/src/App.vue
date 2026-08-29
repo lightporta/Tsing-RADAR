@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { RouterView } from 'vue-router'
 import { bootstrapSession } from '@/api/request'
+import { routePending } from '@/router'
 
 const sessionState = ref<'loading' | 'ready' | 'error'>('loading')
 
@@ -19,6 +20,15 @@ onMounted(initializeSession)
 </script>
 
 <template>
+  <div
+    v-if="routePending"
+    class="route-progress"
+    role="progressbar"
+    aria-label="页面正在切换"
+    aria-valuetext="加载中"
+  >
+    <span />
+  </div>
   <main v-if="sessionState === 'loading'" class="session-gate" aria-live="polite">
     正在建立私有会话…
   </main>
@@ -45,5 +55,27 @@ onMounted(initializeSession)
   place-content: center;
   gap: 16px;
   text-align: center;
+}
+
+.route-progress {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(64, 158, 255, 0.18);
+  z-index: 9999;
+
+  span {
+    display: block;
+    width: 45%;
+    height: 100%;
+    background: #409eff;
+    animation: route-progress 0.9s ease-in-out infinite;
+  }
+}
+
+@keyframes route-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(250%); }
 }
 </style>

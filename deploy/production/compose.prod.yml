@@ -1,6 +1,9 @@
 services:
   backend:
     image: ${BACKEND_IMAGE:?Set an immutable backend image digest}
+    labels:
+      com.tsingradar.source-commit: ${SOURCE_COMMIT:-unset}
+      com.tsingradar.release-id: ${RELEASE_ID:-unset}
     user: "10001:10001"
     restart: unless-stopped
     init: true
@@ -10,6 +13,15 @@ services:
       LLM_ENABLED: "true"
       LLM_PROVIDER: glm
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      # 09 文档 §4：模型与增强超时走环境变量（config.py 默认值不动）。
+      # GLM_CHAT_MODEL 缺省回退 glm-4-flash；production.env 删掉该行即回
+      # flash（零代码回滚）。增强超时 L3 目标 10s（旧硬编码 4.0 会误杀
+      # 稍长的自然回复，05 报告 OBS-01 根因之一）。
+      GLM_CHAT_MODEL: ${GLM_CHAT_MODEL:-glm-4-flash}
+      LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS: ${LLM_INTERVIEW_ENHANCEMENT_TIMEOUT_SECONDS:-10.0}
+      # 全 Agent 化编排总开关（默认 true；production.env 置 false 可一键
+      # 回退到确定性管线，无需改镜像）
+      AGENT_ORCHESTRATION_ENABLED: ${AGENT_ORCHESTRATION_ENABLED:-true}
       AUTO_CREATE_SCHEMA: "false"
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
@@ -20,12 +32,20 @@ services:
       REDIS_PORT: "6379"
       REDIS_DATABASE: "0"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      MILVUS_HOST: milvus
-      MILVUS_PORT: "19530"
       ADMIN_TOKEN_FILE: /run/secrets/admin_token
       SESSION_HMAC_SECRET_FILE: /run/secrets/session_hmac_secret
       ARTIFACT_SIGNING_SECRET_FILE: /run/secrets/artifact_signing_secret
+      # 生产邮件验证码强制 SMTP（console 模式会把验证码打进日志），密码走文件挂载
+      MAIL_MODE: smtp
+      MAIL_HOST: ${MAIL_HOST:-smtp.tsinghua.edu.cn}
+      MAIL_PORT: "465"
+      MAIL_USER: ${MAIL_USER:?Set MAIL_USER}
+      MAIL_FROM: ${MAIL_FROM:?Set MAIL_FROM}
+      MAIL_PASSWORD_FILE: /run/secrets/mail_password
       WEB_COOKIE_SECURE: "true"
+      WEB_TEST_MODE_ENABLED: "true"
+      # 网页免认证测试模式必须配置明确到期时间；过期自动停止网页通道云端功能。
+      WEB_TEST_MODE_EXPIRES_AT: ${WEB_TEST_MODE_EXPIRES_AT:-2026-12-31T23:59:59+08:00}
       OBJECT_STORE_BACKEND: s3
       S3_PROVIDER: tencent_cos
       S3_BUCKET: ${PROD_COS_BUCKET:?Set PROD_COS_BUCKET}
@@ -50,10 +70,28 @@ services:
       MENTOR_DATA_EXPECTED_FILE_SHA256: ${MENTOR_DATA_EXPECTED_FILE_SHA256:-1e7c9b83922a0a7adbcdc8f6e04c84c3a89b5bf72e4f2a6cd0455080395f99fa}
       MENTOR_DATA_EXPECTED_PUBLISHED_COUNT: ${MENTOR_DATA_EXPECTED_PUBLISHED_COUNT:-0}
       MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT: ${MENTOR_DATA_EXPECTED_MATCH_CANDIDATE_COUNT:-0}
+      MENTOR_SCORE_DATA_FILE: /app/data/mentor-scores.evidence.json
+      MENTOR_SCORE_DATA_EXPECTED_SHA256: ${MENTOR_SCORE_DATA_EXPECTED_SHA256:?Set score evidence file SHA-256}
+      MENTOR_SCORE_COVERAGE_THRESHOLD: ${MENTOR_SCORE_COVERAGE_THRESHOLD:-0.80}
     volumes:
       - type: bind
         source: ${MENTOR_DATA_FILE:-./data/empty-mentor-governance.json}
         target: /app/data/mentors.evidence.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MENTOR_SCORE_DATA_FILE:-./data/empty-mentor-score-governance.json}
+        target: /app/data/mentor-scores.evidence.json
+        read_only: true
+        bind:
+          create_host_path: false
+      # v4.0.0 综述级知识库（backend/data/knowledge，随仓库版本固定；不随
+      # 镜像内置，与治理数据同一"只读挂载"策略）。目录缺失时启动不报错，
+      # 但知识库查询按未收录降级（服务日志会告警）。
+      - type: bind
+        source: ${KNOWLEDGE_DATA_DIR:-../../backend/data/knowledge}
+        target: /app/data/knowledge
         read_only: true
         bind:
           create_host_path: false
@@ -94,6 +132,12 @@ services:
         bind:
           create_host_path: false
       - type: bind
+        source: ${SECRET_ROOT:?Set SECRET_ROOT}/mail_password
+        target: /run/secrets/mail_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
         source: ${SECRET_ROOT:?Set SECRET_ROOT}/cos_access_key_id
         target: /run/secrets/cos_access_key_id
         read_only: true
@@ -108,15 +152,12 @@ services:
     networks:
       - prod-app
       - prod-data
-      - vector-data
       - scanner-shared
       - backend-egress
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      milvus:
         condition: service_healthy
       clamav:
         condition: service_healthy
@@ -147,6 +188,9 @@ services:
 
   frontend:
     image: ${FRONTEND_IMAGE:?Set an immutable frontend image digest}
+    labels:
+      com.tsingradar.source-commit: ${SOURCE_COMMIT:-unset}
+      com.tsingradar.release-id: ${RELEASE_ID:-unset}
     restart: unless-stopped
     networks:
       - prod-app
@@ -184,8 +228,6 @@ networks:
   prod-app:
     internal: true
   prod-data:
-    internal: true
-  vector-data:
     internal: true
   scanner-shared:
     internal: true

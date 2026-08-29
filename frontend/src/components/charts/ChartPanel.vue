@@ -1,68 +1,61 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import ScatterChart from './ScatterChart.vue'
+import { ArrowLeft } from '@element-plus/icons-vue'
+import MentorDistributionChart from './MentorDistributionChart.vue'
 import RadarChartLarge from './RadarChartLarge.vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
 import { useUserStore } from '@/stores/useUserStore'
-import { TRAITS } from '@/types/advisor'
-import { topTraits } from '@/utils/synergy'
-import { TRAIT_LABEL_MAP } from '@/types/advisor'
+import { OBJECTIVE_DIMENSIONS } from '@/types/advisor'
 
 // =====================================================================
 // 可视化看板栏（文档 §3.5）
-// 默认状态：四象限散点图 + 象限筛选复选框组
-// 选中导师状态：大雷达图 + 契合指数 + 匹配理由 + 返回按钮
+// 默认状态：已发布导师资源的真实院系分布
+// 选中导师状态：客观+主观双雷达图 + 保守排序分 + 匹配理由 + 返回按钮
 // =====================================================================
 
 const advisorStore = useAdvisorStore()
 const userStore = useUserStore()
 
 const selected = computed(() => advisorStore.selectedAdvisor)
-const quadrants = ['国热', '国冷', '私热', '私冷'] as const
-
-const quadrantColors: Record<string, string> = {
-  国热: '#67c23a',
-  国冷: '#909399',
-  私热: '#e6a23c',
-  私冷: '#409eff',
+const resourceTypeLabels: Record<string, string> = {
+  verified_mentor_profile: '已核验画像',
+  mentor_catalog_entry: '目录导师资源',
+  advisor_group_catalog_entry: '目录导师组资源',
 }
 
-// 大雷达图下方的 3 条核心匹配理由
+// 大雷达图下方的 3 条核心客观证据亮点（来自已审核公开证据，非主观评价）
 const matchReasons = computed<string[]>(() => {
-  if (!selected.value?.radar_traits) return []
-  const tops = topTraits(selected.value.radar_traits, 3)
-  return tops.map((k) => {
-    const score = selected.value!.radar_traits[k]
-    return `${TRAIT_LABEL_MAP[k]}：${score} 分 — ${TRAITS.find((t) => t.key === k)?.description}`
-  })
+  const objective = selected.value?.objective_radar
+  if (!objective) return []
+  return [...OBJECTIVE_DIMENSIONS]
+    .map((d) => ({ ...d, score: Number(objective[d.key] ?? 0) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((d) => `${d.label}：${d.score.toFixed(0)} 分 — ${d.description}`)
 })
 </script>
 
 <template>
   <div class="chart-panel">
-    <!-- 默认：散点图 -->
+    <!-- 默认：真实聚合分布 -->
     <template v-if="!selected">
       <div class="panel-header">
-        <h2 class="panel-title">📊 导师四象限分布</h2>
+        <h2 class="panel-title">📊 已发布导师资源分布</h2>
       </div>
-      <!-- 象限筛选复选框组（右上角） -->
-      <div class="quadrant-filter">
-        <span class="filter-label">象限筛选：</span>
-        <el-checkbox
-          v-for="q in quadrants"
-          :key="q"
-          :model-value="advisorStore.quadrantFilter[q]"
-          @update:model-value="(v) => advisorStore.toggleQuadrant(q, !!v)"
+      <div class="resource-summary">
+        <span
+          v-for="item in advisorStore.distribution.resource_types"
+          :key="item.resource_type"
         >
-          <span class="quad-dot" :style="{ background: quadrantColors[q] }" />
-          {{ q }}
-        </el-checkbox>
+          {{ resourceTypeLabels[item.resource_type] }} {{ item.resource_count }}
+        </span>
       </div>
       <div class="chart-body">
-        <ScatterChart />
+        <MentorDistributionChart />
         <p class="chart-hint">
-          散点大小 = 契合度 · 颜色 = 院系 · 横轴 = 冷热门 · 纵轴 = 国/私<br />
-          点击散点或左侧卡片查看导师详情雷达图
+          展示已发布资源合并后的院系数量；不推断热度、经费、指导风格或国/私属性。<br />
+          共 {{ advisorStore.distribution.meta.grouped_advisors }} 位导师/导师组，来自
+          {{ advisorStore.distribution.meta.raw_resource_records }} 条公开资源。
         </p>
       </div>
     </template>
@@ -74,25 +67,24 @@ const matchReasons = computed<string[]>(() => {
           <h2 class="advisor-name">{{ selected.name }}</h2>
           <p class="advisor-dept">{{ selected.dept }} · {{ selected.field }}</p>
         </div>
-        <button class="back-btn" @click="advisorStore.selectAdvisor(null)">
-          <el-icon aria-hidden="true">←</el-icon>
-          返回散点图
+        <button class="back-btn" aria-label="返回分布图" @click="advisorStore.selectAdvisor(null)">
+          <el-icon aria-hidden="true"><ArrowLeft /></el-icon>
+          返回分布图
         </button>
       </div>
 
       <div class="radar-body">
         <RadarChartLarge
-          v-if="selected.radar_traits"
           :advisor="selected"
           :student-weights="userStore.profile.weights"
         />
-        <div v-else class="evidence-overview">
-          <strong>当前只展示证据化匹配结果</strong>
+        <div v-if="!selected.objective_radar" class="evidence-overview">
+          <strong>该导师暂无已审核客观证据</strong>
           <p>
             证据覆盖 {{ ((selected.evidence_coverage ?? 0) * 100).toFixed(0) }}% ·
             置信度 {{ ((selected.evidence_confidence ?? 0) * 100).toFixed(0) }}%
           </p>
-          <p>缺少经审核的六维导师特质，不绘制雷达图。</p>
+          <p>客观雷达显示灰色虚线视觉基准（无数据、非评分）；主观侧仅展示你的需求轮廓。</p>
         </div>
       </div>
 
@@ -132,8 +124,7 @@ const matchReasons = computed<string[]>(() => {
   color: $text-primary;
 }
 
-// 象限筛选
-.quadrant-filter {
+.resource-summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -144,25 +135,9 @@ const matchReasons = computed<string[]>(() => {
   margin-bottom: $spacing-md;
   flex-shrink: 0;
 
-  .filter-label {
+  span {
     font-size: 12px;
     color: $text-secondary;
-  }
-  .quad-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-right: 4px;
-    vertical-align: middle;
-  }
-  :deep(.el-checkbox) {
-    margin-right: 0;
-    height: auto;
-  }
-  :deep(.el-checkbox__label) {
-    font-size: 12px;
-    padding-left: 4px;
   }
 }
 
@@ -218,11 +193,12 @@ const matchReasons = computed<string[]>(() => {
   min-height: 280px;
   display: flex;
   justify-content: center;
+  flex-direction: column;
 }
 
 .evidence-overview {
-  margin: auto;
-  padding: $spacing-xl;
+  margin: 0 auto;
+  padding: 0 $spacing-xl $spacing-lg;
   text-align: center;
   color: $text-secondary;
 

@@ -1,3 +1,10 @@
+import type { AdvisorHistorySnapshot } from './advisor'
+import type {
+  InterviewPortrait,
+  InterviewQuestion,
+  InterviewStatus,
+} from './interview'
+
 // =====================================================================
 // 对话（Chat）相关类型定义
 // =====================================================================
@@ -37,8 +44,21 @@ export interface SSEChunk {
   session_id?: string
 }
 
-/** 引导问题快捷按钮 */
-export interface QuickQuestion {
-  label: string
-  prompt: string
+/** 最近会话的完整本机快照；不会由保存动作上传服务器。 */
+export interface LocalChatSession {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  sessionId?: string
+  messages: ChatMessage[]
+  interviewStatus: InterviewStatus
+  profile: InterviewPortrait | null
+  profileVersion: number | null
+  currentQuestion: InterviewQuestion | null
+  needsConfirmation: boolean
+  recommendReady: boolean
+  enhancementStatus: 'unknown' | 'available' | 'unavailable' | 'disabled'
+  enhancementProvider: string | null
+  advisor: AdvisorHistorySnapshot
 }

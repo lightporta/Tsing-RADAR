@@ -1,24 +1,24 @@
 """导师 / 匹配 / 对话相关 Pydantic 模型。"""
 
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.matching import MatchRequest
 
 
 class LLMMessage(BaseModel):
-    role: str
-    content: str
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(max_length=20_000)
 
 
 class LLMChatRequest(BaseModel):
-    messages: list[LLMMessage]
+    messages: list[LLMMessage] = Field(max_length=50)
     session_id: Optional[str] = None
 
 
 class LLMEmbeddingRequest(BaseModel):
-    text: str
+    text: str = Field(max_length=20_000)
 
 
 class MatchedAdvisorOut(BaseModel):
@@ -28,9 +28,8 @@ class MatchedAdvisorOut(BaseModel):
     tags: list[str] = []
     score: float
     reason: str
-    radar_traits: dict[str, float]
-    popularity: float
-    sector: str
+    # 客观四维（来自已审核公开证据；主观六维评价走 ratings 管线）
+    objective_radar: Optional[dict[str, float]] = None
     synergy: float = 0
     projects: list[dict] = []
     recruitments: list[dict] = []
@@ -45,9 +44,7 @@ class AdvisorOut(BaseModel):
     tags: list[str] = []
     score: float
     reason: str
-    radar_traits: dict[str, float]
-    popularity: float
-    sector: str
+    objective_radar: Optional[dict[str, float]] = None
     projects: list[dict] = []
     recruitments: list[dict] = []
     contact_email: Optional[str] = None

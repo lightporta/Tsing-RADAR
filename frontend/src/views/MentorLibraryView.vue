@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { fetchMentorResources } from '@/api/advisor'
+import axios from 'axios'
+import { fetchMentorDepartments, fetchMentorResources } from '@/api/advisor'
 import SubPageLayout from '@/layouts/SubPageLayout.vue'
+import { displayTime } from '@/utils/format'
 import type {
   MentorResource,
   MentorResourceMeta,
   MentorResourceType,
+  PublicCitation,
 } from '@/types/advisor'
 
 const loading = ref(false)
 const records = ref<MentorResource[]>([])
 const meta = ref<MentorResourceMeta | null>(null)
+const departments = ref<string[]>([])
+const expandedSources = ref(new Set<string>())
 const filters = reactive<{
   q: string
   dept: string
@@ -27,21 +32,35 @@ const filters = reactive<{
   pageSize: 20,
 })
 
+// 快速连续筛选/翻页时取消旧请求，避免旧响应后到会覆盖新数据
+let resourcesController: AbortController | null = null
+
 async function loadResources() {
+  resourcesController?.abort()
+  const controller = new AbortController()
+  resourcesController = controller
   loading.value = true
   try {
-    const response = await fetchMentorResources({
-      q: filters.q.trim() || undefined,
-      dept: filters.dept.trim() || undefined,
-      resource_type: filters.resourceType || undefined,
-      catalog_type: filters.catalogType || undefined,
-      page: filters.page,
-      page_size: filters.pageSize,
-    })
+    const response = await fetchMentorResources(
+      {
+        q: filters.q.trim() || undefined,
+        dept: filters.dept.trim() || undefined,
+        resource_type: filters.resourceType || undefined,
+        catalog_type: filters.catalogType || undefined,
+        page: filters.page,
+        page_size: filters.pageSize,
+      },
+      controller.signal,
+    )
     records.value = response.data
     meta.value = response.meta
+  } catch (error) {
+    // 旧请求被取消属预期行为，静默忽略；其余错误已由拦截器统一提示
+    if (!axios.isCancel(error)) throw error
   } finally {
-    loading.value = false
+    if (resourcesController === controller) {
+      loading.value = false
+    }
   }
 }
 
@@ -55,26 +74,74 @@ function changePage(page: number) {
   loadResources()
 }
 
-function resourceLabel(item: MentorResource) {
-  if (item.resource_type === 'verified_mentor_profile') return '已核验导师画像'
-  if (item.resource_type === 'advisor_group_catalog_entry') return '2027 目录导师组'
+function resourceLabel(type: MentorResourceType) {
+  if (type === 'verified_mentor_profile') return '已核验导师画像'
+  if (type === 'advisor_group_catalog_entry') return '2027 目录导师组'
   return '2027 目录导师'
 }
 
+function normalizeUrl(value?: string | null) {
+  if (!value) return ''
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    url.hostname = url.hostname.toLowerCase()
+    url.pathname = url.pathname.replace(/\/+$/, '') || '/'
+    return url.toString()
+  } catch {
+    return value.trim().replace(/\/+$/, '')
+  }
+}
+
 function sourceLinks(item: MentorResource) {
+  const homepage = normalizeUrl(item.official_homepage)
   const links = Object.values(item.provenance)
     .flat()
-    .filter((citation) => citation.source_url)
+    .filter((citation) => {
+      const url = normalizeUrl(citation.source_url)
+      return url && url !== homepage
+    })
   return Array.from(
-    new Map(links.map((citation) => [citation.source_url, citation])).values(),
-  ).slice(0, 4)
+    new Map(links.map((citation) => [normalizeUrl(citation.source_url), citation])).values(),
+  )
+}
+
+function visibleSources(item: MentorResource) {
+  const links = sourceLinks(item)
+  return expandedSources.value.has(item.advisor_id) ? links : links.slice(0, 1)
+}
+
+function toggleSources(item: MentorResource) {
+  if (expandedSources.value.has(item.advisor_id)) {
+    expandedSources.value.delete(item.advisor_id)
+  } else {
+    expandedSources.value.add(item.advisor_id)
+  }
+}
+
+function sourceLabel(citation: PublicCitation) {
+  const url = citation.source_url || ''
+  if (url.includes('yzbm.tsinghua.edu.cn')) return '招生目录'
+  if (url.includes('yz.tsinghua.edu.cn')) return '招生信息'
+  if (url.includes('tsinghua.edu.cn')) return '院系官网'
+  return citation.citation_type === 'public_url' ? '公开来源' : '审核来源'
 }
 
 function catalogLabel(value: string) {
   return value === 'doctoral_regular' ? '普通招考' : '推免目录'
 }
 
-onMounted(loadResources)
+onMounted(async () => {
+  await loadResources()
+  try {
+    const departmentResponse = await fetchMentorDepartments()
+    departments.value = departmentResponse.data.map((item) => item.name)
+  } catch {
+    departments.value = Array.from(
+      new Set(records.value.map((item) => item.dept).filter(Boolean)),
+    ).sort((left, right) => left.localeCompare(right, 'zh-CN'))
+  }
+})
 </script>
 
 <template>
@@ -97,7 +164,9 @@ onMounted(loadResources)
 
       <form class="search-panel" @submit.prevent="search">
         <el-input v-model="filters.q" clearable placeholder="姓名、专业或研究方向" />
-        <el-input v-model="filters.dept" clearable placeholder="院系" />
+        <el-select v-model="filters.dept" filterable clearable placeholder="全部院系">
+          <el-option v-for="dept in departments" :key="dept" :label="dept" :value="dept" />
+        </el-select>
         <el-select v-model="filters.resourceType" placeholder="全部资源">
           <el-option label="全部资源" value="" />
           <el-option label="已核验导师画像" value="verified_mentor_profile" />
@@ -112,13 +181,20 @@ onMounted(loadResources)
         <el-button type="primary" native-type="submit">检索</el-button>
       </form>
 
-      <p v-if="meta" class="result-count">共找到 {{ meta.filtered_records }} 条</p>
+      <p v-if="meta" class="result-count">
+        共找到 {{ meta.filtered_records }} 位导师/导师组，合并自 {{ meta.filtered_resource_records }} 条公开资源
+      </p>
       <div v-loading="loading" class="resource-list" aria-live="polite">
         <el-empty v-if="!loading && !records.length" description="没有符合条件的已发布资源" />
         <article v-for="item in records" :key="item.advisor_id" class="resource-card">
           <div class="card-heading">
             <div>
-              <span class="resource-badge" :class="item.resource_type">{{ resourceLabel(item) }}</span>
+              <span
+                v-for="type in item.resource_types"
+                :key="type"
+                class="resource-badge"
+                :class="type"
+              >{{ resourceLabel(type) }}</span>
               <h3>{{ item.name }}</h3>
               <p>{{ item.dept }}<span v-if="item.title"> · {{ item.title }}</span></p>
             </div>
@@ -149,18 +225,26 @@ onMounted(loadResources)
           <footer class="evidence-footer">
             <span>审核：{{ item.data_status.review_status }}</span>
             <span v-if="item.data_status.verified_at">
-              审核时间：{{ new Date(item.data_status.verified_at).toLocaleDateString() }}
+              审核时间：{{ displayTime(item.data_status.verified_at) }}
             </span>
             <span v-if="item.data_status.expires_at">
-              复核期限：{{ new Date(item.data_status.expires_at).toLocaleDateString() }}
+              复核期限：{{ displayTime(item.data_status.expires_at) }}
             </span>
             <a
-              v-for="citation in sourceLinks(item)"
+              v-for="citation in visibleSources(item)"
               :key="citation.evidence_id"
               :href="citation.source_url || undefined"
               target="_blank"
               rel="noopener noreferrer"
-            >官方来源 ↗</a>
+            >{{ sourceLabel(citation) }} ↗</a>
+            <button
+              v-if="sourceLinks(item).length > 1"
+              type="button"
+              class="more-sources"
+              @click="toggleSources(item)"
+            >
+              {{ expandedSources.has(item.advisor_id) ? '收起来源' : `+${sourceLinks(item).length - 1} 个来源` }}
+            </button>
           </footer>
         </article>
       </div>
@@ -229,6 +313,7 @@ onMounted(loadResources)
 .resource-badge { display: inline-block; margin-right: 8px; padding: 3px 7px; border-radius: 999px; background: rgba(144, 147, 153, 0.12); color: $text-secondary; font-size: 10px; }
 .resource-badge.verified_mentor_profile { background: rgba(103, 194, 58, 0.12); color: #4f8f2f; }
 .homepage-link, .evidence-footer a { color: $color-primary; font-size: 12px; }
+.more-sources { color: $text-secondary; font-size: 11px; text-decoration: underline; }
 .fact-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; margin-top: 14px; font-size: 12px; color: $text-regular; }
 .fact-row strong { color: $text-secondary; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -242,5 +327,7 @@ onMounted(loadResources)
   .summary-grid { grid-template-columns: repeat(3, 1fr); }
   .search-panel { grid-template-columns: 1fr; }
   .fact-row { grid-template-columns: 1fr; gap: 4px; }
+  .card-heading h3 { display: block; margin: 8px 0 0; }
+  .homepage-link { flex-shrink: 0; }
 }
 </style>

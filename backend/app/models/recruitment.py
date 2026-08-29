@@ -30,3 +30,11 @@ class Recruitment(Base):
     provenance = Column(JSON, nullable=False, default=dict)
     governance = Column(JSON, nullable=False, default=dict)
     quarantined_fields = Column(JSON, nullable=False, default=dict)
+    # —— 立体化扩展（全部可空，向后兼容；迁移 0010）——
+    location = Column(String(60), nullable=True)  # 工作地点
+    quota = Column(String(20), nullable=True)  # 名额
+    compensation = Column(String(60), nullable=True)  # 待遇说明
+    duration = Column(String(40), nullable=True)  # 周期
+    apply_method = Column(String(200), nullable=True)  # 投递方式（禁联系方式直发）
+    tags = Column(JSON, nullable=True)  # 标签列表，最多 10 个
+    advisor_id = Column(String(20), nullable=True, index=True)  # 关联导师

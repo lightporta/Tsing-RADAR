@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import shutil
 import sys
 import tarfile
 from copy import deepcopy
@@ -33,9 +34,6 @@ def test_l3_slot_set_is_exact_and_vendor_delivery_is_digest_pull():
     assert [item["slot"] for item in B.SLOT_SPECS] == [
         "POSTGRES_IMAGE",
         "REDIS_IMAGE",
-        "ETCD_IMAGE",
-        "MINIO_IMAGE",
-        "MILVUS_IMAGE",
         "CLAMAV_IMAGE",
         "BACKEND_IMAGE",
         "FRONTEND_IMAGE",
@@ -136,13 +134,14 @@ def test_oci_descriptor_size_and_digest_tamper_fail(tmp_path: Path, mutation: st
     bundle = C.synthetic_bundle(tmp_path)
     lock_path = bundle / "image-lock.json"
     lock = json.loads(lock_path.read_bytes())
+    slot = next(item for item in lock["slots"] if item["role"] == "backend")
     if mutation == "index_size":
-        lock["slots"][6]["index"]["size"] += 1
+        slot["index"]["size"] += 1
     elif mutation == "config_size":
-        lock["slots"][6]["config"]["size"] += 1
+        slot["config"]["size"] += 1
     else:
-        lock["slots"][6]["manifest"]["digest"] = "sha256:" + "0" * 64
-        lock["slots"][6]["compose_reference"] = (
+        slot["manifest"]["digest"] = "sha256:" + "0" * 64
+        slot["compose_reference"] = (
             "tsing-radar-offline/backend@sha256:" + "0" * 64
         )
     lock_path.write_bytes(B.canonical_json_bytes(lock))
@@ -207,6 +206,10 @@ def test_archive_header_parser_fails_closed_on_unsafe_types_and_paths(
         B.scan_tar_headers(archive, allow_directories=False)
 
 
+@pytest.mark.skipif(
+    shutil.which("docker") is None,
+    reason="docker is not available on this machine",
+)
 def test_source_archive_is_byte_deterministic(tmp_path: Path):
     l2 = B._load_l2_module().build_manifest()
     first = tmp_path / "first.tar"

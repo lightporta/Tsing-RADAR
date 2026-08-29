@@ -64,14 +64,17 @@ tmp/
 *.tmp
 
 # ===== 项目特定 =====
-# 保留 legacy/ 目录用于追溯，但不追踪其变更产生的临时文件
-legacy/__pycache__/
 
 # D1 官方目录只允许本地缓存和生成，不上传原始页面或数据集
 backend/data/catalog_d1/cache/
 backend/data/catalog_d1/generated/
 # 未获公开授权的旧导师治理记录只保留在本机；公开仓库使用 0 记录基线。
 backend/data/private_local/
+# 本地运行时治理数据与演示产物不入库（生产经 volume 挂载真实数据）
+backend/data/mentors.evidence.json
+backend/data/mentor_scores*.json
+backend/data/*.svg
+backend/data/*.png
 
 # A5 私有上传与本地测试依赖不得入库
 private_uploads/
@@ -91,4 +94,25 @@ deploy/production/image-lock.local.json
 # IDE 工作区（不入仓库）
 .trae/
 .zcode/
-.zcode/
+
+# ===== 本机数据与旧分支残留（仅本地保留，不上传）=====
+# 本地运行时数据（导师知识/评分/生成脚本）整体不追踪；生产经 volume 挂载
+backend/data/
+# 真实环境配置（含部署地址）
+frontend/.env.production
+backend/.env.example
+# 主分支旧架构文件残留：本地保留，不随本次整体替换上传
+docker-compose.yml
+legacy/
+backend/app/graph/
+backend/app/services/memory_store.py
+backend/app/services/vectorstore.py
+backend/scripts/dep3_s3_tamper_helper.py
+backend/scripts/dep3_verify_postgres_concurrency.py
+backend/scripts/dep3_verify_real_s3.py
+backend/scripts/vectorize_advisors.py
+deploy/production/scripts/milvus-entrypoint.sh
+frontend/src/components/charts/ScatterChart.vue
+frontend/src/mock/
+docs/2026-08-17-*.md
+docs/前两版*.md

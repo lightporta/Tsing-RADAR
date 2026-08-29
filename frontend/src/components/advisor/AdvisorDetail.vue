@@ -1,22 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { MatchedAdvisor } from '@/types/advisor'
-import { TRAITS } from '@/types/advisor'
+import { displayTime } from '@/utils/format'
+import RatingPanel from './RatingPanel.vue'
+import RatingSummary from './RatingSummary.vue'
 
 // =====================================================================
 // 导师详情面板（卡片展开后显示，文档 §3.4 / §4.3.1）
-// 展示：六维特质明细 / 在研项目 / 招募信息 / 联系方式
+// 展示：可核验证据 / 学生评价（M1，单维≥8份才展示）/ 在研项目 / 招募信息 / 联系方式
+// 六维导师特质已随客观雷达改造移除：主观特质仅走匿名评分管线
 // =====================================================================
 
 const props = defineProps<{ advisor: MatchedAdvisor }>()
-
-const traitRows = computed(() =>
-  TRAITS.map((t) => ({
-    label: t.label,
-    desc: t.description,
-    score: props.advisor.radar_traits[t.key] ?? 0,
-  })),
-)
 
 const recruitments = computed(() => props.advisor.recruitments || [])
 const projects = computed(() => props.advisor.projects || [])
@@ -44,7 +39,7 @@ const projects = computed(() => props.advisor.projects || [])
               来源
             </a>
             <span v-else>{{ citation.citation }}</span>
-            · {{ new Date(citation.captured_at).toLocaleDateString() }}
+            · {{ displayTime(citation.captured_at) }}
             · {{ (citation.confidence * 100).toFixed(0) }}%
           </span>
         </li>
@@ -60,21 +55,14 @@ const projects = computed(() => props.advisor.projects || [])
       </ul>
     </div>
 
-    <!-- 六维特质条 -->
-    <div v-if="advisor.radar_traits" class="section">
-      <h4 class="section-title">🎯 六维导师特质</h4>
-      <div class="trait-bars">
-        <div v-for="row in traitRows" :key="row.label" class="trait-row">
-          <div class="trait-head">
-            <span class="trait-label">{{ row.label }}</span>
-            <span class="trait-score">{{ row.score }}</span>
-          </div>
-          <div class="trait-bar">
-            <div class="trait-fill" :style="{ width: row.score + '%' }" />
-          </div>
-          <p class="trait-desc">{{ row.desc }}</p>
-        </div>
-      </div>
+    <!-- 学生评价（M1）：聚合摘要 + 匿名评分面板 -->
+    <div class="section">
+      <h4 class="section-title">🧑‍🎓 学生评价</h4>
+      <RatingSummary :advisor-id="advisor.advisor_id" />
+    </div>
+    <div class="section">
+      <h4 class="section-title">✍️ 我要评价（匿名）</h4>
+      <RatingPanel :advisor-id="advisor.advisor_id" />
     </div>
 
     <!-- 在研项目 -->
@@ -159,45 +147,6 @@ const projects = computed(() => props.advisor.projects || [])
   display: block;
   margin-left: 12px;
   color: $text-secondary;
-}
-
-.trait-bars {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: $spacing-md;
-}
-.trait-row {
-  .trait-head {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    margin-bottom: 3px;
-    .trait-label {
-      color: $text-regular;
-    }
-    .trait-score {
-      color: $color-accent;
-      font-weight: 600;
-    }
-  }
-  .trait-bar {
-    height: 4px;
-    background: $color-border-light;
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .trait-fill {
-    height: 100%;
-    background: linear-gradient(90deg, $color-primary, $color-accent);
-    border-radius: 2px;
-    transition: width 0.5s ease;
-  }
-  .trait-desc {
-    font-size: 10px;
-    color: $text-placeholder;
-    margin-top: 3px;
-    line-height: 1.4;
-  }
 }
 
 .project-list,

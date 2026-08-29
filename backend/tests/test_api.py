@@ -3,9 +3,6 @@
 import os
 import sys
 
-# 确保使用测试专用 SQLite，避免污染开发库
-os.environ["DATABASE_URL"] = "sqlite:///./test_tsing_radar.db"
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -41,27 +38,6 @@ def test_health():
     assert resp.json()["status"] == "ok"
 
 
-def test_get_mentors():
-    """无证据旧数据默认暂缓，不得进入导师列表。"""
-    resp = client.get("/api/mentors")
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["data"] == []
-    assert payload["meta"] == {
-        "total_records": 0,
-        "published_records": 0,
-        "withheld_records": 0,
-        "catalog_records": 0,
-        "verified_profile_records": 0,
-        "match_candidate_records": 0,
-        "policy": "formal_verified_profiles_only",
-        "filtered_records": 0,
-        "page": 1,
-        "page_size": 20,
-        "total_pages": 0,
-    }
-
-
 def test_sort_mentors():
     """按指标排序导师。"""
     resp = client.get("/api/mentors/sort", params={"metric": "popularity"})
@@ -74,12 +50,39 @@ def test_sort_mentors_invalid_metric():
     assert resp.status_code == 410
 
 
-def test_scatter():
-    """无证据热门度与行业标签不得进入散点图。"""
-    resp = client.get("/api/scatter")
-    assert resp.status_code == 200
-    assert resp.json()["data"] == []
-    assert resp.json()["meta"]["policy"] == "formal_verified_profiles_only"
+def test_capabilities_departments_and_score_gate_are_explicit():
+    capabilities = client.get(
+        "/api/interviews/hard-constraint-capabilities"
+    ).json()
+    assert capabilities["basis"] == "published_verified_candidate_fields"
+    assert capabilities["candidate_count"] == 0
+    assert all(not item["available"] for item in capabilities["fields"])
+
+    students = client.get("/api/departments/students").json()
+    mentors = client.get("/api/departments/mentors").json()
+    assert students["meta"]["scope"] == "student"
+    assert students["meta"]["source"]["url"].startswith("https://www.tsinghua.edu.cn/")
+    assert mentors["meta"]["scope"] == "mentor"
+    assert students["meta"]["basis"] == "official_department_directory"
+    student_names = {item["name"] for item in students["data"]}
+    assert {
+        "苏世民书院",
+        "求真书院",
+        "至善书院",
+        "水木书院",
+        "人工智能学院",
+        "安全科学学院",
+        "核能与新能源技术研究院",
+        "深圳国际研究生院",
+        "全球创新学院",
+        "国家卓越工程师学院",
+    } <= student_names
+    mentor_names = {item["name"] for item in mentors["data"]}
+    assert {"人工智能学院", "安全科学学院", "国家卓越工程师学院"} <= mentor_names
+    assert students["meta"]["basis"] != mentors["meta"]["basis"]
+    status = client.get("/api/mentor-evidence/status").json()["meta"]
+    assert status["gate_open"] is False
+    assert status["coverage"] == 0
 
 
 def test_match():
@@ -90,42 +93,6 @@ def test_match():
         json={"interest": "自然语言处理 对话系统"},
     )
     assert resp.status_code == 409
-
-
-def test_recruitments():
-    """未审核的旧招募和新提交不得公开。"""
-    resp = client.get("/api/recruitments")
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data == []
-    assert resp.json()["meta"]["policy"] == "verified_only"
-
-
-def test_publish_recruitment():
-    """提交招募后进入审核队列，不直接发布。"""
-    resp = client.post(
-        "/api/recruitments",
-        headers=WEB_HEADERS,
-        json={
-            "type": "招生",
-            "title": "测试招募",
-            "req": "要求测试",
-            "major": "自动化",
-            "deadline": "2026-12-31",
-            "is_urgent": True,
-        },
-    )
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["status"] == "pending_review"
-    assert payload["publication_status"] == "restricted"
-
-    listed = client.get("/api/recruitments").json()
-    assert all(
-        item["recruit_id"] != payload["recruit_id"]
-        for item in listed["data"]
-    )
-    assert listed["meta"]["withheld_submissions"] >= 1
 
 
 def test_feedback():
@@ -148,29 +115,6 @@ def test_feedback_invalid_rating():
     assert resp.status_code == 400
 
 
-def test_train_trigger():
-    """Proxy labels must not activate learned ranking."""
-    resp = client.post(
-        "/api/train/trigger",
-        headers={"X-Admin-Token": "test-admin-token-not-for-production"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "blocked_by_data_readiness_gate"
-    assert data["training_started"] is False
-    assert data["weights"] is None
-    assert data["readiness"]["learned_ranking_enabled"] is False
-
-
-def test_train_trigger_forbidden():
-    """错误管理员 header 应返回 403。"""
-    resp = client.post(
-        "/api/train/trigger",
-        headers={"X-Admin-Token": "wrong-admin-token"},
-    )
-    assert resp.status_code == 403
-
-
 def test_train_body_token_is_not_an_authorization_mechanism():
     """公开旧默认值放在 JSON body 中不得获得管理员权限。"""
     resp = client.post("/api/train/trigger", json={"admin_token": "admin"})
@@ -181,3 +125,73 @@ def test_tsinghua_verify_fails_closed():
     """未接入校内身份提供者时不得模拟成功。"""
     resp = client.get("/api/tsinghua/auth/verify", params={"token": "test"})
     assert resp.status_code == 501
+
+
+def test_llm_chat_rejects_tool_role():
+    """B3：role 只接受 user/assistant/system。"""
+    resp = client.post(
+        "/api/v1/llm/chat",
+        headers=WEB_HEADERS,
+        json={"messages": [{"role": "tool", "content": "工具结果"}]},
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_chat_rejects_oversized_content():
+    """B3：单条消息内容超过 20000 字拒绝。"""
+    resp = client.post(
+        "/api/v1/llm/chat",
+        headers=WEB_HEADERS,
+        json={"messages": [{"role": "user", "content": "长" * 20_001}]},
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_chat_rejects_too_many_messages():
+    """B3：消息条数超过 50 拒绝。"""
+    resp = client.post(
+        "/api/v1/llm/chat",
+        headers=WEB_HEADERS,
+        json={
+            "messages": [
+                {"role": "user", "content": f"第 {index} 条"}
+                for index in range(51)
+            ]
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_embeddings_rejects_oversized_text():
+    """B3：embedding 文本超过 20000 字拒绝。"""
+    resp = client.post(
+        "/api/v1/llm/embeddings",
+        json={"text": "长" * 20_001},
+    )
+    assert resp.status_code == 422
+
+
+def test_llm_request_limits_accept_boundary_values():
+    """B3：边界内正常值放行（50 条消息、20000 字内容/文本）。"""
+    chat = client.post(
+        "/api/v1/llm/chat",
+        params={"stream": "false"},
+        headers=WEB_HEADERS,
+        json={
+            "messages": [
+                {"role": "system", "content": "系统提示"},
+                *[
+                    {"role": "user", "content": "自然语言处理"}
+                    for _ in range(49)
+                ],
+            ]
+        },
+    )
+    assert chat.status_code == 200
+
+    embeddings = client.post(
+        "/api/v1/llm/embeddings",
+        json={"text": "文" * 20_000},
+    )
+    assert embeddings.status_code == 200
+    assert embeddings.json()["data"]

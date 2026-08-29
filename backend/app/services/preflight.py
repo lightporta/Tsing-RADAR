@@ -368,6 +368,20 @@ def run_l1_production_preflight(app_settings: Settings) -> dict[str, Any]:
                 not app_settings.QXD_TRIAL_SINGLE_USER_MODE,
                 "qxd_trial_mode_must_be_disabled",
             ),
+            _check(
+                "web.test_mode_expiry_configured",
+                (
+                    not app_settings.WEB_TEST_MODE_ENABLED
+                    or bool(app_settings.WEB_TEST_MODE_EXPIRES_AT)
+                ),
+                "web_test_mode_expiry_missing",
+            ),
+            _check(
+                "mail.smtp_mode_with_file_secret",
+                app_settings.MAIL_MODE == "smtp"
+                and bool(app_settings.MAIL_PASSWORD_FILE),
+                "mail_console_or_direct_password_forbidden",
+            ),
         )
     )
     try:

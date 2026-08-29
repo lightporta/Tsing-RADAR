@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Paperclip } from '@element-plus/icons-vue'
 import type { ChatMessage } from '@/types/chat'
 import { renderMarkdown } from '@/utils/markdown'
+import { useUserStore } from '@/stores/useUserStore'
 
 // =====================================================================
 // 单条对话消息（文档 §3.3）
@@ -10,8 +12,14 @@ import { renderMarkdown } from '@/utils/markdown'
 // =====================================================================
 
 const props = defineProps<{ message: ChatMessage }>()
+const userStore = useUserStore()
 
 const isUser = computed(() => props.message.role === 'user')
+const userAvatarUrl = computed(() => userStore.profile.avatarUrl?.trim() || '')
+const userInitial = computed(() => {
+  const name = userStore.profile.name.trim()
+  return name ? Array.from(name)[0].toUpperCase() : '我'
+})
 const html = computed(() =>
   isUser.value ? props.message.content : renderMarkdown(props.message.content),
 )
@@ -33,7 +41,8 @@ const html = computed(() =>
         <div v-else class="markdown-body" v-html="html" />
         <div v-if="isUser && message.attachments?.length" class="message-attachments">
           <span v-for="item in message.attachments" :key="item.documentId">
-            📎 {{ item.name }}（已私有保存，未注入访谈）
+            <el-icon aria-hidden="true"><Paperclip /></el-icon>
+            {{ item.name }}（已私有保存，未注入访谈）
           </span>
         </div>
         <span v-if="message.streaming" class="cursor" />
@@ -41,7 +50,8 @@ const html = computed(() =>
     </div>
 
     <div v-if="isUser" class="avatar user-avatar" aria-hidden="true">
-      {{ message.content.charAt(0).toUpperCase() || '我' }}
+      <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="" />
+      <span v-else>{{ userInitial }}</span>
     </div>
   </div>
 </template>
@@ -53,7 +63,7 @@ const html = computed(() =>
   margin-bottom: $spacing-lg;
 
   &.user {
-    flex-direction: row-reverse;
+    justify-content: flex-end;
     .bubble {
       background: $color-primary;
       color: #fff;
@@ -91,6 +101,13 @@ const html = computed(() =>
 .user-avatar {
   background: $color-accent;
   color: #fff;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
 }
 
 .bubble-wrap {

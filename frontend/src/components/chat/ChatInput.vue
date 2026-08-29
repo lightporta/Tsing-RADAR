@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Document, Paperclip, Promotion, VideoPause } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/useChatStore'
 import { formatBytes } from '@/utils/format'
 import { uploadDocument } from '@/api/actions'
@@ -19,6 +20,7 @@ const text = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>()
 const attachments = ref<ChatAttachment[]>([])
 const uploading = ref(false)
+const MAX_PRIVATE_FILE_BYTES = 8 * 1024 * 1024
 
 // 自适应高度
 function autoResize() {
@@ -34,7 +36,7 @@ function send() {
     ElMessage.warning('请输入内容')
     return
   }
-  if (chatStore.streaming) return
+  if (chatStore.streaming || chatStore.enhancementRetrying) return
 
   chatStore.send(content, [...attachments.value])
   text.value = ''
@@ -63,6 +65,10 @@ async function onFileChange(e: Event) {
         ElMessage.warning(`${file.name} 格式不支持，仅支持 PDF / DOCX`)
         continue
       }
+      if (file.size > MAX_PRIVATE_FILE_BYTES) {
+        ElMessage.warning(`${file.name} 超过 8 MB，请压缩后重新上传`)
+        continue
+      }
       try {
         const stored = await uploadDocument(file)
         attachments.value.push({
@@ -86,38 +92,50 @@ function removeAttachment(idx: number) {
   attachments.value.splice(idx, 1)
 }
 
-// 快捷引导问题
-function useQuickQuestion(prompt: string) {
-  text.value = prompt
-  nextTick(() => {
-    autoResize()
-    send()
-  })
-}
-
 function stopStream() {
   chatStore.abort()
+}
+
+function retry() {
+  chatStore.retryLastSend()
+}
+
+function retryGlmEnhancement() {
+  chatStore.retryEnhancement()
 }
 </script>
 
 <template>
   <div class="chat-input-area">
-    <!-- 引导问题快捷按钮（仅在消息少时显示） -->
-    <div v-if="chatStore.messageCount <= 2" class="quick-questions">
+    <div v-if="chatStore.chatError" class="chat-error" role="alert">
+      <span>{{ chatStore.chatError }}</span>
+      <button type="button" :disabled="chatStore.streaming" @click="retry">重试</button>
+    </div>
+
+    <div
+      v-if="chatStore.enhancementStatus === 'unavailable'"
+      class="enhancement-warning"
+      role="status"
+      aria-live="polite"
+      :aria-busy="chatStore.enhancementRetrying"
+    >
+      <span>
+        {{ chatStore.enhancementRetryError || '固定结构化回复已保留，但 GLM 措辞增强暂不可用。' }}
+      </span>
       <button
-        v-for="q in chatStore.quickQuestions"
-        :key="q.label"
-        class="quick-btn"
-        @click="useQuickQuestion(q.prompt)"
+        type="button"
+        :disabled="chatStore.enhancementRetrying || chatStore.streaming"
+        aria-label="仅重试本轮 GLM 措辞增强，不重发回答"
+        @click="retryGlmEnhancement"
       >
-        {{ q.label }}
+        {{ chatStore.enhancementRetrying ? '正在重试 GLM…' : '重试 GLM' }}
       </button>
     </div>
 
     <!-- 已上传附件预览 -->
     <div v-if="attachments.length" class="attachments">
       <div v-for="(a, i) in attachments" :key="i" class="attachment-chip">
-        <el-icon aria-hidden="true">📄</el-icon>
+        <el-icon aria-hidden="true"><Document /></el-icon>
         <span class="att-name" :title="a.name">{{ a.name }}</span>
         <span class="att-size">{{ formatBytes(a.size) }}</span>
         <button
@@ -131,14 +149,18 @@ function stopStream() {
     </div>
 
     <div class="input-row">
-      <label class="input-btn" :class="{ disabled: uploading }" aria-label="私有上传 PDF 或 DOCX">
-        <el-icon aria-hidden="true">📎</el-icon>
+      <label
+        class="input-btn"
+        :class="{ disabled: uploading || chatStore.enhancementRetrying }"
+        aria-label="私有上传 PDF 或 DOCX"
+      >
+        <el-icon aria-hidden="true"><Paperclip /></el-icon>
         <input
           type="file"
           multiple
           accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           hidden
-          :disabled="uploading"
+          :disabled="uploading || chatStore.enhancementRetrying"
           @change="onFileChange"
         />
       </label>
@@ -148,7 +170,8 @@ function stopStream() {
         v-model="text"
         class="chat-textarea"
         rows="1"
-        placeholder="输入你的研究兴趣或问题，Enter 发送，Shift+Enter 换行…"
+        placeholder="输入你的专业背景、研究兴趣或职业想法，Enter 发送…"
+        :disabled="chatStore.enhancementRetrying"
         @input="autoResize"
         @keydown="onKeydown"
       />
@@ -159,16 +182,16 @@ function stopStream() {
         aria-label="停止生成"
         @click="stopStream"
       >
-        <el-icon aria-hidden="true">⏸</el-icon>
+        <el-icon aria-hidden="true"><VideoPause /></el-icon>
       </button>
       <button
         v-else
         class="send-btn"
         aria-label="发送"
-        :disabled="!text.trim() || uploading"
+        :disabled="!text.trim() || uploading || chatStore.enhancementRetrying"
         @click="send"
       >
-        <el-icon aria-hidden="true">➤</el-icon>
+        <el-icon aria-hidden="true"><Promotion /></el-icon>
       </button>
     </div>
 
@@ -192,24 +215,56 @@ function stopStream() {
   flex-shrink: 0;
 }
 
-.quick-questions {
+.chat-error {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: $spacing-sm;
-  margin-bottom: $spacing-md;
-}
-.quick-btn {
-  padding: 5px 12px;
-  font-size: 12px;
-  border: 1px solid $color-border;
-  border-radius: 16px;
-  color: $color-primary;
-  background: $color-bg-card;
-  transition: $transition-fast;
+  margin-bottom: $spacing-sm;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: $color-danger;
+  background: rgba(245, 108, 108, 0.08);
+  font-size: 11px;
 
-  &:hover {
-    background: $color-bg-hover;
-    border-color: $color-primary;
+  button {
+    flex-shrink: 0;
+    color: $color-primary;
+    font-weight: 600;
+  }
+}
+
+.enhancement-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  margin-bottom: $spacing-sm;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #8a5a12;
+  background: rgba(230, 162, 60, 0.12);
+  font-size: 11px;
+  line-height: 1.5;
+
+  button {
+    flex-shrink: 0;
+    padding: 5px 9px;
+    border: 1px solid rgba(230, 162, 60, 0.45);
+    border-radius: 6px;
+    color: #8a5a12;
+    background: $color-bg-card;
+    font-weight: 600;
+
+    &:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+
+    &:focus-visible {
+      outline: 2px solid $color-primary;
+      outline-offset: 2px;
+    }
   }
 }
 

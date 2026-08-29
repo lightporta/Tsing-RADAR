@@ -7,8 +7,9 @@
 
 import logging
 
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1 import api_router
 from app.api.v1.chat import router as qxd_router
@@ -28,6 +29,27 @@ app = FastAPI(
     description="清研寻师雷达 —— 清华导师智能匹配智能体（部署于清小搭智能体广场）",
 )
 
+
+async def reject_declared_oversized_private_upload(
+    request: Request,
+    call_next,
+):
+    """Reject clearly oversized multipart bodies before Starlette parses them."""
+    if request.method == "POST" and request.url.path == "/api/documents":
+        content_length = request.headers.get("content-length", "")
+        if content_length.isdigit():
+            # Multipart framing varies by client; reserve a bounded allowance
+            # while keeping the file payload limit authoritative in the service.
+            maximum_request_bytes = settings.PRIVATE_UPLOAD_MAX_BYTES + 64 * 1024
+            if int(content_length) > maximum_request_bytes:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "文件超过大小限制"},
+                )
+    return await call_next(request)
+
+
+app.middleware("http")(reject_declared_oversized_private_upload)
 app.middleware("http")(observe_http_request)
 
 # CORS

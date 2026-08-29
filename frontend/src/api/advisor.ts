@@ -4,7 +4,8 @@ import type {
   MentorResource,
   MentorResourceMeta,
   MentorResourceType,
-  ScatterPoint,
+  DepartmentOption,
+  MentorDistribution,
 } from '@/types/advisor'
 import type { MatchRequest } from '@/types/api'
 
@@ -12,22 +13,45 @@ import type { MatchRequest } from '@/types/api'
 // 导师 / 匹配 / 散点图 API
 // =====================================================================
 
-/** 获取四象限散点图数据 */
-export function fetchScatter() {
-  return get<{ data: ScatterPoint[] }>('/api/scatter')
+export function fetchStudentDepartments() {
+  return get<{
+    data: Array<{ name: string }>
+    meta: DepartmentCatalogMeta
+  }>('/api/departments/students')
 }
 
-export function fetchMentorResources(params: {
-  q?: string
-  dept?: string
-  resource_type?: MentorResourceType
-  catalog_type?: 'doctoral_regular' | 'doctoral_recommendation_exempt'
-  page?: number
-  page_size?: number
-}) {
+export interface DepartmentCatalogMeta {
+  scope: 'mentor' | 'student'
+  basis: string
+  source: { name: string; url: string; version: string; as_of: string }
+}
+
+export function fetchMentorDepartments() {
+  return get<{
+    data: DepartmentOption[]
+    meta: DepartmentCatalogMeta
+  }>('/api/departments/mentors')
+}
+
+export function fetchMentorDistribution() {
+  return get<MentorDistribution>('/api/mentor-distribution')
+}
+
+export function fetchMentorResources(
+  params: {
+    q?: string
+    dept?: string
+    resource_type?: MentorResourceType
+    catalog_type?: 'doctoral_regular' | 'doctoral_recommendation_exempt'
+    page?: number
+    page_size?: number
+  },
+  signal?: AbortSignal,
+) {
   return get<{ data: MentorResource[]; meta: MentorResourceMeta }>(
     '/api/mentors',
     params,
+    { signal },
   )
 }
 

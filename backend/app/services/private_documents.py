@@ -250,7 +250,8 @@ def store_private_artifact(
             size_bytes=len(payload),
             sha256=hashlib.sha256(payload).hexdigest(),
             status="ready",
-            extracted_text=extracted_text,
+            # 正文只参与当前请求的安全校验/生成，不另行复制到关系数据库。
+            extracted_text="",
             document_kind=document_kind,
             object_backend=object_store.backend_name,
             scan_status=scan_result.status,
@@ -312,7 +313,7 @@ async def save_private_document(
         )
         raise
     try:
-        safe_name, _extension, extracted, scan = validate_and_extract_document(
+        safe_name, _extension, _extracted, scan = validate_and_extract_document(
             payload=payload,
             filename=upload.filename or "",
             media_type=(upload.content_type or "").lower(),
@@ -339,7 +340,9 @@ async def save_private_document(
             payload=payload,
             media_type=(upload.content_type or "").lower(),
             document_kind="upload",
-            extracted_text=extracted,
+            # 上传原文只用于本次结构校验；正文保留在用户可删除的私有对象中，
+            # 不再另行长期复制到关系数据库。需要提取事实时按 owner 授权读取。
+            extracted_text="",
             scan_result=scan,
             commit=False,
         )
@@ -548,6 +551,17 @@ def read_private_document_bytes(document: PrivateDocument) -> bytes:
     ):
         raise ObjectStorageError("私有对象摘要与元数据不一致")
     return payload
+
+
+def extract_private_document_text_on_demand(document: PrivateDocument) -> str:
+    """从经摘要校验的私有对象按需解析正文；调用方不得持久化返回值。"""
+
+    payload = read_private_document_bytes(document)
+    if document.extension == ".pdf":
+        return _extract_pdf(payload)
+    if document.extension == ".docx":
+        return _extract_docx(payload)
+    raise HTTPException(status_code=415, detail="仅支持 PDF 或 DOCX 文档解析")
 
 
 def public_document_item(document: PrivateDocument) -> dict:

@@ -28,7 +28,6 @@ def main() -> int:
                 "PUBLIC_BASE_URL": "",
                 "ALLOW_TEST_PUBLIC_BASE_URL": "false",
                 "GLM_API_KEY": "",
-                "DEEPSEEK_API_KEY": "",
             }
         )
         sys.path.insert(0, str(backend_root))

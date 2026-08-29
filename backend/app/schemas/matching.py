@@ -228,4 +228,6 @@ class MatchPipelineMeta(BaseModel):
     unresolved_hard_constraints: list[str] = Field(default_factory=list)
     clarification_questions: list[str] = Field(default_factory=list)
     excluded_by_hard_constraints: int = Field(ge=0)
+    constraint_trace: list[dict[str, Any]] = Field(default_factory=list)
+    zero_result_reason: str | None = None
     ranking_config: RankingConfig

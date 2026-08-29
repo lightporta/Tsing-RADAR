@@ -12,6 +12,7 @@
     "format": "prettier --write \"src/**/*.{vue,ts,tsx,scss}\""
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.7.7",
     "echarts": "^5.5.1",
     "element-plus": "^2.8.4",
