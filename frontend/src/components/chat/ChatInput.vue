@@ -14,6 +14,7 @@ import type { ChatAttachment } from '@/types/chat'
 // =====================================================================
 
 const chatStore = useChatStore()
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 const text = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>()
@@ -52,6 +53,7 @@ function onKeydown(e: KeyboardEvent) {
 
 // 附件立即进入当前主体的私有对象存储；不会把正文注入访谈。
 async function onFileChange(e: Event) {
+  if (USE_MOCK) return
   const input = e.target as HTMLInputElement
   if (!input.files) return
   const selected = Array.from(input.files)
@@ -131,14 +133,14 @@ function stopStream() {
     </div>
 
     <div class="input-row">
-      <label class="input-btn" :class="{ disabled: uploading }" aria-label="私有上传 PDF 或 DOCX">
+      <label class="input-btn" :class="{ disabled: uploading || USE_MOCK }" aria-label="私有上传 PDF 或 DOCX" :title="USE_MOCK ? '私有上传需要连接后端' : '私有上传 PDF 或 DOCX'">
         <el-icon aria-hidden="true">📎</el-icon>
         <input
           type="file"
           multiple
           accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           hidden
-          :disabled="uploading"
+          :disabled="uploading || USE_MOCK"
           @change="onFileChange"
         />
       </label>

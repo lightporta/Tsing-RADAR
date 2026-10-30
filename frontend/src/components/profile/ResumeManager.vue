@@ -20,6 +20,7 @@ import { useUserStore } from '@/stores/useUserStore'
 
 const chatStore = useChatStore()
 const userStore = useUserStore()
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 const documents = ref<PrivateDocument[]>([])
 const applications = ref<ApplicationRecord[]>([])
 const loading = ref(false)
@@ -28,7 +29,6 @@ const generating = ref<'resume' | 'report' | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const outputFormat = ref<'pdf' | 'docx'>('pdf')
 const confirmGeneration = ref(false)
-const projectDetail = ref('')
 const awardsText = ref('')
 const positionsText = ref('')
 const targetAdvisor = ref('')
@@ -68,6 +68,7 @@ function formatBytes(value: number) {
 }
 
 async function loadPrivateData() {
+  if (USE_MOCK) return
   loading.value = true
   try {
     ;[documents.value, applications.value] = await Promise.all([
@@ -178,10 +179,10 @@ async function createResume() {
       dept: userStore.profile.dept,
       email: userStore.profile.email,
       phone: userStore.profile.phone || '',
-      education: `${userStore.profile.category} · ${userStore.profile.grade}`,
+      education: [userStore.profile.category, userStore.profile.grade, userStore.profile.gpa?.trim() ? `GPA ${userStore.profile.gpa.trim()}` : ''].filter(Boolean).join(' · '),
       research_interests: userStore.profile.interest_tags,
-      projects: projectDetail.value.trim()
-        ? [{ name: '用户填写的项目或科研经历', detail: projectDetail.value.trim() }]
+      projects: userStore.profile.research_experience?.trim()
+        ? [{ name: '用户填写的项目或科研经历', detail: userStore.profile.research_experience.trim() }]
         : [],
       awards: splitLines(awardsText.value),
       positions: splitLines(positionsText.value),
@@ -250,7 +251,10 @@ onMounted(loadPrivateData)
 </script>
 
 <template>
-  <section class="resume-manager" aria-labelledby="private-documents-title">
+  <section v-if="USE_MOCK" class="resume-manager">
+    <el-alert title="前端独立 Mock 不保存私有文件。请连接本地后端后使用上传、文档生成和站内行动记录。" type="info" :closable="false" show-icon />
+  </section>
+  <section v-else class="resume-manager" aria-labelledby="private-documents-title">
     <div class="manager-head">
       <div>
         <h3 id="private-documents-title" class="section-title">私有简历与行动记录</h3>
@@ -295,16 +299,7 @@ onMounted(loadPrivateData)
           />
         </label>
       </div>
-      <label>
-        项目或科研经历（可选）
-        <el-input
-          v-model="projectDetail"
-          type="textarea"
-          :rows="2"
-          aria-label="项目或科研经历"
-          placeholder="只写你愿意确认并放入简历的事实"
-        />
-      </label>
+      <p class="privacy-note">姓名、教育背景、GPA、研究兴趣和科研经历使用上方已保存的简历资料。请先保存，再确认生成。</p>
       <div class="builder-grid">
         <label>
           奖项（可选，每行一项）

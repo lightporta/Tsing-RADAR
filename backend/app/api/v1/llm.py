@@ -14,6 +14,7 @@ from app.schemas.advisor import LLMChatRequest, LLMEmbeddingRequest
 from app.services.interview import (
     InterviewAccessError,
     InterviewConflictError,
+    InterviewInputError,
     InterviewNotFoundError,
     state_response,
     sync_user_transcript,
@@ -53,6 +54,8 @@ async def llm_chat(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except InterviewConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InterviewInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     interview_state = state_response(session)
     visible = interview_state.assistant_message

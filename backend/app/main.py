@@ -72,6 +72,13 @@ async def startup_event() -> None:
         logger.critical("数据库启动检查失败，服务停止启动: %s", type(e).__name__)
         raise
 
+    if settings.ALLOW_SIMULATION_MENTORS and (
+        not settings.DEBUG or settings.PRODUCTION_DEPLOYMENT
+    ):
+        raise RuntimeError(
+            "ALLOW_SIMULATION_MENTORS 仅允许在 DEBUG 本地开发环境启用"
+        )
+
     if not settings.DEBUG:
         if settings.AUTO_CREATE_SCHEMA:
             raise RuntimeError("生产模式必须关闭 AUTO_CREATE_SCHEMA 并使用 Alembic")
@@ -151,13 +158,17 @@ async def startup_event() -> None:
 
     summary = mentor_data_summary()
     logger.info(
-        "导师治理数据已加载：总数=%s，可发布=%s，暂缓=%s",
+        "导师治理数据已加载：总数=%s，可发布=%s，暂缓=%s，policy=%s",
         summary["total_records"],
         summary["published_records"],
         summary["withheld_records"],
+        summary["policy"],
     )
+    if summary["policy"] == "simulation_only_not_for_production":
+        logger.warning("导师数据处于本地模拟模式，不得宣称真实发布数据")
 
     # 仅记录 provider 与是否配置；绝不记录密钥值、长度、摘要或前后缀。
+    logger.info("LLM mode=%s", settings.llm_mode)
     if settings.configured_llm_providers:
         logger.info(
             "LLM provider=%s，密钥已配置",
@@ -167,6 +178,17 @@ async def startup_event() -> None:
         logger.warning("LLM provider=none，密钥未配置；使用本地规则模式")
 
 
+def _runtime_status() -> dict:
+    from app.services.data_loader import mentor_data_policy
+
+    return {
+        "llm_mode": settings.llm_mode,
+        "mentor_policy": mentor_data_policy(),
+        "simulation_mentors": settings.simulation_mentors_enabled,
+        "debug": settings.DEBUG,
+    }
+
+
 @app.get("/")
 def root():
     """根路径：应用信息。"""
@@ -174,6 +196,7 @@ def root():
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "docs": "/docs",
+        "runtime": _runtime_status(),
         "endpoints": [
             "/v1/models",
             "/v1/chat/completions",
@@ -202,7 +225,11 @@ def root():
 @app.get("/health")
 def health():
     """健康检查。"""
-    return {"status": "ok", "version": settings.APP_VERSION}
+    return {
+        "status": "ok",
+        "version": settings.APP_VERSION,
+        **_runtime_status(),
+    }
 
 
 @app.get("/health/live")

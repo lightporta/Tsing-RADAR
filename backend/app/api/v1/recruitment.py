@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -15,9 +14,13 @@ from app.models.recruitment import Recruitment
 from app.schemas.recruitment import RecruitmentCreateRequest
 from app.services.data_loader import load_mentors
 from app.services.identity import Principal
+from app.services.recruitment_policy import (
+    PROJECT_TIMEZONE,
+    active_published_recruitments,
+    recruitment_window_open,
+)
 
 router = APIRouter()
-PROJECT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def _public_record(record: Recruitment) -> dict:
@@ -44,20 +47,17 @@ def list_recruitments(
     db: Session = Depends(get_db),
 ):
     result = []
+    as_of = datetime.now(timezone.utc)
     for mentor in load_mentors():
         for recruitment in mentor.get("recruitments", []) or []:
+            if not recruitment_window_open(
+                recruitment.get("deadline"), recruitment.get("expires_at"), as_of=as_of
+            ):
+                continue
             if urgent is True and not recruitment.get("is_urgent", False):
                 continue
             result.append(recruitment)
-    published_db = (
-        db.query(Recruitment)
-        .filter(
-            Recruitment.review_status == "verified",
-            Recruitment.publication_status == "published",
-            Recruitment.takedown_at.is_(None),
-        )
-        .all()
-    )
+    published_db = active_published_recruitments(db, as_of=as_of)
     for record in published_db:
         if urgent is True and not record.is_urgent:
             continue
@@ -122,7 +122,7 @@ def publish_recruitment(
             request.deadline,
             time.max,
             tzinfo=PROJECT_TIMEZONE,
-        ),
+        ).astimezone(timezone.utc),
         review_status="pending_review",
         publication_status="restricted",
         authorization_basis="none",

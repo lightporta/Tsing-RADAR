@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -10,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from app.models.application import Application
 from app.models.private_document import PrivateDocument
-from app.models.recruitment import Recruitment
 from app.services.data_loader import load_mentors
 from app.services.idempotency import (
     begin_idempotency,
@@ -18,24 +18,44 @@ from app.services.idempotency import (
     fail_idempotency,
 )
 from app.services.document_locking import lock_private_document
+from app.services.recruitment_policy import (
+    active_published_recruitments,
+    lock_recruitment,
+    recruitment_is_current,
+    recruitment_window_open,
+)
 
 
 def _published_recruitment_ids(db: Session) -> set[str]:
+    as_of = datetime.now(timezone.utc)
     identifiers = {
         item["recruit_id"]
         for mentor in load_mentors()
         for item in (mentor.get("recruitments") or [])
         if item.get("recruit_id")
+        and recruitment_window_open(
+            item.get("deadline"), item.get("expires_at"), as_of=as_of
+        )
     }
-    records = db.query(Recruitment).all()
     identifiers.update(
         record.recruit_id
-        for record in records
-        if record.review_status == "verified"
-        and record.publication_status == "published"
-        and record.takedown_at is None
+        for record in active_published_recruitments(db, as_of=as_of)
     )
     return identifiers
+
+
+def _target_recruitment_is_current(db: Session, recruit_id: str) -> bool:
+    record = lock_recruitment(db, recruit_id)
+    if record is not None:
+        return recruitment_is_current(record)
+    # Governed file-backed opportunities have no database row to lock. Their
+    # publication status was checked by the loader; check their window now.
+    return any(
+        item.get("recruit_id") == recruit_id
+        and recruitment_window_open(item.get("deadline"), item.get("expires_at"))
+        for mentor in load_mentors()
+        for item in (mentor.get("recruitments") or [])
+    )
 
 
 def create_in_app_application(
@@ -70,9 +90,6 @@ def create_in_app_application(
         return application
 
     try:
-        if recruit_id not in _published_recruitment_ids(db):
-            raise HTTPException(status_code=409, detail="目标招募未通过审核或已下架")
-
         document = lock_private_document(db, document_id)
         if document is None:
             raise HTTPException(status_code=404, detail="私有文档不存在")
@@ -83,6 +100,13 @@ def create_in_app_application(
                 status_code=409,
                 detail="文件已进入删除或未通过扫描，不能创建站内投递",
             )
+
+        # Lock ordering is always document -> recruitment. The SQLite document
+        # lock can restart a transaction; PostgreSQL row acquisition can wait.
+        # Check publication and expiry only after those boundaries, then retain
+        # both locks through the application/idempotency commit.
+        if not _target_recruitment_is_current(db, recruit_id):
+            raise HTTPException(status_code=409, detail="目标招募未通过审核、已过期或已下架")
 
         application = Application(
             app_id=str(uuid.uuid4()),

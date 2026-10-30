@@ -93,6 +93,7 @@ service.interceptors.request.use(
 service.interceptors.response.use(
   (response) => response.data,
   (error) => {
+    if (axios.isCancel(error)) return Promise.reject(error)
     const msg =
       error.response?.data?.detail ||
       error.response?.data?.message ||
@@ -133,9 +134,17 @@ export function newIdempotencyKey(operation: string) {
 
 /** 初始化服务端高熵匿名会话。 */
 export function bootstrapSession() {
-  return service.get<unknown, { status: string; channel: string; persistent: boolean }>(
-    '/api/session',
-  )
+  return service.get<
+    unknown,
+    {
+      status: string
+      channel: string
+      persistent: boolean
+      llm_mode?: string
+      mentor_policy?: string
+      simulation_mentors?: boolean
+    }
+  >('/api/session')
 }
 
 export type { ApiResponse }

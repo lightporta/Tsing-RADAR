@@ -515,3 +515,35 @@ def test_ranking_weights_must_have_a_non_zero_total():
             innovation_fit=0,
             opportunity_fit=0,
         )
+
+
+def test_confidence_cannot_be_borrowed_from_an_unrelated_mismatch():
+    unsupported = _candidates()[1]
+    unsupported["advisor_id"] = "UNSUPPORTED"
+    unsupported["mentorship_styles"] = ["autonomous"]
+    unsupported["provenance"]["research_modes"] = [_source("mode-a", 0)]
+    unsupported["provenance"]["mentorship_styles"] = [_source("style-a", 1)]
+
+    supported = _candidates()[1]
+    supported["advisor_id"] = "SUPPORTED"
+    supported["mentorship_styles"] = ["autonomous"]
+    supported["provenance"]["research_modes"] = [_source("mode-b", 0.4)]
+    supported["provenance"]["mentorship_styles"] = [_source("style-b", 0.4)]
+    config = RankingConfig(
+        minimum_recall_score=0,
+        weights=RankingWeights(
+            topic_fit=0,
+            research_mode_fit=0.5,
+            mentorship_fit=0.5,
+            career_fit=0,
+            innovation_fit=0,
+            opportunity_fit=0,
+        ),
+    )
+    result = match_mentors([unsupported, supported], _portrait(), config, as_of=AS_OF)
+    assert [item["advisor_id"] for item in result.items] == ["SUPPORTED", "UNSUPPORTED"]
+    assert result.items[0]["score"] == pytest.approx(20)
+    assert result.items[1]["score"] == 0
+    for item in result.items:
+        contributions = sum(row["conservative_contribution"] for row in item["score_breakdown"])
+        assert item["score"] == pytest.approx(contributions * 100, abs=0.01)

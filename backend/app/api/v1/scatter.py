@@ -18,6 +18,7 @@ def scatter():
         dept = m.get("dept", "")
         points.append(
             {
+                "advisor_id": m.get("advisor_id"),
                 "name": m.get("name", ""),
                 "x": float(m["popularity"]),
                 "y": 0 if m["sector"] == "国" else 1,

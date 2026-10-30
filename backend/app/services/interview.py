@@ -11,7 +11,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.models.questionnaire_session import QuestionnaireSession
 from app.schemas.interview import (
@@ -36,6 +39,20 @@ class InterviewAccessError(PermissionError):
 
 class InterviewConflictError(ValueError):
     pass
+
+
+class InterviewInputError(ValueError):
+    pass
+
+
+def _commit_session(db: Session, session: QuestionnaireSession) -> None:
+    """Commit with the ORM's database-level revision comparison."""
+    try:
+        db.commit()
+    except StaleDataError as exc:
+        db.rollback()
+        raise InterviewConflictError("访谈版本已变化，请刷新后重试") from exc
+    db.refresh(session)
 
 
 QUESTION_ORDER = (
@@ -812,7 +829,14 @@ def create_session(
         updated_at=_now(),
     )
     db.add(session)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two platform requests can concurrently create the same stable ID.
+        db.rollback()
+        if db.get(QuestionnaireSession, resolved_id) is None:
+            raise
+        return get_session(db, resolved_id, student_id)
     db.refresh(session)
     return session
 
@@ -853,8 +877,7 @@ def answer_session(
         messages.extend([_message("user", cleaned_answer), _message("assistant", reply)])
         session.messages = messages
         session.updated_at = _now()
-        db.commit()
-        db.refresh(session)
+        _commit_session(db, session)
         return session
 
     if (
@@ -876,19 +899,16 @@ def answer_session(
             )
             session.messages = messages
             session.updated_at = _now()
-            db.commit()
-            db.refresh(session)
+            _commit_session(db, session)
             return session
         reply = "画像已确认。匹配接口现在可以读取这份确认画像。"
         messages.extend([_message("user", cleaned_answer), _message("assistant", reply)])
         session.status = InterviewStatus.CONFIRMED.value
         session.current_question_id = None
         session.confirmed_at = _now()
-        session.profile_version = int(session.profile_version or 1) + 1
         session.messages = messages
         session.updated_at = _now()
-        db.commit()
-        db.refresh(session)
+        _commit_session(db, session)
         return session
 
     profile_data = profile.model_dump(mode="json")
@@ -899,28 +919,37 @@ def answer_session(
         else None
     )
 
-    handled_constraint_followup = (
-        current_dimension == InterviewDimension.HARD_CONSTRAINTS
-        and _process_constraint_followup(profile_data, cleaned_answer)
-    )
-    if not handled_constraint_followup and current_dimension is not None:
-        _apply_target_answer(profile_data, current_dimension, cleaned_answer)
-    overwrite = (
-        current_dimension is None
-        and session.status
-        in {
-            InterviewStatus.AWAITING_CONFIRMATION.value,
-            InterviewStatus.CONFIRMED.value,
-        }
-    )
-    _extract_categorical_signals(
-        profile_data,
-        cleaned_answer,
-        overwrite=overwrite,
-    )
-    if overwrite:
-        _extract_freeform_corrections(profile_data, cleaned_answer)
-    updated_profile = StudentPortrait.model_validate(profile_data)
+    try:
+        handled_constraint_followup = (
+            current_dimension == InterviewDimension.HARD_CONSTRAINTS
+            and _process_constraint_followup(profile_data, cleaned_answer)
+        )
+        if not handled_constraint_followup and current_dimension is not None:
+            _apply_target_answer(profile_data, current_dimension, cleaned_answer)
+        overwrite = (
+            current_dimension is None
+            and session.status
+            in {
+                InterviewStatus.AWAITING_CONFIRMATION.value,
+                InterviewStatus.CONFIRMED.value,
+            }
+        )
+        _extract_categorical_signals(
+            profile_data,
+            cleaned_answer,
+            overwrite=overwrite,
+        )
+        if overwrite:
+            _extract_freeform_corrections(profile_data, cleaned_answer)
+        updated_profile = StudentPortrait.model_validate(profile_data)
+    except ValidationError as exc:
+        # Derived fields have tighter limits than a generic user message. Reject
+        # before changing the persisted turn, rather than silently truncating a
+        # student's hard constraints or returning an internal server error.
+        raise InterviewInputError(
+            "回答无法保存。研究兴趣陈述请控制在1000字内，每项硬约束请控制在500字内，"
+            "并分轮补充其他信息。当前画像未修改。"
+        ) from exc
 
     if session.status == InterviewStatus.CONFIRMED.value and before == profile_data:
         reply = (
@@ -929,7 +958,6 @@ def answer_session(
         )
     else:
         reply = _set_state_after_profile_change(session, updated_profile)
-        session.profile_version = int(session.profile_version or 1) + 1
 
     messages.extend([_message("user", cleaned_answer), _message("assistant", reply)])
     session.messages = messages
@@ -938,8 +966,7 @@ def answer_session(
         dimension.value for dimension in _completed_dimensions(updated_profile)
     ]
     session.updated_at = _now()
-    db.commit()
-    db.refresh(session)
+    _commit_session(db, session)
     return session
 
 
@@ -959,17 +986,18 @@ def patch_profile(
     if "research_interests" in changes and changes["research_interests"] is None:
         changes["research_interests"] = []
     data.update(changes)
-    profile = StudentPortrait.model_validate(data)
+    try:
+        profile = StudentPortrait.model_validate(data)
+    except ValidationError as exc:
+        raise InterviewInputError("画像字段无法保存，请检查字段格式与长度后重试") from exc
     reply = _set_state_after_profile_change(session, profile)
     session.portrait = profile.model_dump(mode="json")
     session.answered_dimensions = [
         dimension.value for dimension in _completed_dimensions(profile)
     ]
-    session.profile_version = int(session.profile_version or 1) + 1
     session.messages = list(session.messages or []) + [_message("assistant", reply)]
     session.updated_at = _now()
-    db.commit()
-    db.refresh(session)
+    _commit_session(db, session)
     return session
 
 
@@ -997,11 +1025,9 @@ def confirm_profile(
     session.status = InterviewStatus.CONFIRMED.value
     session.current_question_id = None
     session.confirmed_at = _now()
-    session.profile_version = int(session.profile_version or 1) + 1
     session.messages = list(session.messages or []) + [_message("assistant", reply)]
     session.updated_at = _now()
-    db.commit()
-    db.refresh(session)
+    _commit_session(db, session)
     return session
 
 

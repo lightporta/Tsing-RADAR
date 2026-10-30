@@ -93,7 +93,7 @@ function resolveDraft(index: number, accept: boolean) {
 async function save() {
   saving.value = true
   try {
-    await chatStore.updateInterviewProfile({
+    const applied = await chatStore.updateInterviewProfile({
       research_interests: splitValues(interestsText.value),
       interest_statement: interestsText.value.trim() || null,
       research_mode: form.research_mode,
@@ -111,7 +111,7 @@ async function save() {
       draft_hard_constraints: draftConstraints.value,
       unresolved_hard_constraints: splitValues(unresolvedConstraintsText.value),
     })
-    ElMessage.success('访谈画像已保存，请重新确认')
+    if (applied) ElMessage.success('访谈画像已保存，请重新确认')
   } finally {
     saving.value = false
   }
@@ -120,8 +120,7 @@ async function save() {
 async function confirm() {
   saving.value = true
   try {
-    await chatStore.confirmInterviewProfile()
-    ElMessage.success('画像已确认')
+    if (await chatStore.confirmInterviewProfile()) ElMessage.success('画像已确认')
   } finally {
     saving.value = false
   }

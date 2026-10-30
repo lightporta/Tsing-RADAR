@@ -21,6 +21,21 @@ def main() -> int:
                 "OBJECT_STORE_BACKEND": "local",
                 "FILE_SCAN_MODE": "builtin",
                 "DEBUG": "true",
+                "PRODUCTION_DEPLOYMENT": "false",
+                "AUTO_CREATE_SCHEMA": "true",
+                "ALLOW_SIMULATION_MENTORS": "false",
+                "REDIS_URL": "",
+                "REDIS_HOST": "",
+                "MILVUS_HOST": "",
+                "LLM_ENABLED": "false",
+                "LLM_PROVIDER": "",
+                "WEB_COOKIE_SECURE": "false",
+                "QXD_ATTACHMENTS_ENABLED": "false",
+                "QXD_REMOTE_MEDIA_FETCH_ENABLED": "false",
+                "QXD_TRIAL_SINGLE_USER_MODE": "false",
+                "SESSION_HMAC_SECRET": "a7-local-web-session-secret",
+                "ARTIFACT_SIGNING_SECRET": "a7-local-artifact-signing-secret",
+                "ADMIN_TOKEN": "a7-local-admin-secret",
                 "QXD_API_KEY": "a7-local-platform-key",
                 "QXD_END_USER_SIGNING_SECRET": (
                     "a7-local-end-user-signing-secret"
@@ -31,6 +46,15 @@ def main() -> int:
                 "DEEPSEEK_API_KEY": "",
             }
         )
+        # An isolated rehearsal must not read real secret files inherited from
+        # the caller's environment or the current directory's .env.
+        for name in (
+            "DATABASE_PASSWORD_FILE", "REDIS_PASSWORD_FILE", "LLM_API_KEY_FILE",
+            "SESSION_HMAC_SECRET_FILE", "ARTIFACT_SIGNING_SECRET_FILE",
+            "ADMIN_TOKEN_FILE", "QXD_API_KEY_FILE", "QXD_END_USER_SIGNING_SECRET_FILE",
+            "S3_ACCESS_KEY_ID_FILE", "S3_SECRET_ACCESS_KEY_FILE",
+        ):
+            os.environ[name] = ""
         sys.path.insert(0, str(backend_root))
         from fastapi.testclient import TestClient
 

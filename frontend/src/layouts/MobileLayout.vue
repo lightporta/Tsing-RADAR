@@ -5,7 +5,7 @@ import { ElDrawer as Drawer } from 'element-plus'
 import AppHeader from '@/components/common/AppHeader.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import AdvisorListPanel from '@/components/advisor/AdvisorListPanel.vue'
-import ScatterChart from '@/components/charts/ScatterChart.vue'
+import ChartPanel from '@/components/charts/ChartPanel.vue'
 
 // =====================================================================
 // 移动端布局（文档 §4.1）
@@ -39,20 +39,15 @@ function goRecruitment() {
         <AdvisorListPanel :mobile-mode="true" />
       </section>
       <section class="content-block chart-block">
-        <h3 class="block-title">📊 四象限散点图</h3>
-        <p class="axis-legend">
-          横轴：有来源的冷/热信号 · 纵轴：有来源的国家任务/产业方向 ·
-          灰=国冷 绿=国热 蓝=私冷 橙=私热
-        </p>
-        <ScatterChart height="240px" />
+        <ChartPanel />
       </section>
     </main>
 
     <!-- 底部对话区 25%（fixed，可上滑全屏） -->
     <section class="mobile-chat" :class="{ expanded: chatExpanded }">
-      <div class="drag-handle" @click="chatExpanded = !chatExpanded">
+      <button class="drag-handle" :aria-label="chatExpanded ? '收起对话区' : '展开对话区'" :aria-expanded="chatExpanded" @click="chatExpanded = !chatExpanded">
         <span class="handle-bar" />
-      </div>
+      </button>
       <ChatPanel :mobile-mode="true" :hide-toolbar="true" />
     </section>
 
@@ -75,6 +70,7 @@ function goRecruitment() {
 
 <style scoped lang="scss">
 .mobile-layout {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -114,7 +110,7 @@ function goRecruitment() {
 
 // 底部对话区
 .mobile-chat {
-  position: fixed;
+  position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
@@ -128,7 +124,7 @@ function goRecruitment() {
   z-index: $z-chat-drag;
 
   &.expanded {
-    height: calc(100vh - var(--header-height-mobile));
+    height: calc(100% - var(--header-height-mobile));
   }
 }
 

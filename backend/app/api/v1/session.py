@@ -18,10 +18,15 @@ def bootstrap_session(
     db: Session = Depends(get_db),
 ):
     principal = create_or_refresh_web_session(db, request, response)
+    from app.services.data_loader import mentor_data_policy
+
     return {
         "status": "ready",
         "channel": principal.channel,
         "persistent": principal.persistent,
+        "llm_mode": settings.llm_mode,
+        "mentor_policy": mentor_data_policy(),
+        "simulation_mentors": settings.simulation_mentors_enabled,
     }
 
 

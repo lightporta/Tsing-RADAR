@@ -31,6 +31,7 @@ const html = computed(() =>
       <div class="bubble" :class="{ streaming: message.streaming }">
         <div v-if="isUser" class="user-text">{{ message.content }}</div>
         <div v-else class="markdown-body" v-html="html" />
+        <small v-if="message.rejected" class="rejected-note">未被接受，请修改后重新发送</small>
         <div v-if="isUser && message.attachments?.length" class="message-attachments">
           <span v-for="item in message.attachments" :key="item.documentId">
             📎 {{ item.name }}（已私有保存，未注入访谈）
@@ -123,6 +124,8 @@ const html = computed(() =>
   font-size: 11px;
   opacity: 0.9;
 }
+
+.rejected-note { display: block; margin-top: 6px; opacity: 0.85; }
 
 // 流式光标
 .cursor {

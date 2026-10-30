@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "lint": "eslint .",
+    "test:state": "node scripts/test-match-state.mjs && node scripts/test-chat-state.mjs",
     "format": "prettier --write \"src/**/*.{vue,ts,tsx,scss}\""
   },
   "dependencies": {

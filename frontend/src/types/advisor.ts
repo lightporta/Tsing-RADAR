@@ -37,6 +37,7 @@ export interface Recruitment {
 
 /** 导师基础画像（仅用于通过证据审核后的公开记录） */
 export interface Advisor {
+  advisor_id?: string
   name: string
   dept: string
   field: string
@@ -76,6 +77,11 @@ export interface MatchedAdvisor extends Advisor {
     score?: number | null
     evidence_coverage: number
     evidence_confidence: number
+    requested_weight?: number
+    effective_weight?: number
+    conservative_contribution?: number
+    method?: string
+    evidence_fields?: string[]
   }>
 }
 
@@ -128,7 +134,10 @@ export interface MentorResourceMeta {
   catalog_records: number
   verified_profile_records: number
   match_candidate_records: number
-  policy: 'formal_verified_profiles_only'
+  policy:
+    | 'formal_verified_profiles_only'
+    | 'simulation_only_not_for_production'
+    | 'frontend_mock_empty'
   filtered_records: number
   page: number
   page_size: number
@@ -142,6 +151,7 @@ export interface EvidenceClaim {
 
 /** 散点图单个数据点 */
 export interface ScatterPoint {
+  advisor_id?: string
   name: string
   x: number // 热门指数 0-100
   y: number // 行业性质 0=国 / 1=私

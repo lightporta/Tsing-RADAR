@@ -4,6 +4,8 @@ import os
 import sys
 import tempfile
 import shutil
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 # 每个 pytest 进程使用独立临时 SQLite，避免旧 schema 掩盖迁移问题。
@@ -20,6 +22,10 @@ os.environ["ALLOW_TEST_PUBLIC_BASE_URL"] = "true"
 os.environ["QXD_ATTACHMENTS_ENABLED"] = "true"
 os.environ["FILE_SCAN_MODE"] = "builtin"
 os.environ["OBJECT_STORE_BACKEND"] = "local"
+os.environ["DEBUG"] = "true"
+os.environ["PRODUCTION_DEPLOYMENT"] = "false"
+os.environ["ALLOW_SIMULATION_MENTORS"] = "false"
+os.environ["LLM_ENABLED"] = "true"
 PRIVATE_UPLOAD_ROOT = (
     Path(tempfile.gettempdir()) / f"tsing_radar_uploads_{os.getpid()}"
 )
@@ -41,6 +47,8 @@ if not TEST_MENTOR_DATA_PATH.is_file():
     raise RuntimeError("tracked_empty_mentor_governance_seed_missing")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# L1/L2 checkers live under repository-root scripts/.
+sys.path.insert(0, str(REPOSITORY_ROOT))
 
 # 清除 settings 缓存，让测试环境变量生效
 import app.core.config as _config  # noqa: E402
@@ -50,6 +58,26 @@ _config.get_settings.cache_clear()
 _data_loader._DATA_PATH = str(TEST_MENTOR_DATA_PATH)
 
 import pytest  # noqa: E402
+
+
+@lru_cache(maxsize=1)
+def _docker_compose_available():
+    if not shutil.which("docker"):
+        return False
+    try:
+        return subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def pytest_runtest_setup(item):
+    if item.get_closest_marker("docker") and not _docker_compose_available():
+        pytest.skip("requires Docker Compose CLI; no container/cloud run was performed")
 
 
 @pytest.fixture(scope="session", autouse=True)

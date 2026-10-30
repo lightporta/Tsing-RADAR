@@ -34,11 +34,11 @@ const compared = computed(() =>
 )
 
 function onClick() {
-  if (advisorStore.selectedName === props.advisor.name) {
+  if (advisorStore.selectedId === props.advisor.advisor_id) {
     // 二次点击 = 展开详情
     expanded.value = !expanded.value
   } else {
-    advisorStore.selectAdvisor(props.advisor.name)
+    advisorStore.selectAdvisor(props.advisor.advisor_id)
     expanded.value = false
   }
 }
@@ -68,7 +68,7 @@ async function giveFeedback(rating: 1 | -1) {
   feedbackGiven.value = rating
   try {
     await submitFeedback({
-      advisor_id: props.advisor.name,
+      advisor_id: props.advisor.advisor_id,
       rating,
     })
     ElMessage.success(rating === 1 ? '已点赞' : '已记录反馈')

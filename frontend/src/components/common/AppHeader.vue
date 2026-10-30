@@ -68,14 +68,17 @@ function handleProfileClick() {
     <!-- 右侧：学生信息 + 信息平台 -->
     <div class="header-right">
       <slot name="right" />
-      <button class="icon-btn" aria-label="导师资源库" @click="goMentors">
-        <el-icon aria-hidden="true">师</el-icon>
+      <button class="icon-btn nav-btn" aria-label="导师资源库" @click="goMentors">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5h7l2 2 2-2h7v15h-7l-2 1-2-1H3zM12 7v14" /></svg>
+        <span class="nav-label">导师资源库</span>
       </button>
-      <button class="icon-btn" aria-label="个人信息" @click="handleProfileClick">
-        <el-icon aria-hidden="true">人</el-icon>
+      <button class="icon-btn nav-btn" aria-label="个人信息" @click="handleProfileClick">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21v-2a8 8 0 0 1 16 0v2" /></svg>
+        <span class="nav-label">简历资料</span>
       </button>
-      <button class="icon-btn" aria-label="信息平台" @click="goRecruitment">
-        <el-icon aria-hidden="true">讯</el-icon>
+      <button class="icon-btn nav-btn" aria-label="信息平台" @click="goRecruitment">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4zM8 8h8M8 12h5" /></svg>
+        <span class="nav-label">信息平台</span>
       </button>
     </div>
   </header>
@@ -154,7 +157,13 @@ function handleProfileClick() {
   }
 }
 
+.nav-btn { width: auto; padding: 0 10px; gap: 7px; }
+.nav-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.nav-label { font-size: 12px; white-space: nowrap; }
+
 @media (max-width: $bp-tablet) {
+  .nav-label { display: none; }
+  .nav-btn { width: 32px; padding: 0; }
   .header-title {
     position: static;
     transform: none;

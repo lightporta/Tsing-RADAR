@@ -17,6 +17,9 @@ class QuestionnaireSession(Base):
     current_question_id = Column(String(50), nullable=True)
     answered_dimensions = Column(JSON, nullable=False, default=list)
     profile_version = Column(Integer, nullable=False, default=1)
+    # Compare the loaded revision in every UPDATE, including message-only turns.
+    # The existing column also serves as the public revision; no schema change.
+    __mapper_args__ = {"version_id_col": profile_version}
     confirmed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(

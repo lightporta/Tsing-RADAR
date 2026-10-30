@@ -37,7 +37,13 @@ from app.services.artifact_delivery import (
     redeem_delivery_token,
 )
 from app.services.artifact_generation import create_match_report_artifact
-from app.services.interview import answer_session, state_response, sync_user_transcript
+from app.services.interview import (
+    InterviewConflictError,
+    InterviewInputError,
+    answer_session,
+    state_response,
+    sync_user_transcript,
+)
 from app.services.match_application import (
     format_match_outcome,
     run_confirmed_match,
@@ -565,6 +571,10 @@ async def chat(
             generate_agent_reply(request, principal),
             timeout=settings.QXD_REQUEST_TIMEOUT_SECONDS,
         )
+    except InterviewConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InterviewInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MediaSecurityError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

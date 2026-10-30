@@ -797,6 +797,7 @@ def _rank_candidate(
     breakdown: list[ObjectiveBreakdown] = []
     fit_numerator = 0.0
     confidence_numerator = 0.0
+    conservative_score = 0.0
     for objective in RankingObjective:
         score = objective_scores[objective]
         requested_weight = requested_weights[objective]
@@ -815,6 +816,7 @@ def _rank_candidate(
             if score is not None
             else 0.0
         )
+        conservative_score += contribution
         breakdown.append(
             ObjectiveBreakdown(
                 objective=objective,
@@ -845,7 +847,9 @@ def _rank_candidate(
         if available_weight_total > 0
         else 0.0
     )
-    conservative_score = fit_score * evidence_coverage * evidence_confidence
+    # Confidence belongs to the evidence for this same objective. Multiplying
+    # aggregate fit by aggregate confidence would let an unrelated, well-sourced
+    # mismatch lend confidence to an unsupported positive score.
     if available_weight_total <= 0:
         uncertainties.append("配置的非零权重维度均无可用证据，综合分保持为 0。")
     elif evidence_coverage < 1:

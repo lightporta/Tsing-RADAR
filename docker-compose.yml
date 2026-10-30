@@ -1,11 +1,10 @@
 # Tsing-RADAR 完整基础设施编排（可选）
-# 生产期部署用：PostgreSQL + Redis + Milvus + 后端 + 前端
+# 本地集成演示：PostgreSQL + Redis + Milvus + 后端 + 前端
+# 正式部署使用 deploy/production/RUNBOOK.md，不使用本文件的开发凭据。
 #
 # 开发期无需启动此文件，前后端可独立运行（SQLite + 内存 store）。
-# 启动：docker-compose up -d
-# 停止：docker-compose down
-
-version: "3.8"
+# 启动：docker compose up -d --build
+# 停止：docker compose down
 
 services:
   # ===== 关系数据库 =====
@@ -80,20 +79,45 @@ services:
     volumes:
       - milvus_data:/var/lib/milvus
 
+  # ===== 本地数据库迁移（完成后才启动后端） =====
+  migration:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://tsingradar:tsingradar_dev_pwd@postgres:5432/tsingradar
+      DEBUG: "true"
+      PRODUCTION_DEPLOYMENT: "false"
+      AUTO_CREATE_SCHEMA: "false"
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # ===== 后端 =====
   backend:
     build: ./backend
     container_name: tsing-radar-backend
     env_file: ./backend/.env
     environment:
-      DATABASE_URL: postgresql://tsingradar:tsingradar_dev_pwd@postgres:5432/tsingradar
+      DATABASE_URL: postgresql+psycopg://tsingradar:tsingradar_dev_pwd@postgres:5432/tsingradar
       REDIS_URL: redis://redis:6379/0
       MILVUS_HOST: milvus
+      DEBUG: "true"
+      PRODUCTION_DEPLOYMENT: "false"
+      AUTO_CREATE_SCHEMA: "false"
+      OBJECT_STORE_BACKEND: local
+    volumes:
+      - ./deploy/production/data/empty-mentor-governance.json:/app/data/mentors.evidence.json:ro
+      - ./backend/data/mentors.simulation.json:/app/data/mentors.simulation.json:ro
+      - private_uploads:/app/private_uploads
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       milvus:
@@ -114,3 +138,4 @@ volumes:
   etcd_data:
   minio_data:
   milvus_data:
+  private_uploads:

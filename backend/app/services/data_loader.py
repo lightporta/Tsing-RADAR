@@ -9,17 +9,55 @@ from typing import Any
 
 from app.schemas.governance import MentorDataset
 
-_DATA_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+_REPO_ROOT = os.path.dirname(_BACKEND_ROOT)
+_DATA_DIR = os.path.join(_BACKEND_ROOT, "data")
+_DATA_PATH = os.path.join(_DATA_DIR, "mentors.evidence.json")
+_SIMULATION_DATA_PATH = os.path.join(_DATA_DIR, "mentors.simulation.json")
+_EMPTY_FALLBACK_PATH = os.path.join(
+    _REPO_ROOT,
+    "deploy",
+    "production",
     "data",
-    "mentors.evidence.json",
+    "empty-mentor-governance.json",
 )
+
+FORMAL_POLICY = "formal_verified_profiles_only"
+SIMULATION_POLICY = "simulation_only_not_for_production"
+
+
+def _simulation_enabled() -> bool:
+    from app.core.config import settings
+
+    return settings.simulation_mentors_enabled
+
+
+def _active_data_path() -> str:
+    """Resolve the active mentor dataset path under the simulation gate."""
+    if _simulation_enabled():
+        return _SIMULATION_DATA_PATH
+    if os.path.isfile(_DATA_PATH):
+        return _DATA_PATH
+    from app.core.config import settings
+
+    if settings.DEBUG and not settings.PRODUCTION_DEPLOYMENT:
+        return _EMPTY_FALLBACK_PATH
+    # An absent configured production dataset must never look like a healthy
+    # empty catalogue. Opening this path raises the original FileNotFoundError.
+    return _DATA_PATH
+
+
+def _clear_loader_caches() -> None:
+    load_mentors.cache_clear()
+    load_match_candidates.cache_clear()
+    load_mentor_dataset.cache_clear()
 
 
 @lru_cache(maxsize=1)
 def load_mentor_dataset() -> MentorDataset:
     """读取并严格验证治理数据集；验证失败时拒绝启动数据链路。"""
-    with open(_DATA_PATH, "rb") as file:
+    data_path = _active_data_path()
+    with open(data_path, "rb") as file:
         payload = file.read()
     expected_sha256 = os.getenv("MENTOR_DATA_EXPECTED_FILE_SHA256", "").strip()
     if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
@@ -89,6 +127,13 @@ def load_match_candidates() -> list[dict[str, Any]]:
     return candidates
 
 
+def mentor_data_policy() -> str:
+    """Return the active mentor publication policy label."""
+    if _simulation_enabled():
+        return SIMULATION_POLICY
+    return FORMAL_POLICY
+
+
 def mentor_data_summary() -> dict[str, int | str]:
     """返回不含导师内容的数据治理计数。"""
     records = load_mentor_dataset().records
@@ -112,7 +157,7 @@ def mentor_data_summary() -> dict[str, int | str]:
         "catalog_records": catalog_count,
         "verified_profile_records": profile_count,
         "match_candidate_records": match_candidate_count,
-        "policy": "formal_verified_profiles_only",
+        "policy": mentor_data_policy(),
     }
 
 
@@ -126,7 +171,5 @@ def load_mentor_review_records() -> list[dict[str, Any]]:
 
 def reload_mentors() -> list[dict[str, Any]]:
     """清除缓存并重新执行治理校验。"""
-    load_mentors.cache_clear()
-    load_match_candidates.cache_clear()
-    load_mentor_dataset.cache_clear()
+    _clear_loader_caches()
     return load_mentors()

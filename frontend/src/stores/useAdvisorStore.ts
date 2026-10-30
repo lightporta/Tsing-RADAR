@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { MatchedAdvisor, SortMetric, ScatterPoint } from '@/types/advisor'
 import * as advisorApi from '@/api/advisor'
 import * as mockApi from '@/mock'
+import { useRuntimeStore } from '@/stores/useRuntimeStore'
+import { useChatStore } from '@/stores/useChatStore'
 
 // =====================================================================
 // 导师 Store（文档 §7.1 useAdvisorStore）
@@ -12,12 +14,13 @@ import * as mockApi from '@/mock'
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 export const useAdvisorStore = defineStore('advisor', () => {
+  const chatStore = useChatStore()
   // —— 匹配后的导师（带 score / synergy / reason）——
   const matchedAdvisors = ref<MatchedAdvisor[]>([])
   // —— 散点数据 ——
   const scatterPoints = ref<ScatterPoint[]>([])
-  // —— 当前选中的导师名（联动卡片 / 散点 / 右栏）——
-  const selectedName = ref<string | null>(null)
+  // 姓名只作展示；选中、对比和反馈均使用稳定导师 ID。
+  const selectedId = ref<string | null>(null)
   // —— 排序指标 ——
   const sortMetric = ref<SortMetric>('score')
   // —— 象限筛选（散点图右上复选框组）——
@@ -29,49 +32,80 @@ export const useAdvisorStore = defineStore('advisor', () => {
   })
   // —— 加载态 ——
   const loading = ref(false)
+  const scatterLoading = ref(false)
   const resultStatus = ref<'idle' | 'matched' | 'no_published_data' | 'no_match' | 'error'>('idle')
   const resultMessage = ref('请先完成访谈并确认画像。')
   const resultMeta = ref<Record<string, unknown>>({})
   const comparisonIds = ref<string[]>([])
+  let requestId = 0
+  let scatterRequestId = 0
+  let matchController: AbortController | null = null
+  let activeProfileKey: string | null = null
 
   const totalCount = computed(() => matchedAdvisors.value.length)
 
   /** 当前选中的导师对象 */
   const selectedAdvisor = computed<MatchedAdvisor | null>(() => {
-    if (!selectedName.value) return null
+    if (!selectedId.value) return null
     return (
-      matchedAdvisors.value.find((m) => m.name === selectedName.value) || null
+      matchedAdvisors.value.find((m) => m.advisor_id === selectedId.value) || null
     )
   })
+  const selectedName = computed(() => selectedAdvisor.value?.name || null)
+
+  function confirmedContext() {
+    if (
+      !chatStore.recommendReady ||
+      chatStore.interviewStatus !== 'confirmed' ||
+      !chatStore.sessionId ||
+      chatStore.profileVersion === null
+    ) return null
+    return {
+      sessionId: chatStore.sessionId,
+      profileVersion: chatStore.profileVersion,
+    }
+  }
+
+  function profileKey(context: { sessionId: string; profileVersion: number }) {
+    return `${context.sessionId}:${context.profileVersion}`
+  }
+
+  const canRetry = computed(() => resultStatus.value === 'error' && !!confirmedContext())
 
   /** 首页只加载公开可视化；导师推荐必须由确认画像后的 bounded match 产生。 */
   async function loadAll() {
-    loading.value = true
+    const id = ++scatterRequestId
+    scatterLoading.value = true
     try {
       if (USE_MOCK) {
         scatterPoints.value = mockApi.mockScatterPoints
       } else {
         const scatter = await advisorApi.fetchScatter()
-        scatterPoints.value = scatter.data
+        if (id === scatterRequestId) scatterPoints.value = scatter.data
       }
-      // 导师公开列表不等同于推荐；确认画像前不生成匹配结果。
-      matchedAdvisors.value = []
     } finally {
-      loading.value = false
+      if (id === scatterRequestId) scatterLoading.value = false
     }
   }
 
-  /** 综合匹配 */
-  async function match(
-    interest: string,
-    sessionId: string,
-    portrait?: Record<string, unknown>,
-    weight?: Record<string, number>,
-  ) {
+  /** 结果只属于发起请求时的已确认画像，路由挂载不参与其生命周期。 */
+  async function runMatch(context: { sessionId: string; profileVersion: number }) {
+    const id = ++requestId
+    matchController?.abort()
+    const controller = new AbortController()
+    matchController = controller
+    const key = profileKey(context)
+    activeProfileKey = key
+    clearResultData()
     loading.value = true
+    resultMessage.value = '正在根据已确认画像匹配…'
+    const isCurrent = () => {
+      const current = confirmedContext()
+      return id === requestId && !!current && profileKey(current) === key
+    }
     try {
       if (USE_MOCK) {
-        matchedAdvisors.value = mockApi.mockMatch(interest)
+        matchedAdvisors.value = []
         resultStatus.value = 'no_published_data'
         resultMessage.value =
           '前端独立 Mock 当前没有已审核导师数据，因此不会生成虚假推荐。'
@@ -82,30 +116,40 @@ export const useAdvisorStore = defineStore('advisor', () => {
           policy: 'verified_only',
         }
       } else {
-        const res = await advisorApi.matchAdvisors({
-          interest,
-          session_id: sessionId,
-          portrait,
-          weight,
-        })
+        const res = await advisorApi.matchAdvisors(
+          { session_id: context.sessionId },
+          controller.signal,
+        )
+        if (!isCurrent()) return
         matchedAdvisors.value = res.data
         resultStatus.value = res.status
         resultMessage.value = res.message
         resultMeta.value = res.meta
+        if (typeof res.meta?.policy === 'string') {
+          useRuntimeStore().applySessionMeta({ mentor_policy: res.meta.policy })
+        }
       }
-      selectedName.value = null
-      comparisonIds.value = []
     } catch (error) {
+      if (!isCurrent() || controller.signal.aborted) return
       resultStatus.value = 'error'
       const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
       resultMessage.value =
-        typeof detail === 'object' && detail && 'message' in detail
-          ? String((detail as { message: unknown }).message)
-          : '匹配请求失败，请检查画像中的待澄清条件后重试。'
-      throw error
+        typeof detail === 'string'
+          ? detail
+          : typeof detail === 'object' && detail && 'message' in detail
+            ? String((detail as { message: unknown }).message)
+            : '匹配请求失败，可以重新匹配；如画像仍有待澄清条件，请先修改并确认。'
     } finally {
-      loading.value = false
+      if (id === requestId) {
+        loading.value = false
+        matchController = null
+      }
     }
+  }
+
+  async function retryMatch() {
+    const context = confirmedContext()
+    if (context && !loading.value) await runMatch(context)
   }
 
   /** 按指标排序 */
@@ -117,8 +161,14 @@ export const useAdvisorStore = defineStore('advisor', () => {
   }
 
   /** 选中导师（联动） */
-  function selectAdvisor(name: string | null) {
-    selectedName.value = name
+  function selectAdvisor(idOrName: string | null) {
+    if (!idOrName) {
+      selectedId.value = null
+      return
+    }
+    const byId = matchedAdvisors.value.find((item) => item.advisor_id === idOrName)
+    const byName = matchedAdvisors.value.filter((item) => item.name === idOrName)
+    selectedId.value = byId?.advisor_id || (byName.length === 1 ? byName[0].advisor_id : null)
   }
 
   /** 设置象限筛选 */
@@ -141,14 +191,37 @@ export const useAdvisorStore = defineStore('advisor', () => {
     ),
   )
 
-  function resetResults() {
+  function clearResultData() {
     matchedAdvisors.value = []
-    selectedName.value = null
+    selectedId.value = null
     comparisonIds.value = []
     resultStatus.value = 'idle'
     resultMessage.value = '请先完成访谈并确认画像。'
     resultMeta.value = {}
   }
+
+  function resetResults() {
+    requestId++
+    matchController?.abort()
+    matchController = null
+    activeProfileKey = null
+    loading.value = false
+    clearResultData()
+  }
+
+  // Pinia store 的订阅在跨路由时持续存在；确认门或版本变化统一在此编排。
+  watch(
+    () => [chatStore.recommendReady, chatStore.interviewStatus, chatStore.sessionId, chatStore.profileVersion] as const,
+    () => {
+      const context = confirmedContext()
+      if (!context) {
+        resetResults()
+      } else if (profileKey(context) !== activeProfileKey) {
+        void runMatch(context)
+      }
+    },
+    { immediate: true },
+  )
 
   /** 按象限筛选后的散点 */
   const filteredScatter = computed(() =>
@@ -163,10 +236,13 @@ export const useAdvisorStore = defineStore('advisor', () => {
     scatterPoints,
     filteredScatter,
     selectedName,
+    selectedId,
     selectedAdvisor,
     sortMetric,
     quadrantFilter,
     loading,
+    scatterLoading,
+    canRetry,
     totalCount,
     resultStatus,
     resultMessage,
@@ -174,7 +250,7 @@ export const useAdvisorStore = defineStore('advisor', () => {
     comparisonIds,
     comparedAdvisors,
     loadAll,
-    match,
+    retryMatch,
     sortBy,
     selectAdvisor,
     toggleQuadrant,

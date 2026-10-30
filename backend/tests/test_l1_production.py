@@ -646,6 +646,7 @@ def test_alembic_config_escapes_percent_encoded_database_url():
     assert 'settings.DATABASE_URL.replace("%", "%%")' in source
 
 
+@pytest.mark.docker
 def test_l1_artifact_checker_passes_with_dummy_secrets_only():
     completed = subprocess.run(
         [sys.executable, "scripts/check_l1_production.py"],
@@ -888,6 +889,7 @@ def test_root_database_job_secret_capability_and_noninteractive_contract():
         "llm-disabled",
     ],
 )
+@pytest.mark.docker
 def test_l1_checker_rejects_security_mutations(mutation):
     completed = subprocess.run(
         [sys.executable, "scripts/check_l1_production.py", "--mutation", mutation],
@@ -905,6 +907,7 @@ def test_l1_checker_rejects_security_mutations(mutation):
     assert report["failed"]
 
 
+@pytest.mark.docker
 def test_l1_checker_rejects_disallowed_high_load_combination():
     completed = subprocess.run(
         [

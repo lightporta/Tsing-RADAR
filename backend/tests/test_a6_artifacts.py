@@ -50,6 +50,8 @@ QXD_CLAIM_SECRET = "test-qxd-end-user-secret"
 
 
 def test_linux_auto_font_prefers_reportlab_compatible_wqy(monkeypatch):
+    from types import SimpleNamespace
+
     wqy = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
     noto = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
     monkeypatch.setattr(settings, "DOCUMENT_CJK_FONT_PATH", None)
@@ -57,6 +59,12 @@ def test_linux_auto_font_prefers_reportlab_compatible_wqy(monkeypatch):
         Path,
         "is_file",
         lambda path: str(path) in {wqy, noto},
+    )
+    monkeypatch.setattr(
+        "app.services.artifact_generation.TTFont",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            face=SimpleNamespace(charToGlyph={ord(char): 1 for char in "清研寻师导师匹配简历"})
+        ),
     )
     assert _find_cjk_font() == Path(wqy)
 

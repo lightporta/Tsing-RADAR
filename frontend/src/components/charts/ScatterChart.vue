@@ -10,7 +10,7 @@ import { useAdvisorStore, quadrantName } from '@/stores/useAdvisorStore'
 // 横轴：冷方向 ← 热门指数 → 热方向
 // 纵轴：国有 ↑ 行业性质 ↓ 私营
 // 四象限：国热(左上) / 国冷(左下) / 私热(右上) / 私冷(右下)
-// 散点大小映射契合度，颜色按院系
+// 公开分布不含学生匹配分；统一点大小，颜色按院系
 // 点击散点联动选中导师卡片
 // =====================================================================
 
@@ -23,7 +23,8 @@ const el = ref<HTMLElement | null>(null)
 const chartData = computed(() =>
   advisorStore.filteredScatter.map((p: ScatterPoint) => ({
     name: p.name,
-    value: [p.x, p.y === 0 ? 0 : 1, p.value ?? 50],
+    advisorId: p.advisor_id,
+    value: [p.x, p.y === 0 ? 0 : 1],
     itemStyle: { color: p.color, opacity: 0.85 },
     advisor: p.advisor,
   })),
@@ -32,13 +33,14 @@ const chartData = computed(() =>
 const option = computed<EChartsOption>(() => ({
   tooltip: {
     trigger: 'item',
+    renderMode: 'richText',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     formatter: (params: any) => {
       const d = params?.data
       if (!d || !Array.isArray(d.value)) return ''
-      const [x, , v] = d.value
+      const [x] = d.value
       const q = quadrantName(x, d.value[1])
-      return `<strong>${d.name}</strong><br/>热门指数：${x}<br/>象限：${q}<br/>契合度：${v}`
+      return `${d.name}\n热门指数：${x}\n象限：${q}`
     },
   },
   grid: {
@@ -77,7 +79,7 @@ const option = computed<EChartsOption>(() => ({
   series: [
     {
       type: 'scatter',
-      symbolSize: (data: number[]) => Math.max(10, Math.min(40, (data[2] ?? 50) / 3)),
+      symbolSize: 14,
       data: chartData.value,
       emphasis: {
         focus: 'self',
@@ -120,9 +122,9 @@ watch(option, () => refresh(), { deep: true })
 function bindClick() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   chart.value?.on('click', (params: any) => {
-    const name = params?.data?.name
-    if (name) {
-      advisorStore.selectAdvisor(name)
+    const identifier = params?.data?.advisorId || params?.data?.name
+    if (identifier) {
+      advisorStore.selectAdvisor(identifier)
     }
   })
 }

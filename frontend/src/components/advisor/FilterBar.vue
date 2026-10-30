@@ -1,14 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useAdvisorStore } from '@/stores/useAdvisorStore'
+import { useRuntimeStore } from '@/stores/useRuntimeStore'
 import type { SortMetric } from '@/types/advisor'
 
 // =====================================================================
 // 卡片列表顶部筛选栏（文档 §3.4）
 // 左侧：匹配数量；无发布数据时明确显示治理空态
-// 右侧：排序下拉（契合度优先 / 热门度 / 学术敏锐度 / 经费实力 等）
+// 右侧：结果内排序（保守排序 / 适配 / 证据覆盖 / 证据置信）
 // =====================================================================
 
 const advisorStore = useAdvisorStore()
+const runtimeStore = useRuntimeStore()
+const simulationHint = computed(() => runtimeStore.isSimulationMentors)
 
 const sortOptions: Array<{ label: string; value: SortMetric }> = [
   { label: '保守排序分', value: 'score' },
@@ -29,6 +33,7 @@ function onSortChange(value: SortMetric) {
     </span>
     <span v-else class="count-text">
       共找到 <strong>{{ advisorStore.totalCount }}</strong> 位匹配导师
+      <em v-if="simulationHint" class="sim-hint">（本地模拟）</em>
     </span>
     <el-select
       :model-value="advisorStore.sortMetric"
@@ -66,6 +71,11 @@ function onSortChange(value: SortMetric) {
     color: $color-primary;
     font-size: 15px;
     margin: 0 2px;
+  }
+  .sim-hint {
+    margin-left: 4px;
+    font-style: normal;
+    color: #8a5a00;
   }
 }
 

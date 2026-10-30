@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { fetchMentorResources } from '@/api/advisor'
 import SubPageLayout from '@/layouts/SubPageLayout.vue'
+import { useRuntimeStore } from '@/stores/useRuntimeStore'
 import type {
   MentorResource,
   MentorResourceMeta,
@@ -9,6 +10,9 @@ import type {
 } from '@/types/advisor'
 
 const loading = ref(false)
+const errorMessage = ref('')
+const runtimeStore = useRuntimeStore()
+let requestId = 0
 const records = ref<MentorResource[]>([])
 const meta = ref<MentorResourceMeta | null>(null)
 const filters = reactive<{
@@ -28,7 +32,13 @@ const filters = reactive<{
 })
 
 async function loadResources() {
+  const currentRequest = ++requestId
+  if (runtimeStore.isFrontendMock) {
+    records.value = []
+    return
+  }
   loading.value = true
+  errorMessage.value = ''
   try {
     const response = await fetchMentorResources({
       q: filters.q.trim() || undefined,
@@ -38,10 +48,16 @@ async function loadResources() {
       page: filters.page,
       page_size: filters.pageSize,
     })
+    if (currentRequest !== requestId) return
     records.value = response.data
     meta.value = response.meta
+  } catch {
+    if (currentRequest !== requestId) return
+    records.value = []
+    meta.value = null
+    errorMessage.value = '导师资源暂时加载失败，请重试。'
   } finally {
-    loading.value = false
+    if (currentRequest === requestId) loading.value = false
   }
 }
 
@@ -75,6 +91,7 @@ function catalogLabel(value: string) {
 }
 
 onMounted(loadResources)
+onUnmounted(() => { requestId++ })
 </script>
 
 <template>
@@ -82,9 +99,9 @@ onMounted(loadResources)
     <div class="mentor-library">
       <section class="library-intro">
         <div>
-          <h2>正式导师资源库</h2>
+          <h2>{{ runtimeStore.isSimulationMentors ? '模拟导师资源库' : '导师资源库' }}</h2>
           <p>
-            “已核验导师画像”可进入证据化匹配；“目录导师/导师组”只表示 2027 官方招生目录事实。
+            {{ runtimeStore.isSimulationMentors ? '当前条目为合成导师，仅用于本地演示。' : '“已核验导师画像”可进入证据化匹配；“目录导师/导师组”只表示 2027 官方招生目录事实。' }}
             页面不推断当前名额、录取概率、指导风格、经费或组内氛围。
           </p>
         </div>
@@ -114,7 +131,11 @@ onMounted(loadResources)
 
       <p v-if="meta" class="result-count">共找到 {{ meta.filtered_records }} 条</p>
       <div v-loading="loading" class="resource-list" aria-live="polite">
-        <el-empty v-if="!loading && !records.length" description="没有符合条件的已发布资源" />
+        <div v-if="errorMessage" role="alert">
+          <p>{{ errorMessage }}</p>
+          <el-button @click="loadResources">重试加载</el-button>
+        </div>
+        <el-empty v-else-if="!loading && !records.length" :description="runtimeStore.isFrontendMock ? '前端独立 Mock 暂无导师资源；连接后端可体验模拟导师检索。' : '没有符合条件的已发布资源'" />
         <article v-for="item in records" :key="item.advisor_id" class="resource-card">
           <div class="card-heading">
             <div>

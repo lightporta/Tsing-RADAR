@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, Optional
 from urllib.parse import quote
 
-from pydantic import Field, PrivateAttr, model_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # The additive production Compose sets this flag. Development and the
     # existing local integration Compose intentionally retain their semantics.
     PRODUCTION_DEPLOYMENT: bool = False
+    # DEBUG-only synthetic mentors for local UX demos. Production rejects this.
+    ALLOW_SIMULATION_MENTORS: bool = False
 
     # —— 数据库 ——
     # 开发期默认 SQLite（开箱即用）；生产期 .env 配置 PostgreSQL
@@ -194,6 +196,12 @@ class Settings(BaseSettings):
     CLAMAV_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=60)
     DOCUMENT_CJK_FONT_PATH: Optional[str] = None
 
+    @field_validator("LLM_PROVIDER", mode="before")
+    @classmethod
+    def empty_llm_provider_is_unconfigured(cls, value):
+        # dotenv represents an optional `NAME=` as an empty string, not None.
+        return None if isinstance(value, str) and not value.strip() else value
+
     @model_validator(mode="after")
     def load_file_backed_secrets(self) -> "Settings":
         """Resolve explicit *_FILE inputs without exposing material in Compose.
@@ -320,7 +328,32 @@ class Settings(BaseSettings):
             # Preserve the existing development order: GLM first, then DeepSeek.
             credentials = direct_credentials
         object.__setattr__(self, "_llm_credentials", credentials)
+
+        if self.ALLOW_SIMULATION_MENTORS and (
+            not self.DEBUG or self.PRODUCTION_DEPLOYMENT
+        ):
+            raise ValueError(
+                "ALLOW_SIMULATION_MENTORS requires DEBUG=true and "
+                "PRODUCTION_DEPLOYMENT=false"
+            )
         return self
+
+    @property
+    def simulation_mentors_enabled(self) -> bool:
+        """Synthetic mentor dataset is allowed only in local debug mode."""
+        return (
+            self.ALLOW_SIMULATION_MENTORS
+            and self.DEBUG
+            and not self.PRODUCTION_DEPLOYMENT
+        )
+
+    @property
+    def llm_mode(self) -> str:
+        """Honest runtime label for LLM capability."""
+        providers = self.configured_llm_providers
+        if providers:
+            return ",".join(providers)
+        return "local_rules"
 
     @property
     def production_secret_files_configured(self) -> bool:

@@ -9,7 +9,7 @@ import ResumeManager from '@/components/profile/ResumeManager.vue'
 </script>
 
 <template>
-  <SubPageLayout title="个人信息与简历管理">
+  <SubPageLayout title="简历资料与私有文件">
     <div class="profile-view">
       <div class="container">
         <ProfileForm />

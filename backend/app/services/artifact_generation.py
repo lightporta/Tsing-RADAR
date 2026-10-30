@@ -29,7 +29,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.ttfonts import TTFont, TTFError
 from reportlab.platypus import (
     KeepTogether,
     Paragraph,
@@ -144,7 +144,9 @@ def _now() -> datetime:
 
 def _find_cjk_font() -> Path:
     candidates = [
-        settings.DOCUMENT_CJK_FONT_PATH,
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/msyh.ttf",
         "C:/Windows/Fonts/simhei.ttf",
@@ -155,12 +157,22 @@ def _find_cjk_font() -> Path:
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     ]
+    if settings.DOCUMENT_CJK_FONT_PATH:
+        candidates = [settings.DOCUMENT_CJK_FONT_PATH]
     for candidate in candidates:
-        if candidate and Path(candidate).is_file():
-            return Path(candidate)
+        if not candidate or not Path(candidate).is_file():
+            continue
+        try:
+            path = Path(candidate)
+            kwargs = {"subfontIndex": 0} if path.suffix.lower() == ".ttc" else {}
+            font = TTFont("TsingRadarFontProbe", str(path), **kwargs)
+            if all(font.face.charToGlyph.get(ord(char), 0) for char in "清研寻师导师匹配简历"):
+                return path
+        except (TTFError, OSError, ValueError):
+            continue
     raise HTTPException(
         status_code=503,
-        detail="文档生成缺少可嵌入中文字体，请配置 DOCUMENT_CJK_FONT_PATH",
+        detail="文档生成缺少可嵌入且包含中文字形的字体，请配置 DOCUMENT_CJK_FONT_PATH",
     )
 
 

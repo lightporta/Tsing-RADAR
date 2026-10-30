@@ -45,9 +45,17 @@ function latestEvidenceTime(item: (typeof advisorStore.matchedAdvisors)[number])
         <el-icon class="empty-icon" aria-hidden="true">⌕</el-icon>
         <p>{{ advisorStore.resultMessage }}</p>
         <span v-if="advisorStore.resultStatus === 'no_published_data'" class="empty-hint">
-          这是数据审核状态，不是匹配失败；2027 招生目录也不会冒充导师个人画像。
+          这是数据审核状态，不是匹配失败；2027 招生目录也不会冒充导师个人画像。本地演示可在后端开启 ALLOW_SIMULATION_MENTORS。
         </span>
-        <span v-else class="empty-hint">完成访谈、逐项确认硬约束后再执行匹配。</span>
+        <span v-else-if="advisorStore.resultStatus !== 'error'" class="empty-hint">完成访谈、逐项确认硬约束后再执行匹配。匹配以已确认访谈画像为准。</span>
+        <el-button
+          v-if="advisorStore.canRetry"
+          class="retry-button"
+          type="primary"
+          @click="advisorStore.retryMatch()"
+        >
+          重新匹配
+        </el-button>
       </div>
 
       <div v-else-if="advisorStore.loading && !advisorStore.matchedAdvisors.length" class="skeleton-list">
@@ -60,7 +68,7 @@ function latestEvidenceTime(item: (typeof advisorStore.matchedAdvisors)[number])
             v-for="advisor in visibleAdvisors"
             :key="advisor.advisor_id || advisor.name"
             :advisor="advisor"
-            :selected="advisorStore.selectedName === advisor.name"
+            :selected="advisorStore.selectedId === advisor.advisor_id"
           />
         </div>
 
@@ -142,6 +150,10 @@ function latestEvidenceTime(item: (typeof advisorStore.matchedAdvisors)[number])
   height: 100px;
   border-radius: $card-radius;
   background: $color-border-light;
+}
+
+.retry-button {
+  margin-top: $spacing-md;
 }
 
 .pagination,

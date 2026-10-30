@@ -31,12 +31,12 @@ export function fetchMentorResources(params: {
   )
 }
 
-/** 综合匹配（关键词 + 画像向量契合度 + Synergy） */
-export function matchAdvisors(req: MatchRequest) {
+/** 根据服务端已确认画像执行证据化匹配。 */
+export function matchAdvisors(req: MatchRequest, signal?: AbortSignal) {
   return post<{
     data: MatchedAdvisor[]
     status: 'matched' | 'no_published_data' | 'no_match'
     message: string
     meta: Record<string, unknown>
-  }>('/api/match', req)
+  }>('/api/match', req, { signal })
 }

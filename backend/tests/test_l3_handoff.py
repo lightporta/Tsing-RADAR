@@ -208,7 +208,13 @@ def test_archive_header_parser_fails_closed_on_unsafe_types_and_paths(
 
 
 def test_source_archive_is_byte_deterministic(tmp_path: Path):
-    l2 = B._load_l2_module().build_manifest()
+    # This is an archive-byte contract, not a Docker image-inspection test.
+    # Reuse the explicitly synthetic image descriptors from the bundle fixture.
+    bundle = C.synthetic_bundle(tmp_path / "bundle")
+    synthetic = json.loads((bundle / "l2-release-manifest.json").read_bytes())
+    l2 = B._load_l2_module().build_manifest(
+        application_images=synthetic["application_images"]
+    )
     first = tmp_path / "first.tar"
     second = tmp_path / "second.tar"
     B.write_source_archive(l2, first)

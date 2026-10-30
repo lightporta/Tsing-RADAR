@@ -15,8 +15,17 @@ from app.db.session import SessionLocal
 from app.graph import GraphState, questionnaire_node
 from app.main import app
 from app.models.questionnaire_session import QuestionnaireSession
-from app.models.identity import ExternalIdentity, IdentitySession
-from app.services.interview import create_session, answer_session, state_response
+from app.models.identity import ExternalIdentity
+from app.schemas.interview import StudentPortraitPatch
+from app.services.interview import (
+    InterviewConflictError,
+    InterviewInputError,
+    answer_session,
+    confirm_profile,
+    create_session,
+    patch_profile,
+    state_response,
+)
 
 client = TestClient(app)
 STUDENT_HEADERS: dict[str, str] = {}
@@ -303,15 +312,13 @@ def test_match_is_blocked_until_confirmed_then_uses_server_profile():
 
 
 def test_legacy_confirmed_natural_constraints_return_needs_clarification():
-    session_id = str(uuid.uuid4())
+    # Bind this fixture to this client's actual principal, not the newest
+    # globally created identity from an unrelated test/client.
+    session_id = _start()["session_id"]
     with SessionLocal() as db:
-        owner = db.query(IdentitySession).order_by(IdentitySession.created_at.desc()).first()
-        assert owner is not None
-        session = QuestionnaireSession(
-            session_id=session_id,
-            student_id=owner.subject_id,
-            messages=[],
-            portrait={
+        session = db.get(QuestionnaireSession, session_id)
+        session.messages = []
+        session.portrait = {
                 "research_interests": ["自然语言处理"],
                 "interest_statement": "自然语言处理",
                 "research_mode": "engineering",
@@ -319,14 +326,11 @@ def test_legacy_confirmed_natural_constraints_return_needs_clarification():
                 "career_orientation": "academic",
                 "innovation_risk": "balanced",
                 "hard_constraints": ["只能北京"],
-            },
-            status="confirmed",
-            current_question_id=None,
-            answered_dimensions=[],
-            profile_version=1,
-            confirmed_at=datetime.now(timezone.utc),
-        )
-        db.add(session)
+            }
+        session.status = "confirmed"
+        session.current_question_id = None
+        session.answered_dimensions = []
+        session.confirmed_at = datetime.now(timezone.utc)
         db.commit()
 
     response = client.post(
@@ -521,3 +525,133 @@ def test_dialogue_signal_regressions(answer: str, field: str, expected: str):
         assert state_response(session).profile.model_dump()[field] == expected
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("operation", ["patch", "answer", "confirm"])
+def test_stale_db_session_cannot_overwrite_another_profile_revision(operation):
+    state = _complete_interview()
+    session_id = state["session_id"]
+    with SessionLocal() as first, SessionLocal() as second:
+        first_copy = first.get(QuestionnaireSession, session_id)
+        stale_copy = second.get(QuestionnaireSession, session_id)
+        owner = first_copy.student_id
+        revision = stale_copy.profile_version
+        patch_profile(
+            first,
+            session_id=session_id,
+            student_id=owner,
+            patch=StudentPortraitPatch(expected_version=revision, research_mode="engineering"),
+        )
+        with pytest.raises(InterviewConflictError):
+            if operation == "patch":
+                patch_profile(
+                    second,
+                    session_id=session_id,
+                    student_id=owner,
+                    patch=StudentPortraitPatch(expected_version=revision, career_orientation="industry"),
+                )
+            elif operation == "answer":
+                answer_session(second, session_id=session_id, student_id=owner, answer="产业就业")
+            else:
+                confirm_profile(second, session_id=session_id, student_id=owner, expected_version=revision)
+
+    with SessionLocal() as db:
+        saved = db.get(QuestionnaireSession, session_id)
+        assert saved.profile_version == revision + 1
+        assert saved.portrait["research_mode"] == "engineering"
+        assert saved.portrait["career_orientation"] == "academic"
+        assert saved.status == "awaiting_confirmation"
+
+
+def test_message_only_turns_also_reject_a_stale_revision():
+    state = _complete_interview()
+    state = _answer(state["session_id"], "确认画像")
+    with SessionLocal() as first, SessionLocal() as second:
+        first_copy = first.get(QuestionnaireSession, state["session_id"])
+        stale_copy = second.get(QuestionnaireSession, state["session_id"])
+        owner = first_copy.student_id
+        revision = stale_copy.profile_version
+        answer_session(first, session_id=state["session_id"], student_id=owner, answer="确认画像")
+        with pytest.raises(InterviewConflictError):
+            answer_session(second, session_id=state["session_id"], student_id=owner, answer="确认画像")
+    with SessionLocal() as db:
+        saved = db.get(QuestionnaireSession, state["session_id"])
+        assert saved.profile_version == revision + 1
+        assert sum(item["content"] == "画像已经确认，无需重复确认。" for item in saved.messages) == 1
+
+
+def test_long_derived_answer_is_422_and_does_not_consume_the_turn():
+    state = _start()
+    response = client.post(
+        f"/api/interviews/{state['session_id']}/answers",
+        headers=STUDENT_HEADERS,
+        json={"answer": "自然语言处理，" + "x" * 1001},
+    )
+    assert response.status_code == 422
+    assert "1000" in response.json()["detail"]
+    unchanged = client.get(f"/api/interviews/{state['session_id']}").json()
+    assert unchanged["profile_version"] == state["profile_version"]
+    assert unchanged["messages"] == state["messages"]
+    continued = _answer(state["session_id"], "自然语言处理")
+    assert continued["profile"]["research_interests"] == ["自然语言处理"]
+
+    initial = client.post(
+        "/api/interviews",
+        headers=STUDENT_HEADERS,
+        json={"initial_answer": "自然语言处理，" + "x" * 1001},
+    )
+    assert initial.status_code == 422
+
+
+def test_long_hard_constraint_is_rejected_without_silent_truncation():
+    state = _complete_interview()
+    response = client.patch(
+        f"/api/interviews/{state['session_id']}/profile",
+        headers=STUDENT_HEADERS,
+        json={"expected_version": state["profile_version"], "hard_constraints": None},
+    )
+    assert response.status_code == 200
+    before = response.json()
+    response = client.post(
+        f"/api/interviews/{state['session_id']}/answers",
+        headers=STUDENT_HEADERS,
+        json={"answer": "必须在北京" + "x" * 501},
+    )
+    assert response.status_code == 422
+    saved = client.get(f"/api/interviews/{state['session_id']}").json()
+    assert saved["profile_version"] == before["profile_version"]
+    assert saved["profile"]["hard_constraints"] is None
+    continued = _answer(state["session_id"], "无")
+    assert continued["status"] == "awaiting_confirmation"
+
+
+@pytest.mark.parametrize("error_type, expected_status", [(InterviewConflictError, 409), (InterviewInputError, 422)])
+def test_qxd_maps_interview_failures_to_client_errors(monkeypatch, error_type, expected_status):
+    from app.api.v1 import chat as chat_module
+
+    async def fail(*_args, **_kwargs):
+        raise error_type("请修改后重试")
+
+    monkeypatch.setattr(chat_module, "generate_agent_reply", fail)
+    response = client.post(
+        "/v1/chat/completions",
+        headers=_qxd_headers(f"core-errors-{uuid.uuid4()}"),
+        json={"messages": [{"role": "user", "content": "自然语言处理"}], "stream": False},
+    )
+    assert response.status_code == expected_status
+
+
+@pytest.mark.parametrize("error_type, expected_status", [(InterviewConflictError, 409), (InterviewInputError, 422)])
+def test_web_llm_maps_interview_failures_to_client_errors(monkeypatch, error_type, expected_status):
+    from app.api.v1 import llm as llm_module
+
+    def fail(*_args, **_kwargs):
+        raise error_type("请修改后重试")
+
+    monkeypatch.setattr(llm_module, "sync_user_transcript", fail)
+    response = client.post(
+        "/api/v1/llm/chat?stream=false",
+        headers=STUDENT_HEADERS,
+        json={"messages": [{"role": "user", "content": "自然语言处理"}]},
+    )
+    assert response.status_code == expected_status

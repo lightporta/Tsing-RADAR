@@ -17,6 +17,7 @@ from app.schemas.interview import (
 from app.services.interview import (
     InterviewAccessError,
     InterviewConflictError,
+    InterviewInputError,
     InterviewNotFoundError,
     answer_session,
     confirm_profile,
@@ -36,6 +37,8 @@ def _raise_interview_error(exc: Exception) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if isinstance(exc, InterviewConflictError):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    if isinstance(exc, InterviewInputError):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     raise exc
 
 
@@ -45,15 +48,18 @@ def start_interview(
     db: Session = Depends(get_db),
     student_id: str = Depends(get_mutating_student),
 ):
-    session = create_session(db, student_id=student_id)
-    if request.initial_answer:
-        session = answer_session(
-            db,
-            session_id=session.session_id,
-            answer=request.initial_answer,
-            student_id=student_id,
-        )
-    return state_response(session)
+    try:
+        session = create_session(db, student_id=student_id)
+        if request.initial_answer:
+            session = answer_session(
+                db,
+                session_id=session.session_id,
+                answer=request.initial_answer,
+                student_id=student_id,
+            )
+        return state_response(session)
+    except (InterviewAccessError, InterviewConflictError, InterviewInputError) as exc:
+        _raise_interview_error(exc)
 
 
 @router.get("/{session_id}", response_model=InterviewStateResponse)
@@ -87,6 +93,7 @@ def submit_answer(
         InterviewNotFoundError,
         InterviewAccessError,
         InterviewConflictError,
+        InterviewInputError,
     ) as exc:
         _raise_interview_error(exc)
 
@@ -111,6 +118,7 @@ def edit_profile(
         InterviewNotFoundError,
         InterviewAccessError,
         InterviewConflictError,
+        InterviewInputError,
     ) as exc:
         _raise_interview_error(exc)
 

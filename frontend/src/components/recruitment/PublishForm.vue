@@ -9,6 +9,7 @@ import { publishRecruitment } from '@/api/recruitment'
 
 const dialogVisible = ref(false)
 const publishing = ref(false)
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 const form = ref({
   type: '招生',
@@ -53,7 +54,7 @@ async function publish() {
 
 <template>
   <div class="publish-form">
-    <el-button type="primary" plain @click="open">
+    <el-button type="primary" plain :disabled="USE_MOCK" :title="USE_MOCK ? '发布招募需要连接后端' : undefined" @click="open">
       <el-icon><EditPen /></el-icon>
       发布招募
     </el-button>

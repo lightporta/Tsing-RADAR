@@ -12,6 +12,10 @@ export interface ChatMessage {
   content: string
   /** 是否正在流式接收中 */
   streaming?: boolean
+  /** 服务器明确拒绝的输入轮，保留展示但不再次同步。 */
+  rejected?: boolean
+  /** 本地错误提示不作为模型或访谈上下文发送。 */
+  localOnly?: boolean
   /** 创建时间戳 */
   createdAt: number
   /** 关联的附件（PDF/Word 简历） */

@@ -3,12 +3,11 @@ import { reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/useUserStore'
 import { DEPARTMENTS } from '@/utils/depts'
-import { TRAITS } from '@/types/advisor'
-import type { StudentCategory } from '@/types/user'
+import type { StudentCategory, StudentProfile } from '@/types/user'
 
 // =====================================================================
 // 个人信息表单（文档 §5.2 / 原 index.html studentPanel 升级）
-// 这些字段只用于当前浏览器的展示偏好，不参与身份认证。
+// 简历资料只保存在当前浏览器内存；匹配偏好由服务端访谈画像管理。
 // =====================================================================
 
 const userStore = useUserStore()
@@ -22,13 +21,16 @@ const categories: StudentCategory[] = [
 const grades = Array.from({ length: 8 }, (_, i) => `${2026 - i}级`)
 
 // 本地表单副本（编辑时不直接改 store，保存时才提交）
-const form = reactive({ ...userStore.profile })
+function copyProfile(profile: StudentProfile) {
+  return { ...profile, interest_tags: [...profile.interest_tags], weights: { ...profile.weights } }
+}
+const form = reactive(copyProfile(userStore.profile))
 const newTag = ref<string>('')
 
 // 同步 store → form
 watch(
   () => userStore.profile,
-  (p) => Object.assign(form, p),
+  (p) => Object.assign(form, copyProfile(p)),
   { deep: true },
 )
 
@@ -48,19 +50,26 @@ function removeTag(idx: number) {
 }
 
 function save() {
-  userStore.updateProfile({ ...form })
-  ElMessage.success('信息仅保留在当前页面内存，刷新后清除')
+  userStore.updateProfile(copyProfile(form))
+  ElMessage.success('简历资料已保存到当前浏览器内存，刷新后清除')
 }
 
 function reset() {
-  Object.assign(form, userStore.profile)
+  Object.assign(form, copyProfile(userStore.profile))
 }
 </script>
 
 <template>
   <div class="profile-form">
+    <el-alert
+      class="profile-notice"
+      type="info"
+      :closable="false"
+      show-icon
+      title="本页保存简历资料，刷新后清除。保存后用于下方文档生成；匹配偏好请在首页访谈画像中编辑。"
+    />
     <div class="form-section">
-      <h3 class="section-title">基本信息</h3>
+      <h3 class="section-title">简历基本资料</h3>
       <el-form :model="form" label-width="80px" label-position="left">
         <el-row :gutter="16">
           <el-col :span="24">
@@ -124,7 +133,7 @@ function reset() {
 
     <!-- 研究兴趣标签 -->
     <div class="form-section">
-      <h3 class="section-title">研究兴趣</h3>
+      <h3 class="section-title">简历研究兴趣<span class="section-hint">仅用于简历排版</span></h3>
       <div class="tag-input">
         <div class="tags-display">
           <el-tag
@@ -150,35 +159,12 @@ function reset() {
       </div>
     </div>
 
-    <!-- 六维权重滑块 -->
-    <div class="form-section">
-      <h3 class="section-title">
-        六维需求权重
-        <span class="section-hint">调整你的短板偏好，影响匹配排序</span>
-      </h3>
-      <div class="weight-sliders">
-        <div v-for="t in TRAITS" :key="t.key" class="slider-item">
-          <div class="slider-head">
-            <span class="slider-label">{{ t.label }}</span>
-            <span class="slider-value">{{ form.weights[t.key] }}</span>
-          </div>
-          <el-slider
-            v-model="form.weights[t.key]"
-            :min="0"
-            :max="100"
-            :show-tooltip="false"
-          />
-          <p class="slider-desc">{{ t.description }}</p>
-        </div>
-      </div>
-    </div>
-
     <!-- 操作按钮 -->
     <div class="form-actions">
       <el-button @click="reset">重置</el-button>
       <el-button type="primary" @click="save">
         <el-icon aria-hidden="true">✓</el-icon>
-        保存
+        保存简历资料
       </el-button>
     </div>
   </div>
@@ -188,6 +174,10 @@ function reset() {
 .profile-form {
   max-width: 800px;
   margin: 0 auto;
+}
+
+.profile-notice {
+  margin-bottom: $spacing-lg;
 }
 
 .form-section {
@@ -236,33 +226,6 @@ function reset() {
   gap: $spacing-sm;
 }
 
-.weight-sliders {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: $spacing-lg;
-}
-.slider-item {
-  .slider-head {
-    display: flex;
-    justify-content: space-between;
-    font-size: 13px;
-    margin-bottom: 4px;
-    .slider-label {
-      color: $text-regular;
-    }
-    .slider-value {
-      color: $color-accent;
-      font-weight: 600;
-    }
-  }
-  .slider-desc {
-    font-size: 11px;
-    color: $text-placeholder;
-    margin-top: 2px;
-    line-height: 1.4;
-  }
-}
-
 .form-actions {
   display: flex;
   justify-content: flex-end;
@@ -274,9 +237,6 @@ function reset() {
   :deep(.el-col-12) {
     flex: 0 0 100%;
     max-width: 100%;
-  }
-  .weight-sliders {
-    grid-template-columns: 1fr;
   }
   .form-section {
     padding: $spacing-lg;

@@ -14,7 +14,7 @@ pydantic-settings==2.5.2
 SQLAlchemy==2.0.35
 alembic==1.13.3
 # 方式二 PostgreSQL（SQLite 开发仍使用标准库驱动）
-psycopg[binary]==3.2.9
+psycopg[binary]==3.2.13
 
 # —— 缓存（方式二启用；未配置 URL 时仍降级为内存）——
 redis==5.2.1

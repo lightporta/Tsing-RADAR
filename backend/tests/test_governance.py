@@ -397,6 +397,9 @@ def test_release_governance_seed_starts_empty_and_valid(monkeypatch):
 
 
 def test_missing_governance_seed_fails_closed(monkeypatch, tmp_path):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DEBUG", False)
     missing = tmp_path / "missing-governance.json"
     monkeypatch.setattr(data_loader, "_DATA_PATH", str(missing))
     _clear_mentor_caches()

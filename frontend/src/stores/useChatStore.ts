@@ -34,6 +34,7 @@ export const useChatStore = defineStore('chat', () => {
   const streaming = ref(false)
   /** 当前流式请求的 AbortController */
   let controller: AbortController | null = null
+  let requestId = 0
 
   /** 是否可以触发推荐（问卷已收集足够信息） */
   const recommendReady = ref(false)
@@ -99,9 +100,10 @@ export const useChatStore = defineStore('chat', () => {
   async function send(content: string, attachments: ChatAttachment[] = []) {
     if (!content.trim() || streaming.value) return
     if (!sessionId.value) sessionId.value = crypto.randomUUID()
+    const currentRequest = ++requestId
 
     // 1) 推入用户消息
-    pushMessage({ role: 'user', content, attachments })
+    const userMessage = pushMessage({ role: 'user', content, attachments })
 
     // 2) 推入空的 assistant 消息占位（流式填充）
     const assistantMsg = pushMessage({ role: 'assistant', content: '', streaming: true })
@@ -110,15 +112,16 @@ export const useChatStore = defineStore('chat', () => {
 
     // 3) 构造后端 messages（剥离 streaming 标记，仅传 role/content）
     const payloadMessages = messages.value
-      .filter((m) => m.id !== assistantMsg.id)
+      .filter((m) => m.id !== assistantMsg.id && !m.rejected && !m.localOnly)
       .map((m) => ({ role: m.role, content: m.content }))
 
     // Mock 模式：本地模拟流式
     if (USE_MOCK) {
       const reply = mockApi.mockChatReply(content, userTurns.value)
       await mockStream(reply, (delta) => {
-        assistantMsg.content += delta
+        if (currentRequest === requestId) assistantMsg.content += delta
       })
+      if (currentRequest !== requestId) return
       assistantMsg.content = assistantMsg.content.trim()
       assistantMsg.content +=
         '\n\n_持久化访谈与画像确认在 Mock 模式下不可用，请连接后端进行 A3 流程。_'
@@ -133,15 +136,22 @@ export const useChatStore = defineStore('chat', () => {
     controller = streamChat(
       { messages: payloadMessages, session_id: sessionId.value },
       (delta) => {
-        assistantMsg.content += delta
+        if (currentRequest === requestId) assistantMsg.content += delta
       },
       (state) => {
+        if (currentRequest !== requestId) return
         applyInterviewState(state)
         assistantMsg.streaming = false
         streaming.value = false
       },
-      () => {
-        assistantMsg.content += '\n\n_⚠️ 对话服务暂时不可用，已切换本地兜底模式_'
+      (error) => {
+        if (currentRequest !== requestId) return
+        const status = (error as { response?: { status?: number } }).response?.status
+        if (status === 422) userMessage.rejected = true
+        assistantMsg.localOnly = true
+        assistantMsg.content += status === 422
+          ? '\n\n_⚠️ 本轮输入未被接受，请缩短或修改后重新发送。_'
+          : '\n\n_⚠️ 本轮请求未完成，请检查网络后重试；系统会同步服务端已保存的回答。_'
         assistantMsg.streaming = false
         streaming.value = false
       },
@@ -152,28 +162,38 @@ export const useChatStore = defineStore('chat', () => {
     if (!sessionId.value || profileVersion.value === null) {
       throw new Error('请先开始访谈')
     }
+    const currentRequest = requestId
+    const currentSession = sessionId.value
     const state = await editInterviewProfile(
-      sessionId.value,
+      currentSession,
       profileVersion.value,
       patch,
     )
+    if (currentRequest !== requestId || currentSession !== sessionId.value) return false
     applyInterviewState(state)
+    return true
   }
 
   async function confirmInterviewProfile() {
     if (!sessionId.value || profileVersion.value === null) {
       throw new Error('请先开始访谈')
     }
+    const currentRequest = requestId
+    const currentSession = sessionId.value
     const state = await confirmInterviewProfileApi(
-      sessionId.value,
+      currentSession,
       profileVersion.value,
     )
+    if (currentRequest !== requestId || currentSession !== sessionId.value) return false
     applyInterviewState(state)
+    return true
   }
 
   /** 中断当前流式 */
   function abort() {
+    requestId++
     controller?.abort()
+    controller = null
     streaming.value = false
     const last = messages.value[messages.value.length - 1]
     if (last?.streaming) last.streaming = false
